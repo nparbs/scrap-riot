@@ -55,6 +55,8 @@ export interface StartMessage {
 export interface SnapshotMessage {
   t: 'snap';
   ack: number;
+  /** Steps of input `ack` still to run, or if negative, steps the server has run ahead of the input it has. */
+  due?: number;
   time: number;
   bots: number[][];
   proj: number[][];

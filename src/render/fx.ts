@@ -37,7 +37,6 @@ export class Particles {
   private readonly pool: Particle[] = [];
   private readonly matrix = new THREE.Matrix4();
   private readonly color = new THREE.Color();
-  private readonly hidden = new THREE.Matrix4().makeScale(0, 0, 0);
   /** Fraction of each burst to actually spawn, lowered by the quality setting. */
   density = 1;
 
@@ -49,10 +48,8 @@ export class Particles {
     );
     this.mesh.frustumCulled = false;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    for (let i = 0; i < MAX_PARTICLES; i++) {
-      this.mesh.setMatrixAt(i, this.hidden);
-      this.mesh.setColorAt(i, this.color.set(0xffffff));
-    }
+    for (let i = 0; i < MAX_PARTICLES; i++) this.mesh.setColorAt(i, this.color.set(0xffffff));
+    this.mesh.count = 0;
   }
 
   burst(x: number, z: number, o: BurstOptions): void {
@@ -103,12 +100,9 @@ export class Particles {
         p.vz *= 0.6;
       }
     }
-    for (let i = 0; i < MAX_PARTICLES; i++) {
+    this.mesh.count = this.pool.length;
+    for (let i = 0; i < this.pool.length; i++) {
       const p = this.pool[i];
-      if (!p) {
-        this.mesh.setMatrixAt(i, this.hidden);
-        continue;
-      }
       const s = p.size * (p.life / p.maxLife);
       this.matrix.makeScale(s, s, s).setPosition(p.x, p.y, p.z);
       this.mesh.setMatrixAt(i, this.matrix);

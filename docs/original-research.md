@@ -9,7 +9,7 @@ Research behind Scrap Riot's weapon list. If you have footage of the original or
 | RobotKampen | 2001 | Swedish original, linked to Robot Wars on TV |
 | Robot Rage | 2004 | English release on Miniclip |
 | Robot Rage 2: Rearmed | 2005 | Added six weapons |
-| Robot Rage 3 | 2013 | 3D Unity rebuild by Miniclip, with the X/C/V controls Scrap Riot uses. Removed in 2016. |
+| Robot Rage 3 | 2013 | 3D Unity rebuild by Miniclip, with X/C/V controls. Removed in 2016. |
 
 Scrap Riot plays like Robot Rage 3 and borrows weapons from every version.
 

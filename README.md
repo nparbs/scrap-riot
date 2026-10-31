@@ -19,12 +19,12 @@ npm run dev
 
 | Key | Action |
 | --- | --- |
-| Arrow keys | Drive |
-| X | Front weapon |
-| C | Turret (aims itself, you choose when to fire) |
-| V | Defense |
+| W A S D | Drive |
+| E | Front weapon |
+| Q | Turret (aims itself, you choose when to fire) |
+| R | Defense |
 | 1 to 6 | Rage, Mega Shield, Cloaking, X-Ray, Repair, Turbo |
-| Ctrl (hold) | Look behind |
+| Space (hold) | Look behind |
 | M / Esc | Mute / Pause |
 
 These are the default keys. You can rebind them in Settings, which also lists the gamepad layout.

@@ -7,7 +7,7 @@ Each milestone below has a matching GitHub milestone, and its open items are tra
 *Robot Rage* is no longer easy to play, and public documentation is thin. These facts come from public listings and a wiki summary:
 
 - Robot tanks fighting in a free-for-all arena, played online against other users
-- Drive with the arrow keys, X for melee, C for turret, V for defense, 1 to 4 for powerups, Ctrl for rear view
+- Drive with WASD, E for melee, Q for turret, R for defense, 1 to 6 for powerups, Space for rear view
 - Destroying other tanks earns money, which buys upgrades
 - Weapons included a chainsaw and a sledgehammer, and the chainsaw could outreach the hammer
 

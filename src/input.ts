@@ -31,6 +31,8 @@ export class Keyboard {
         return;
       }
       if (e.target instanceof HTMLInputElement) return;
+      // Ctrl+R and friends belong to the browser, even when the letter is also a game key.
+      if (e.ctrlKey || e.metaKey) return;
       if (e.code === 'Escape') {
         if (!e.repeat) this.onPause?.();
         return;
@@ -52,8 +54,6 @@ export class Keyboard {
   setBindings(bindings: Bindings): void {
     this.bindings = bindings;
     this.captured = new Set(Object.values(bindings));
-    // Holding either Ctrl key counts, and browsers report them separately.
-    if (bindings.rear === 'ControlLeft') this.captured.add('ControlRight');
     this.powerByCode = new Map(POWER_ACTIONS.map((action, i) => [bindings[action], POWERUP_ORDER[i]]));
   }
 
@@ -78,8 +78,7 @@ export class Keyboard {
   }
 
   get rearView(): boolean {
-    const b = this.bindings.rear;
-    return this.isDown(b) || (b === 'ControlLeft' && this.isDown('ControlRight')) || (this.padState?.rear ?? false);
+    return this.isDown(this.bindings.rear) || (this.padState?.rear ?? false);
   }
 
   /** Current controls without consuming a queued powerup, for things like the tutorial. */

@@ -152,6 +152,51 @@ describe('online match', () => {
     stopB();
   });
 
+  it('draws the driver smoothly, with almost nothing left to correct', async () => {
+    const s = await server();
+    const { c, state } = client(s.port);
+    await until(() => state.started);
+    const internals = c as unknown as { corrX: number; corrZ: number };
+    let hitSomething = false;
+    const read = (input: BotInput) => {
+      input.throttle = 1;
+      input.steer = 0.5;
+    };
+    let last = performance.now();
+    const steps: number[] = [];
+    let worst = 0;
+    let frames = 0;
+    let px = 0;
+    let pz = 0;
+    await new Promise<void>((done) => {
+      const timer = setInterval(() => {
+        const now = performance.now();
+        const dt = (now - last) / 1000;
+        last = now;
+        c.update(dt, read);
+        const player = c.player!;
+        const speed = Math.hypot(player.vx, player.vz);
+        // The first half second is the robot speeding up from rest, and a crash is meant to correct.
+        hitSomething ||= frames > 40 && speed < 11;
+        if (++frames > 40 && !hitSomething) {
+          steps.push(Math.hypot(player.x - px, player.z - pz) / dt / speed);
+          worst = Math.max(worst, Math.hypot(internals.corrX, internals.corrZ));
+        }
+        px = player.x;
+        pz = player.z;
+        if (frames > 100) {
+          clearInterval(timer);
+          done();
+        }
+      }, 16);
+    });
+    expect(steps.length).toBeGreaterThan(10);
+    const stalled = steps.filter((v) => v < 0.5).length / steps.length;
+    console.log(`stalled frames ${(stalled * 100).toFixed(0)}%, worst correction ${worst.toFixed(3)}`);
+    expect(stalled).toBeLessThan(0.05);
+    expect(worst).toBeLessThan(0.2);
+  });
+
   it('never trusts a client: speed comes from the server sim', async () => {
     const s = await server();
     const { ws, inbox, opened } = raw(s.port);

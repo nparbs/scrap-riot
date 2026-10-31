@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { makeRivals, randomArena, type Save } from '../src/game/progress';
-import { MAX_PLAYERS, onlineLoadout, sanitizeName, SNAPSHOT_STEPS, unpackFlags, type ServerMessage, type StartMessage } from '../src/net/protocol';
+import { INPUT_STEPS, MAX_PLAYERS, onlineLoadout, sanitizeName, SNAPSHOT_STEPS, unpackFlags, type ServerMessage, type StartMessage } from '../src/net/protocol';
 import { encodeSnapshot } from '../src/net/snapshot';
 import type { ArenaId } from '../src/sim/arena';
 import { MODES, POWERUP_ORDER, type ModeId, type UpgradeId } from '../src/sim/data';
@@ -40,6 +40,19 @@ export const DEFAULT_ROOM_OPTIONS: RoomOptions = {
 const HUMAN_COLORS = [0xff8a2a, 0x35d0e6, 0xf25fd0, 0x9be03a, 0xf4f1e8, 0xffd23a];
 const MAX_BACKLOG = 256 * 1024;
 const MAX_CATCH_UP = 0.25;
+/** Past this many queued inputs the player has lagged, so old ones go rather than delaying their weapons. */
+const MAX_QUEUED_INPUTS = 4;
+const QUEUED_AFTER_DROP = 2;
+/** Steps a late client may repay, which limits how much a stall can skip afterwards. */
+const MAX_DEBT = 12;
+
+interface QueuedInput {
+  seq: number;
+  throttle: number;
+  steer: number;
+  flags: number;
+  powerup: number;
+}
 
 export interface Player {
   token: string;
@@ -51,6 +64,13 @@ export interface Player {
   botId: number;
   ack: number;
   left: boolean;
+  /** Newest input received, which can be ahead of `ack`, the one being run. */
+  received: number;
+  queue: QueuedInput[];
+  /** Sim steps left on the current input. */
+  stepsLeft: number;
+  /** Steps run on the old input because the next one was late, taken off the next ones when they arrive. */
+  debt: number;
 }
 
 export class Room {
@@ -101,6 +121,10 @@ export class Room {
       botId: -1,
       ack: 0,
       left: false,
+      received: 0,
+      queue: [],
+      stepsLeft: 0,
+      debt: 0,
     };
     this.players.set(player.token, player);
     if (this.players.size >= MAX_PLAYERS) this.startAt = Math.min(this.startAt, now + this.options.fullLobbyMs);
@@ -130,23 +154,52 @@ export class Room {
     player.conn?.close();
     player.conn = conn;
     this.match?.setAI(player.botId, false);
-    player.ack = 0;
+    player.ack = player.received = player.stepsLeft = player.debt = 0;
+    player.queue = [];
     conn.send(JSON.stringify(this.startMessage(player)));
   }
 
   input(player: Player, seq: number, throttle: number, steer: number, flags: number, powerup: number): void {
-    const match = this.match;
-    if (!match || seq <= player.ack) return;
-    player.ack = seq;
-    const input = match.bots[player.botId].input;
-    input.throttle = Math.max(-1, Math.min(1, throttle));
-    input.steer = Math.max(-1, Math.min(1, steer));
-    const { melee, turret, defense } = unpackFlags(flags);
+    if (!this.match || seq <= player.received) return;
+    player.received = seq;
+    player.queue.push({ seq, throttle, steer, flags, powerup });
+    if (player.queue.length <= MAX_QUEUED_INPUTS) return;
+    while (player.queue.length > QUEUED_AFTER_DROP) this.applyInput(player, player.queue.shift()!);
+  }
+
+  private applyInput(player: Player, next: QueuedInput): void {
+    player.ack = next.seq;
+    const input = this.match!.bots[player.botId].input;
+    input.throttle = Math.max(-1, Math.min(1, next.throttle));
+    input.steer = Math.max(-1, Math.min(1, next.steer));
+    const { melee, turret, defense } = unpackFlags(next.flags);
     input.melee = melee;
     input.turret = turret;
     input.defense = defense;
-    const id = POWERUP_ORDER[powerup];
+    const id = POWERUP_ORDER[next.powerup];
     if (id) input.powerup = id;
+  }
+
+  /**
+   * Runs every input for exactly INPUT_STEPS, as the client predicted. Replaying then lands on
+   * the same spot as the prediction, however unevenly the inputs arrived.
+   */
+  private feedInput(player: Player): void {
+    for (;;) {
+      if (player.stepsLeft > 0) {
+        player.stepsLeft--;
+        return;
+      }
+      const next = player.queue.shift();
+      if (!next) {
+        player.debt = Math.min(MAX_DEBT, player.debt + 1);
+        return;
+      }
+      this.applyInput(player, next);
+      const repaid = Math.min(player.debt, INPUT_STEPS);
+      player.debt -= repaid;
+      player.stepsLeft = INPUT_STEPS - repaid;
+    }
   }
 
   tick(now: number): void {
@@ -170,6 +223,7 @@ export class Room {
     this.accumulator += Math.min(MAX_CATCH_UP, (now - this.last) / 1000);
     this.last = now;
     while (this.accumulator >= STEP && !this.match.over) {
+      for (const player of this.players.values()) if (player.conn) this.feedInput(player);
       this.match.step();
       this.accumulator -= STEP;
       if (++this.steps % SNAPSHOT_STEPS === 0) this.broadcastSnapshot();
@@ -238,11 +292,11 @@ export class Room {
 
   private broadcastSnapshot(): void {
     const match = this.match!;
-    // Serialized once and shared. Only `ack` differs between players.
+    // Serialized once and shared. Only `ack` and `due` differ between players.
     const body = JSON.stringify(encodeSnapshot(match, match.drainEvents())).slice(1);
     for (const player of this.players.values()) {
       if (player.conn && player.conn.backlog() < MAX_BACKLOG) {
-        player.conn.send(`{"t":"snap","ack":${player.ack},${body}`);
+        player.conn.send(`{"t":"snap","ack":${player.ack},"due":${player.stepsLeft - player.debt},${body}`);
       }
     }
   }

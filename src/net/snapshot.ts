@@ -24,6 +24,11 @@ function round(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** A hundredth of a radian is a visible twitch on the driver's own robot. */
+function roundAngle(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}
+
 /** Chainsaws and saws deal damage every tick, so hits are merged per target and source. */
 export function compactEvents(events: GameEvent[]): GameEvent[] {
   const out: GameEvent[] = [];
@@ -61,7 +66,7 @@ export function encodeSnapshot(match: Match, events: GameEvent[]): Omit<Snapshot
         if (bot[key]) flags |= 1 << i;
       });
       return [
-        ...MOTION.map((key) => round(bot[key])),
+        ...MOTION.map((key) => (key === 'heading' ? roundAngle(bot[key]) : round(bot[key]))),
         ...STATE.map((key) => round(bot[key])),
         flags,
         ...POWERUP_ORDER.map((id) => bot.powerups[id]),
