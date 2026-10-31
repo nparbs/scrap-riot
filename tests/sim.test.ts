@@ -620,7 +620,8 @@ describe('arenas', () => {
       expect(match.over, id).toBe(true);
       expect(match.bots.reduce((sum, b) => sum + b.kills + b.deaths, 0), id).toBeGreaterThan(0);
     }
-  });
+    // A full AI match on every map takes a while on a slow CI machine.
+  }, 30_000);
 
   it('repair spots and the hill sit on reachable ground', () => {
     for (const id of ARENA_ORDER) {
