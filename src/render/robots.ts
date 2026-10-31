@@ -7,6 +7,7 @@ export interface RobotBuild {
   turret: TurretId;
   defense: DefenseId;
   paint?: Paint;
+  rearMelee?: boolean;
   /** Fallback main color when there is no paint job. */
   color: number;
 }
@@ -24,6 +25,10 @@ export interface RobotModel {
   hullMaterial: THREE.MeshStandardMaterial;
   /** Every material whose opacity changes while cloaked. */
   materials: THREE.MeshStandardMaterial[];
+  /** Armor pieces that fall off as the robot takes damage. */
+  plates: THREE.Mesh[];
+  /** Colors at full health, which darken with damage. */
+  baseColors: THREE.Color[];
 }
 
 const steel = new THREE.MeshStandardMaterial({ color: 0x6d7379, metalness: 0.75, roughness: 0.45, flatShading: true });
@@ -590,7 +595,8 @@ export function buildRobot(build: RobotBuild): RobotModel {
   root.add(turretPivot);
 
   const meleePivot = new THREE.Group();
-  meleePivot.position.set(0, deckY - spec.height * 0.45, spec.length / 2);
+  meleePivot.position.set(0, deckY - spec.height * 0.45, build.rearMelee ? -spec.length / 2 : spec.length / 2);
+  if (build.rearMelee) meleePivot.rotation.y = Math.PI;
   const { spinner, axis } = buildMelee(meleePivot, build.melee);
   root.add(meleePivot);
 
@@ -612,6 +618,12 @@ export function buildRobot(build: RobotBuild): RobotModel {
   shield.visible = false;
   root.add(shield);
 
+  const materials = [hullMaterial, headMaterial, trim];
+  const plates: THREE.Mesh[] = [];
+  root.traverse((node) => {
+    if (node instanceof THREE.Mesh && node.material === trim) plates.push(node);
+  });
+
   return {
     root,
     turretPivot,
@@ -622,7 +634,9 @@ export function buildRobot(build: RobotBuild): RobotModel {
     wheels,
     shield,
     hullMaterial,
-    materials: [hullMaterial, headMaterial, trim],
+    materials,
+    plates,
+    baseColors: materials.map((m) => m.color.clone()),
   };
 }
 

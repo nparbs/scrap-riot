@@ -22,6 +22,8 @@ interface BotVisual {
   wheelSpin: number;
   /** Counts down while the robot drops off a ledge or into a pit. */
   fallT: number;
+  /** How many armor plates have come off so far. */
+  platesLost: number;
 }
 
 /** Brief effects such as beams and shockwaves. */
@@ -132,8 +134,9 @@ export class MatchView {
   }
 
   private addBot(bot: Bot): void {
-    const { chassis, melee, turret, defense, paint } = bot.loadout;
-    const model = buildRobot({ chassis, melee, turret, defense, paint, color: bot.color });
+    const { chassis, melee, turret, defense, paint, rearMelee } = bot.loadout;
+    const model = buildRobot({ chassis, melee, turret, defense, paint, rearMelee, color: bot.color });
+    model.root.scale.setScalar(bot.size);
     const barBack = new THREE.Mesh(this.barGeo, this.barBackMat);
     const barFront = new THREE.Mesh(
       this.barGeo,
@@ -144,7 +147,7 @@ export class MatchView {
     const label = nameSprite(bot.name, bot.color);
     label.renderOrder = 12;
     this.arena.scene.add(model.root, barBack, barFront, label);
-    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, fallT: 0 });
+    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, fallT: 0, platesLost: 0 });
   }
 
   private clearMatch(): void {
@@ -396,7 +399,8 @@ export class MatchView {
       const slam = bot.meleeSwing < 0.1 ? 0.25 : raised;
       model.meleePivot.rotation.x += (slam - model.meleePivot.rotation.x) * Math.min(1, dt * (bot.meleeSwing < 0.1 ? 40 : 10));
     } else if (bot.loadout.melee === 'ram') {
-      model.meleePivot.position.z = bot.chassis.radius * 0.8 + (bot.lungeT > 0 ? 0.5 : 0);
+      const reach = bot.chassis.radius * 0.8 + (bot.lungeT > 0 ? 0.5 : 0);
+      model.meleePivot.position.z = bot.loadout.rearMelee ? -reach : reach;
     }
 
     if (bot.meleeActive && melee.kind === 'held' && !melee.passive) {
@@ -413,6 +417,7 @@ export class MatchView {
     }
 
     const health = bot.hp / bot.maxHp;
+    this.showDamage(bot, v, health);
     v.smokeT -= dt;
     if (health < 0.45 && v.smokeT <= 0) {
       v.smokeT = 0.05 + health * 0.25;
@@ -444,6 +449,25 @@ export class MatchView {
     const color = health > 0.5 ? 0x5be36a : health > 0.25 ? 0xf2c037 : 0xe84a3a;
     (v.barFront.material as THREE.MeshBasicMaterial).color.setHex(color);
     v.label.position.set(x, barY + 0.55, z);
+  }
+
+  /** The paint scorches and armor plates break off as a robot takes damage. */
+  private showDamage(bot: Bot, v: BotVisual, health: number): void {
+    const { model } = v;
+    const shade = 0.4 + 0.6 * health;
+    model.materials.forEach((material, i) => material.color.copy(model.baseColors[i]).multiplyScalar(shade));
+
+    const lost = Math.floor((1 - health) * 1.4 * model.plates.length);
+    const target = Math.min(lost, model.plates.length);
+    if (target < v.platesLost) {
+      // Healing bolts the armor back on.
+      for (let i = target; i < v.platesLost; i++) model.plates[i].visible = true;
+      v.platesLost = target;
+    }
+    while (v.platesLost < target) {
+      model.plates[v.platesLost++].visible = false;
+      this.particles.burst(bot.x, bot.z, { count: 7, color: 0x6d7379, speed: 9, size: 0.3, life: 0.9, y: 1.2 });
+    }
   }
 
   private setCloakLook(model: RobotModel, cloaked: boolean): void {

@@ -47,7 +47,9 @@ The server is authoritative: it runs the same simulation as the game, and client
 - **3 upgrade tracks** of 5 levels each: armor, engine, weapons
 - **6 maps:** walled pits, a rooftop and a canyon with lethal drops, a furnace, a piston foundry, and a frozen lake
 - **3 modes:** Free-for-All, Last Robot Standing, King of the Hill
-- **Paint shop:** colors, patterns and toppers, all visible to other players
+- **Career:** 12 fights with medals and 3 boss robots, plus achievements
+- **Customization:** paint colors, patterns, toppers and front or rear weapon mounts, all visible to other players
+- **Battle damage:** paint scorches and armor plates fall off as a robot gets hurt
 - **AI rivals** that get tougher as you invest in upgrades
 
 See [ROADMAP.md](ROADMAP.md) for what's next.

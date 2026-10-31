@@ -191,6 +191,9 @@ export class Accounts {
       case 'name':
         save.name = sanitizeName(action.name);
         return true;
+      case 'rear':
+        save.loadout.rearMelee = action.rear === true;
+        return true;
       default:
         return false;
     }

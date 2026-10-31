@@ -129,6 +129,7 @@ export function onlineLoadout(raw: unknown): Loadout {
     powerups: { rage: 1, megashield: 1, cloaking: 1, xray: 1, repair: 1, turbo: 1 },
     upgrades: { armor: 0, engine: 0, weapons: 0 },
     paint: sanitizePaint(r.paint),
+    rearMelee: r.rearMelee === true,
   };
 }
 
@@ -148,7 +149,8 @@ export type GarageAction =
   | { type: 'upgrade'; id: string }
   | { type: 'paint'; paint: Partial<Paint> }
   | { type: 'practice'; arena?: ArenaId; mode?: ModeId }
-  | { type: 'name'; name: string };
+  | { type: 'name'; name: string }
+  | { type: 'rear'; rear: boolean };
 
 export interface HistoryEntry {
   arena: ArenaId;

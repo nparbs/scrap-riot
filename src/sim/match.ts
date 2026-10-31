@@ -63,6 +63,8 @@ export interface Loadout {
   powerups: Record<PowerupId, number>;
   upgrades: Record<UpgradeId, number>;
   paint?: Paint;
+  /** The front weapon faces backward, for fighting while reversing away. */
+  rearMelee?: boolean;
 }
 
 export interface BotInput {
@@ -83,6 +85,8 @@ export interface Bot {
   loadout: Loadout;
   chassis: ChassisDef;
   isAI: boolean;
+  /** Drawn at this scale. Above 1 for bosses. */
+  size: number;
   input: BotInput;
   x: number;
   z: number;
@@ -243,6 +247,8 @@ export interface BotSetup {
   loadout: Loadout;
   isAI: boolean;
   skill?: number;
+  /** Career bosses are tougher and physically bigger. */
+  boss?: { hpMult: number; size: number };
 }
 
 export interface MatchOptions {
@@ -325,7 +331,8 @@ export class Match {
   private createBot(id: number, setup: BotSetup): Bot {
     const chassis = CHASSIS[setup.loadout.chassis];
     const up = setup.loadout.upgrades;
-    const maxHp = chassis.hp * (1 + UPGRADES.armor.perLevel * up.armor);
+    const size = setup.boss?.size ?? 1;
+    const maxHp = chassis.hp * (1 + UPGRADES.armor.perLevel * up.armor) * (setup.boss?.hpMult ?? 1);
     return {
       id,
       name: setup.name,
@@ -333,6 +340,7 @@ export class Match {
       loadout: setup.loadout,
       chassis,
       isAI: setup.isAI,
+      size,
       input: emptyInput(),
       x: 0, z: 0, prevX: 0, prevZ: 0, heading: 0, prevHeading: 0, vx: 0, vz: 0,
       turretAngle: 0, turretTarget: -1, turretError: 0,
@@ -340,8 +348,8 @@ export class Match {
       maxHp,
       speedMult: 1 + UPGRADES.engine.perLevel * up.engine,
       damageMult: 1 + UPGRADES.weapons.perLevel * up.weapons,
-      radius: chassis.radius,
-      mass: chassis.mass,
+      radius: chassis.radius * size,
+      mass: chassis.mass * size,
       alive: true, out: false, eliminatedAt: 0, respawnT: 0,
       meleeCd: 0, meleeWindup: 0, meleeSwing: 99, meleeActive: false, lungeT: 0, clawTarget: -1, clawT: 0,
       ammo: 1, turretFiring: false, turretCd: 0, defenseCd: 0, defenseHeld: false,
@@ -578,7 +586,12 @@ export class Match {
     return this.bots.filter((other) => other !== bot && other.alive);
   }
 
+  private meleeAngle(bot: Bot): number {
+    return bot.loadout.rearMelee ? wrapAngle(bot.heading + Math.PI) : bot.heading;
+  }
+
   private updateMelee(bot: Bot, dt: number): void {
+    const facing = this.meleeAngle(bot);
     const id = bot.loadout.melee;
     const def = MELEE[id];
     const pressed = (bot.input.melee || !!def.passive) && bot.stunT <= 0;
@@ -589,7 +602,7 @@ export class Match {
         if (!pressed) return;
         bot.meleeActive = true;
         for (const other of this.enemies(bot)) {
-          if (!this.inCone(bot, other, bot.heading, def.range, def.arc)) continue;
+          if (!this.inCone(bot, other, facing, def.range, def.arc)) continue;
           this.damage(other, def.damage * this.damageOutput(bot) * dt, bot.id);
           if (def.slow) other.slowT = Math.max(other.slowT, def.slow);
         }
@@ -599,8 +612,8 @@ export class Match {
           bot.meleeCd = def.cooldown;
           bot.lungeT = 0.35;
           bot.meleeSwing = 0;
-          bot.vx += Math.sin(bot.heading) * def.knockback;
-          bot.vz += Math.cos(bot.heading) * def.knockback;
+          bot.vx += Math.sin(facing) * def.knockback;
+          bot.vz += Math.cos(facing) * def.knockback;
           this.events.push({ type: 'strike', x: bot.x, z: bot.z, owner: bot.id });
         }
         return;
@@ -611,7 +624,7 @@ export class Match {
         if (!pressed) return;
         bot.meleeActive = true;
         for (const other of this.enemies(bot)) {
-          if (!this.canSee(bot, other) || !this.inCone(bot, other, bot.heading, def.range, def.arc)) continue;
+          if (!this.canSee(bot, other) || !this.inCone(bot, other, facing, def.range, def.arc)) continue;
           const dist = Math.hypot(other.x - bot.x, other.z - bot.z) || 1;
           const pull = (def.knockback / other.mass) * dt;
           other.vx += ((bot.x - other.x) / dist) * pull;
@@ -627,11 +640,11 @@ export class Match {
       bot.meleeWindup -= dt;
       if (bot.meleeWindup <= 0) {
         bot.meleeSwing = 0;
-        const fx = Math.sin(bot.heading);
-        const fz = Math.cos(bot.heading);
+        const fx = Math.sin(facing);
+        const fz = Math.cos(facing);
         this.events.push({ type: 'strike', x: bot.x + fx * (bot.radius + 1.5), z: bot.z + fz * (bot.radius + 1.5), owner: bot.id });
         for (const other of this.enemies(bot)) {
-          if (!this.inCone(bot, other, bot.heading, def.range, def.arc)) continue;
+          if (!this.inCone(bot, other, facing, def.range, def.arc)) continue;
           this.damage(other, def.damage * this.damageOutput(bot), bot.id);
           other.stunT = Math.max(other.stunT, def.stun);
           other.vx += (fx * def.knockback) / other.mass;
@@ -645,6 +658,7 @@ export class Match {
   }
 
   private updateClaw(bot: Bot, dps: number, pressed: boolean, dt: number): void {
+    const facing = this.meleeAngle(bot);
     const def = MELEE.claw;
     const holding = bot.clawTarget >= 0 ? this.bots[bot.clawTarget] : null;
     if (holding) {
@@ -656,8 +670,8 @@ export class Match {
       }
       bot.meleeActive = true;
       const reach = bot.radius + holding.radius + 0.4;
-      holding.x = bot.x + Math.sin(bot.heading) * reach;
-      holding.z = bot.z + Math.cos(bot.heading) * reach;
+      holding.x = bot.x + Math.sin(facing) * reach;
+      holding.z = bot.z + Math.cos(facing) * reach;
       holding.vx = bot.vx;
       holding.vz = bot.vz;
       holding.stunT = Math.max(holding.stunT, 0.1);
@@ -665,7 +679,7 @@ export class Match {
       return;
     }
     if (!pressed || bot.meleeCd > 0) return;
-    const target = this.enemies(bot).find((other) => this.inCone(bot, other, bot.heading, def.range, def.arc));
+    const target = this.enemies(bot).find((other) => this.inCone(bot, other, facing, def.range, def.arc));
     if (target && target.invulnT <= 0) {
       bot.clawTarget = target.id;
       // The def's windup field holds the maximum grip time for this weapon.

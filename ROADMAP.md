@@ -45,15 +45,15 @@ The current tuning comes from AI-versus-AI data and has not had a human playtest
 - [x] Every weapon found in the original games ([notes](docs/original-research.md))
 - [x] Ammo for turrets
 - [x] Paint shop: colors, patterns, toppers
-- [ ] Rear-mounted weapon option
-- [ ] Per-part damage visuals
+- [x] Rear-mounted weapon option
+- [x] Battle damage: scorched paint and armor plates falling off
 
 ## v0.4: Single-player career
 
-- [ ] Ladder of named rivals with escalating builds
+- [x] Ladder of 12 fights with medals
 - [x] New modes: last robot standing, king of the hill
-- [ ] Boss robots
-- [ ] Achievements and match stats
+- [x] Three boss robots
+- [x] Achievements and match stats
 
 ## v0.5: Online multiplayer
 

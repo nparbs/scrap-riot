@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Sfx } from './audio';
 import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, randomArena, writeSave, type Save, type Slot } from './game/progress';
+import { awardMedal, careerResult, fightSetups, loadCareer, writeCareer, type Fight } from './game/career';
 import { DEFAULT_BINDINGS, loadSettings, QUALITY, rebind, writeSettings, type Action } from './game/settings';
 import { Tutorial } from './game/tutorial';
 import { Keyboard } from './input';
@@ -55,6 +56,8 @@ class Game {
   private leaderboard: LeaderboardEntry[] = [];
   private confirmDelete = false;
   private readonly settings = loadSettings(this.storage);
+  private readonly career = loadCareer(this.storage);
+  private careerFight: Fight | null = null;
   private readonly view = new MatchView();
   private readonly garage = new GarageView();
   private readonly keyboard = new Keyboard(this.settings.bindings);
@@ -295,8 +298,8 @@ class Game {
 
   private refreshGarage(): void {
     const { loadout } = this.save;
-    const { chassis, melee, turret, defense, paint = DEFAULT_PAINT } = loadout;
-    this.garage.setBuild({ chassis, melee, turret, defense, paint, color: paint.primary });
+    const { chassis, melee, turret, defense, paint = DEFAULT_PAINT, rearMelee } = loadout;
+    this.garage.setBuild({ chassis, melee, turret, defense, paint, rearMelee, color: paint.primary });
     const panel = this.ui.querySelector('.garage-panel');
     const scroll = panel ? panel.scrollTop : 0;
     const buy = (ok: boolean) => {
@@ -357,6 +360,12 @@ class Game {
               this.save.name = sanitizeName(name);
               return true;
             }),
+          onCareer: (fight) => this.startMatch(fight),
+          onRear: (rear) =>
+            change({ type: 'rear', rear }, () => {
+              this.save.loadout.rearMelee = rear;
+              return true;
+            }),
           onSignOut: () => this.accountAction(() => this.api!.signOut(), "Couldn't sign out. Please try again."),
           onDelete: () => {
             if (!this.confirmDelete) {
@@ -373,6 +382,7 @@ class Game {
           notice,
           keys: this.settings.bindings,
           tab: this.garageTab,
+          career: this.career,
           account: this.profile && {
             profile: this.profile,
             history: this.history,
@@ -399,11 +409,14 @@ class Game {
     });
   }
 
-  private startMatch(): void {
+  private startMatch(fight: Fight | null = null): void {
     const seed = Math.floor(Math.random() * 1e9);
     const { name, loadout, practice } = this.save;
     const me: BotSetup = { name, color: (loadout.paint ?? DEFAULT_PAINT).primary, loadout, isAI: false };
-    this.match = new Match([me, ...makeRivals(this.save, 5, seed)], { seed, arena: practice.arena, mode: practice.mode });
+    this.careerFight = fight;
+    this.match = fight
+      ? new Match([me, ...fightSetups(fight, seed)], { seed, arena: fight.arena, mode: fight.mode, killTarget: fight.killTarget })
+      : new Match([me, ...makeRivals(this.save, 5, seed)], { seed, arena: practice.arena, mode: practice.mode });
     this.player = this.match.bots[0];
     this.hud = new Hud(this.match, this.player, this.settings.bindings);
     this.beginTutorial();
@@ -477,7 +490,20 @@ class Game {
     const online = this.net !== null;
     this.net = null;
     let note = '';
-    if (this.profile) {
+    const fight = this.careerFight;
+    this.careerFight = null;
+    if (fight) {
+      const medal = careerResult(fight, standings, player.id);
+      const reward = awardMedal(this.career, fight, medal);
+      writeCareer(this.storage, this.career);
+      note = medal ? `${medal[0].toUpperCase()}${medal.slice(1)} medal! ` : 'No medal this time. Finish higher to unlock the next fight. ';
+      if (!this.profile) {
+        // Without an account, career money goes into the save on this device.
+        applyResult(this.save, reward, mine.place, player.powerups);
+        writeSave(this.storage, this.save);
+        if (reward > 0) note += `You earned $${reward}.`;
+      }
+    } else if (this.profile) {
       // The server already banked an online match. A practice match runs in this browser, so
       // nothing it reports can be trusted with real money.
       if (online) this.api?.me().then((profile) => this.setProfile(profile)).catch(() => {});

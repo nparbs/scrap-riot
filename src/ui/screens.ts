@@ -1,3 +1,4 @@
+import { ACHIEVEMENTS, CAREER, isUnlocked, type AchievementStats, type CareerProgress, type Fight, type Medal } from '../game/career';
 import { CATALOG, upgradeCost, type Save, type Slot } from '../game/progress';
 import { ACTIONS, keyLabel, QUALITY, type Action, type Bindings, type Quality, type Settings } from '../game/settings';
 import { NAME_MAX, type HistoryEntry, type LeaderboardEntry, type Profile } from '../net/protocol';
@@ -100,13 +101,15 @@ export interface GarageActions {
   onPractice: (change: { arena?: ArenaId; mode?: ModeId }) => void;
   onSignOut: () => void;
   onDelete: () => void;
+  onCareer: (fight: Fight) => void;
+  onRear: (rear: boolean) => void;
 }
 
-export type GarageTab = 'chassis' | 'melee' | 'turret' | 'defense' | 'powerups' | 'upgrades' | 'paint' | 'maps' | 'profile';
+export type GarageTab = 'chassis' | 'melee' | 'turret' | 'defense' | 'powerups' | 'upgrades' | 'paint' | 'maps' | 'career' | 'profile';
 
 const TAB_LABELS: Record<GarageTab, string> = {
   chassis: 'Chassis', melee: 'Front', turret: 'Turret', defense: 'Defense',
-  powerups: 'Powerups', upgrades: 'Upgrades', paint: 'Paint', maps: 'Maps', profile: 'Profile',
+  powerups: 'Powerups', upgrades: 'Upgrades', paint: 'Paint', maps: 'Maps', career: 'Career', profile: 'Profile',
 };
 
 export interface GarageOptions {
@@ -115,6 +118,7 @@ export interface GarageOptions {
   notice: string;
   keys: Bindings;
   tab: GarageTab;
+  career: CareerProgress;
   /** Absent when progress is only saved on this device. */
   account: {
     profile: Profile;
@@ -129,9 +133,31 @@ function ordinal(place: number): string {
   return ['1st', '2nd', '3rd'][place - 1] ?? `${place}th`;
 }
 
-function profilePanel(account: GarageOptions['account']): string {
+const MEDAL_LABEL: Record<Medal, string> = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold' };
+
+function careerPanel(progress: CareerProgress, paysMoney: boolean): string {
+  const cards = CAREER.map((fight, index) => {
+    const unlocked = isUnlocked(progress, index);
+    const medal = progress[fight.id];
+    const reward = paysMoney && !medal ? ` · $${fight.reward} first medal` : '';
+    const status = !unlocked ? 'Locked' : medal ? `${MEDAL_LABEL[medal]} · Replay` : 'Fight';
+    return `<button class="card${fight.boss ? ' card-boss' : ''}${medal ? ` medal-${medal}` : ''}${unlocked ? '' : ' card-locked'}" data-fight-id="${fight.id}" ${unlocked ? '' : 'disabled'}>
+      <strong>${index + 1}. ${fight.title}</strong><span>${fight.blurb}</span><small>${ARENAS[fight.arena].name} · ${MODES[fight.mode].name}${reward}</small><em>${status}</em></button>`;
+  }).join('');
+  return `<section><h3>Career</h3><p class="settings-hint">Fight your way up the ladder with your current robot. Win a medal to unlock the next fight, and win almost untouched for gold.${paysMoney ? '' : ' Career runs in your browser, so it awards medals and achievements rather than money.'}</p><div class="cards">${cards}</div></section>`;
+}
+
+function achievementsPanel(stats: AchievementStats): string {
+  const items = ACHIEVEMENTS.map((a) => {
+    const earned = a.earned(stats);
+    return `<div class="achievement${earned ? ' achievement-on' : ''}"><strong>${earned ? '★ ' : ''}${a.name}</strong><span>${a.blurb}</span></div>`;
+  }).join('');
+  return `<section><h3>Achievements</h3><div class="achievements">${items}</div></section>`;
+}
+
+function profilePanel(account: GarageOptions['account'], career: CareerProgress): string {
   if (!account) {
-    return `<section><h3>Profile</h3><p class="settings-hint">Your progress is saved on this device. Connect to a game server to keep a profile, match history and rating.</p></section>`;
+    return `<section><h3>Profile</h3><p class="settings-hint">Your progress is saved on this device. Connect to a game server to keep a profile, match history and rating.</p></section>${achievementsPanel({ matches: 0, wins: 0, kills: 0, rating: 0, career })}`;
   }
   const { profile, history, leaderboard, googleAvailable, confirmDelete } = account;
   const { save, rating, kills, deaths, signedIn } = profile;
@@ -158,6 +184,7 @@ function profilePanel(account: GarageOptions['account']): string {
         <div><b>${deaths}</b><span>Deaths</span></div>
       </div>
     </section>
+    ${achievementsPanel({ matches: save.matches, wins: save.wins, kills, rating, career })}
     <section><h3>Recent online matches</h3>${
       historyRows
         ? `<table class="results"><thead><tr><th>Date</th><th>Map</th><th>Mode</th><th>Place</th><th>K/D</th><th>Payout</th><th>Rating</th></tr></thead><tbody>${historyRows}</tbody></table>`
@@ -270,7 +297,13 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
       case 'maps':
         return `<section><h3>Practice map</h3><div class="cards">${maps}</div></section><section><h3>Practice mode</h3><div class="cards">${modes}</div></section><p class="settings-hint">Online matches pick their own map and mode.</p>`;
       case 'profile':
-        return profilePanel(options.account);
+        return profilePanel(options.account, options.career);
+      case 'career':
+        return careerPanel(options.career, options.account === null);
+      case 'melee': {
+        const rear = save.loadout.rearMelee === true;
+        return `<section><h3>Mounting</h3><div class="choices"><button class="mini-btn${rear ? '' : ' mini-on'}" data-rear="0">Front</button><button class="mini-btn${rear ? ' mini-on' : ''}" data-rear="1">Rear</button></div><p class="settings-hint">A rear mount lets you hit while reversing away. Free to change.</p></section>${section('melee')}`;
+      }
       default:
         return section(options.tab);
     }
@@ -304,8 +337,10 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
   el.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest<HTMLElement>('button');
     if (!target) return;
-    const { slot, id, power, upgrade, tab, paint: part, value, arena, mode } = target.dataset;
+    const { slot, id, power, upgrade, tab, paint: part, value, arena, mode, fightId, rear } = target.dataset;
     if (tab) actions.onTab(tab as GarageTab);
+    else if (fightId) actions.onCareer(CAREER.find((f) => f.id === fightId)!);
+    else if (rear) actions.onRear(rear === '1');
     else if (part && value) actions.onPaint({ [part]: part === 'pattern' || part === 'topper' ? value : Number(value) } as Partial<Paint>);
     else if (arena) actions.onPractice({ arena: arena as ArenaId });
     else if (mode) actions.onPractice({ mode: mode as ModeId });
