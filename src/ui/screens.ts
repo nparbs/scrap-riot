@@ -1,12 +1,26 @@
 import { CATALOG, upgradeCost, type Save, type Slot } from '../game/progress';
 import { ACTIONS, keyLabel, QUALITY, type Action, type Bindings, type Quality, type Settings } from '../game/settings';
 import { NAME_MAX } from '../net/protocol';
-import { POWERUPS, POWERUP_CAP, POWERUP_ORDER, UPGRADES, type PowerupId, type UpgradeId } from '../sim/data';
+import { ARENA_ORDER, ARENAS, type ArenaId } from '../sim/arena';
+import {
+  DEFAULT_PAINT,
+  MODES,
+  PAINT_COLORS,
+  PATTERNS,
+  POWERUPS,
+  POWERUP_CAP,
+  POWERUP_ORDER,
+  TOPPERS,
+  UPGRADES,
+  type ModeId,
+  type Paint,
+  type PowerupId,
+  type UpgradeId,
+} from '../sim/data';
 import type { Standing } from '../sim/match';
 import { escapeText, UPGRADE_ORDER } from './hud';
 
-export const PLAYER_COLOR = 0xff8a2a;
-const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4'];
+const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
 function controlsTable(keys: Bindings): string {
   const key = (action: Action) => `<kbd>${keyLabel(keys[action])}</kbd>`;
   return `
@@ -15,7 +29,7 @@ function controlsTable(keys: Bindings): string {
     <tr><td>${key('melee')}</td><td>Front weapon</td></tr>
     <tr><td>${key('turret')}</td><td>Turret (aims itself)</td></tr>
     <tr><td>${key('defense')}</td><td>Defense</td></tr>
-    <tr><td>${key('power1')}${key('power2')}${key('power3')}${key('power4')}</td><td>Powerups</td></tr>
+    <tr><td>${key('power1')}${key('power2')}${key('power3')}${key('power4')}${key('power5')}${key('power6')}</td><td>Powerups</td></tr>
     <tr><td>${key('rear')}</td><td>Look behind</td></tr>
     <tr><td><kbd>M</kbd> / <kbd>Esc</kbd></td><td>Mute / Pause</td></tr>
   </table>`;
@@ -53,7 +67,7 @@ export function pauseScreen(online: boolean, onResume: () => void, onQuit: () =>
   return el;
 }
 
-export function lobbyScreen(onCancel: () => void): { el: HTMLElement; update: (players: number, capacity: number, startsIn: number) => void } {
+export function lobbyScreen(onCancel: () => void): { el: HTMLElement; update: (players: number, capacity: number, startsIn: number, arena: ArenaId, mode: ModeId) => void } {
   const el = document.createElement('div');
   el.className = 'screen screen-pause';
   el.innerHTML = `
@@ -67,8 +81,8 @@ export function lobbyScreen(onCancel: () => void): { el: HTMLElement; update: (p
   const status = el.querySelector('[data-status]')!;
   return {
     el,
-    update: (players, capacity, startsIn) => {
-      status.textContent = `${players} of ${capacity} players. Starting in ${startsIn}s.`;
+    update: (players, capacity, startsIn, arena, mode) => {
+      status.textContent = `${ARENAS[arena].name}, ${MODES[mode].name}. ${players} of ${capacity} players. Starting in ${startsIn}s.`;
     },
   };
 }
@@ -81,13 +95,24 @@ export interface GarageActions {
   onOnline: () => void;
   onName: (name: string) => void;
   onSettings: () => void;
+  onTab: (tab: GarageTab) => void;
+  onPaint: (change: Partial<Paint>) => void;
+  onPractice: (change: { arena?: ArenaId; mode?: ModeId }) => void;
 }
+
+export type GarageTab = 'chassis' | 'melee' | 'turret' | 'defense' | 'powerups' | 'upgrades' | 'paint' | 'maps';
+
+const TAB_LABELS: Record<GarageTab, string> = {
+  chassis: 'Chassis', melee: 'Front', turret: 'Turret', defense: 'Defense',
+  powerups: 'Powerups', upgrades: 'Upgrades', paint: 'Paint', maps: 'Maps',
+};
 
 export interface GarageOptions {
   onlineAvailable: boolean;
   /** One-off message, such as why the last online attempt failed. */
   notice: string;
   keys: Bindings;
+  tab: GarageTab;
 }
 
 function slotTitle(slot: Slot, keys: Bindings): string {
@@ -98,6 +123,8 @@ function slotTitle(slot: Slot, keys: Bindings): string {
 }
 
 function statLine(slot: Slot, id: string): string {
+  if (slot === 'melee' && CATALOG.melee[id as keyof typeof CATALOG.melee].passive) return '<small>Always active</small>';
+  if (slot === 'defense' && CATALOG.defense[id as keyof typeof CATALOG.defense].passive) return '<small>Always active</small>';
   if (slot !== 'chassis') return '';
   const c = CATALOG.chassis[id as keyof typeof CATALOG.chassis];
   return `<small>${c.hp} HP · speed ${c.speed}</small>`;
@@ -143,6 +170,54 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
       <strong>${def.name}</strong><span>${def.blurb}</span><div class="pips">${pips}</div><em>${cost === null ? 'Maxed' : `$${cost}`}</em></button>`;
   }).join('');
 
+  const paint = save.loadout.paint ?? DEFAULT_PAINT;
+  const swatches = (part: 'primary' | 'secondary' | 'eye') =>
+    PAINT_COLORS.map(
+      (color) =>
+        `<button class="swatch${paint[part] === color ? ' swatch-on' : ''}" style="background:#${color.toString(16).padStart(6, '0')}" data-paint="${part}" data-value="${color}" aria-label="${part} color"></button>`,
+    ).join('');
+  const choice = (part: 'pattern' | 'topper', table: Record<string, string>) =>
+    Object.entries(table)
+      .map(([id, label]) => `<button class="mini-btn${paint[part] === id ? ' mini-on' : ''}" data-paint="${part}" data-value="${id}">${label}</button>`)
+      .join('');
+  const paintShop = `
+    <section><h3>Main color</h3><div class="swatches">${swatches('primary')}</div></section>
+    <section><h3>Trim color</h3><div class="swatches">${swatches('secondary')}</div></section>
+    <section><h3>Eye color</h3><div class="swatches">${swatches('eye')}</div></section>
+    <section><h3>Pattern</h3><div class="choices">${choice('pattern', PATTERNS)}</div></section>
+    <section><h3>Topper</h3><div class="choices">${choice('topper', TOPPERS)}</div></section>
+    <p class="settings-hint">Paint is free, and other players see it online.</p>`;
+
+  const maps = ARENA_ORDER.map((id) => {
+    const def = ARENAS[id];
+    const on = save.practice.arena === id;
+    return `<button class="card${on ? ' card-on' : ''}" data-arena="${id}"><strong>${def.name}</strong><span>${def.blurb}</span><small>${def.walled ? 'Walled' : 'Open edges'}${def.grip < 0.5 ? ' · Icy' : ''}</small><em>${on ? 'Selected' : 'Select'}</em></button>`;
+  }).join('');
+  const modes = (Object.keys(MODES) as ModeId[])
+    .map((id) => {
+      const on = save.practice.mode === id;
+      return `<button class="card${on ? ' card-on' : ''}" data-mode="${id}"><strong>${MODES[id].name}</strong><span>${MODES[id].blurb}</span><em>${on ? 'Selected' : 'Select'}</em></button>`;
+    })
+    .join('');
+
+  const body = () => {
+    switch (options.tab) {
+      case 'powerups':
+        return `<section><h3>Powerups (used up in battle)</h3><div class="cards">${powerups}</div></section>`;
+      case 'upgrades':
+        return `<section><h3>Upgrades</h3><div class="cards">${upgrades}</div></section>`;
+      case 'paint':
+        return paintShop;
+      case 'maps':
+        return `<section><h3>Practice map</h3><div class="cards">${maps}</div></section><section><h3>Practice mode</h3><div class="cards">${modes}</div></section><p class="settings-hint">Online matches pick their own map and mode.</p>`;
+      default:
+        return section(options.tab);
+    }
+  };
+  const tabs = (Object.keys(TAB_LABELS) as GarageTab[])
+    .map((id) => `<button class="tab${options.tab === id ? ' tab-on' : ''}" role="tab" aria-selected="${options.tab === id}" data-tab="${id}">${TAB_LABELS[id]}</button>`)
+    .join('');
+
   el.innerHTML = `
     <div class="garage-top">
       <h2>Garage</h2>
@@ -151,13 +226,9 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
       <div class="garage-money">$${save.money}</div>
     </div>
     ${options.notice ? `<div class="garage-notice" role="alert">${escapeText(options.notice)}</div>` : ''}
+    <div class="garage-tabs" role="tablist">${tabs}</div>
     <div class="garage-panel">
-      ${section('chassis')}
-      ${section('melee')}
-      ${section('turret')}
-      ${section('defense')}
-      <section><h3>Powerups (used up in battle)</h3><div class="cards cards-4">${powerups}</div></section>
-      <section><h3>Upgrades</h3><div class="cards">${upgrades}</div></section>
+      ${body()}
     </div>
     <div class="garage-actions">
       ${options.onlineAvailable ? '<button class="btn btn-primary" data-online>Fight online</button>' : ''}
@@ -172,8 +243,12 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
   el.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest<HTMLElement>('button');
     if (!target) return;
-    const { slot, id, power, upgrade } = target.dataset;
-    if (slot && id) actions.onEquip(slot as Slot, id);
+    const { slot, id, power, upgrade, tab, paint: part, value, arena, mode } = target.dataset;
+    if (tab) actions.onTab(tab as GarageTab);
+    else if (part && value) actions.onPaint({ [part]: part === 'pattern' || part === 'topper' ? value : Number(value) } as Partial<Paint>);
+    else if (arena) actions.onPractice({ arena: arena as ArenaId });
+    else if (mode) actions.onPractice({ mode: mode as ModeId });
+    else if (slot && id) actions.onEquip(slot as Slot, id);
     else if (power) actions.onPowerup(power as PowerupId);
     else if (upgrade) actions.onUpgrade(upgrade as UpgradeId);
     else if ('fight' in target.dataset) actions.onFight();
@@ -237,7 +312,7 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
       ${bindings}
       <p class="settings-hint">Esc cancels a rebind. Using a key that's taken swaps the two actions. Esc and M stay reserved for pause and mute.</p>
       <h3>Gamepad</h3>
-      <p class="settings-hint">Right and left triggers drive, the left stick steers. A: front weapon, RB: turret, B: defense, D-pad: powerups, Y: look behind, Start: menu.</p>
+      <p class="settings-hint">Right and left triggers drive, the left stick steers. A: front weapon, RB: turret, B: defense, D-pad: first four powerups, LB: Repair Kit, X: Turbo, Y: look behind, Start: menu.</p>
       <button class="btn" data-reset>Reset keys</button>
       <button class="btn btn-primary" data-back>Done</button>
     </div>`;

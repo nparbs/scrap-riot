@@ -20,14 +20,14 @@ describe('garage', () => {
     expect(buyOrEquip(save, 'turret', 'arc')).toBe(false);
     expect(save.loadout.turret).toBe('minigun');
     expect(buyUpgrade(save, 'armor')).toBe(false);
-    expect(buyPowerup(save, 'emp')).toBe(false);
+    expect(buyPowerup(save, 'xray')).toBe(false);
   });
 
   it('caps powerups and upgrade levels', () => {
     const save = newSave();
     save.money = 1e6;
-    for (let i = 0; i < 10; i++) buyPowerup(save, 'emp');
-    expect(save.loadout.powerups.emp).toBe(POWERUP_CAP);
+    for (let i = 0; i < 10; i++) buyPowerup(save, 'xray');
+    expect(save.loadout.powerups.xray).toBe(POWERUP_CAP);
     for (let i = 0; i < 10; i++) buyUpgrade(save, 'armor');
     expect(save.loadout.upgrades.armor).toBe(5);
     expect(upgradeCost(save, 'armor')).toBeNull();
@@ -35,7 +35,7 @@ describe('garage', () => {
 
   it('banks results and spends used powerups', () => {
     const save = newSave();
-    applyResult(save, 500, 1, { repair: 0, turbo: 1, overdrive: 0, emp: 0 });
+    applyResult(save, 500, 1, { rage: 0, megashield: 0, cloaking: 0, xray: 0, repair: 0, turbo: 1 });
     expect(save.money).toBe(750);
     expect(save.wins).toBe(1);
     expect(save.loadout.powerups.repair).toBe(0);

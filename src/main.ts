@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Sfx } from './audio';
-import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, writeSave, type Save, type Slot } from './game/progress';
+import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, randomArena, writeSave, type Save, type Slot } from './game/progress';
 import { DEFAULT_BINDINGS, loadSettings, QUALITY, rebind, writeSettings, type Action } from './game/settings';
 import { Tutorial } from './game/tutorial';
 import { Keyboard } from './input';
@@ -9,9 +9,10 @@ import { NetClient, type NetFailure } from './net/client';
 import { sanitizeName } from './net/protocol';
 import { GarageView } from './render/garageView';
 import { MatchView } from './render/matchView';
+import { DEFAULT_PAINT } from './sim/data';
 import { emptyInput, Match, STEP, type Bot, type BotSetup, type GameEvent } from './sim/match';
 import { Hud } from './ui/hud';
-import { garageScreen, lobbyScreen, menuScreen, PLAYER_COLOR, pauseScreen, resultsScreen, settingsScreen } from './ui/screens';
+import { garageScreen, lobbyScreen, menuScreen, pauseScreen, resultsScreen, settingsScreen, type GarageTab } from './ui/screens';
 
 type Mode = 'menu' | 'garage' | 'lobby' | 'match' | 'paused' | 'results';
 
@@ -52,6 +53,7 @@ class Game {
   private hud: Hud | null = null;
   private net: NetClient | null = null;
   private notice = '';
+  private garageTab: GarageTab = 'chassis';
   private tutorial: Tutorial | null = null;
   private readonly tutorialInput = emptyInput();
   private readonly fpsEl = document.createElement('div');
@@ -73,10 +75,9 @@ class Game {
     const pmrem = new THREE.PMREMGenerator(r);
     const environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     pmrem.dispose();
-    for (const scene of [this.view.arena.scene, this.garage.scene]) {
-      scene.environment = environment;
-      scene.environmentIntensity = 0.55;
-    }
+    this.view.setEnvironment(environment);
+    this.garage.scene.environment = environment;
+    this.garage.scene.environmentIntensity = 0.55;
 
     window.addEventListener('resize', () => this.resize());
     this.applyQuality();
@@ -179,8 +180,8 @@ class Game {
     const { tutorial, tutorialInput: input } = this;
     if (!tutorial) return;
     this.keyboard.peek(input);
-    const { repair, turbo, overdrive, emp } = player.powerups;
-    tutorial.update(dt, { ...input, powerups: repair + turbo + overdrive + emp });
+    const powerups = Object.values(player.powerups).reduce((sum, n) => sum + n, 0);
+    tutorial.update(dt, { ...input, powerups });
     this.hud?.setTutorialPrompt(tutorial.prompt);
     if (tutorial.finished) this.endTutorial();
   }
@@ -212,7 +213,7 @@ class Game {
   /** The title screen runs a real AI-only match in the background. */
   private startDemo(): void {
     const seed = Math.floor(Math.random() * 1e9);
-    this.match = new Match(makeRivals(null, 6, seed), { seed });
+    this.match = new Match(makeRivals(null, 6, seed), { seed, arena: randomArena(Math.random) });
     this.player = null;
     this.view.setMatch(this.match, 0);
   }
@@ -230,8 +231,8 @@ class Game {
 
   private refreshGarage(): void {
     const { loadout } = this.save;
-    const { chassis, melee, turret, defense } = loadout;
-    this.garage.setBuild({ chassis, melee, turret, defense, color: PLAYER_COLOR });
+    const { chassis, melee, turret, defense, paint = DEFAULT_PAINT } = loadout;
+    this.garage.setBuild({ chassis, melee, turret, defense, paint, color: paint.primary });
     const panel = this.ui.querySelector('.garage-panel');
     const scroll = panel ? panel.scrollTop : 0;
     const buy = (ok: boolean) => {
@@ -255,12 +256,26 @@ class Game {
           onFight: () => this.startMatch(),
           onOnline: () => this.startOnline(),
           onSettings: () => this.openSettings(() => this.refreshGarage()),
+          onTab: (tab) => {
+            this.garageTab = tab;
+            this.sfx.click();
+            this.refreshGarage();
+            this.ui.querySelector('.garage-panel')!.scrollTop = 0;
+          },
+          onPaint: (change) => {
+            this.save.loadout.paint = { ...(this.save.loadout.paint ?? DEFAULT_PAINT), ...change };
+            buy(true);
+          },
+          onPractice: (change) => {
+            Object.assign(this.save.practice, change);
+            buy(true);
+          },
           onName: (name) => {
             this.save.name = sanitizeName(name);
             writeSave(this.storage, this.save);
           },
         },
-        { onlineAvailable: SERVER_URL !== '', notice, keys: this.settings.bindings },
+        { onlineAvailable: SERVER_URL !== '', notice, keys: this.settings.bindings, tab: this.garageTab },
       ),
     );
     const next = this.ui.querySelector('.garage-panel');
@@ -269,8 +284,9 @@ class Game {
 
   private startMatch(): void {
     const seed = Math.floor(Math.random() * 1e9);
-    const me: BotSetup = { name: 'You', color: PLAYER_COLOR, loadout: this.save.loadout, isAI: false };
-    this.match = new Match([me, ...makeRivals(this.save, 5, seed)], { seed });
+    const { name, loadout, practice } = this.save;
+    const me: BotSetup = { name, color: (loadout.paint ?? DEFAULT_PAINT).primary, loadout, isAI: false };
+    this.match = new Match([me, ...makeRivals(this.save, 5, seed)], { seed, arena: practice.arena, mode: practice.mode });
     this.player = this.match.bots[0];
     this.hud = new Hud(this.match, this.player, this.settings.bindings);
     this.beginTutorial();
@@ -360,6 +376,15 @@ class Game {
         break;
       case 'arc':
         this.sfx.arc(near(event.points[0].x, event.points[0].z));
+        break;
+      case 'beam':
+        this.sfx.arc(near(event.x1, event.z1));
+        break;
+      case 'pulse':
+        this.sfx.strike(near(event.x, event.z));
+        break;
+      case 'teleport':
+        this.sfx.arc(near(event.x1, event.z1));
         break;
       case 'hit':
         if (event.source === player.id && event.amount >= 1) this.sfx.hit(0.8);
@@ -455,7 +480,7 @@ class Game {
     this.hud?.update(dt);
     this.updateTutorial(dt, player);
     const top = player.chassis.speed * player.speedMult;
-    this.sfx.setLoops(player.alive ? Math.min(1, Math.hypot(player.vx, player.vz) / top) : -1, player.alive && player.meleeActive);
+    this.sfx.setLoops(player.alive ? Math.min(1, Math.hypot(player.vx, player.vz) / top) : -1, player.alive && player.meleeActive && ['chainsaw', 'drill', 'rollingpin'].includes(player.loadout.melee));
     // Online, the server announces the end of the match and onOver handles it.
     if (match.over && !net) {
       this.view.update(0, 1);

@@ -3,7 +3,7 @@ import { PadReader, type PadLike, type PadState } from './gamepad';
 import { POWERUP_ORDER, type PowerupId } from './sim/data';
 import type { BotInput } from './sim/match';
 
-const POWER_ACTIONS = ['power1', 'power2', 'power3', 'power4'] as const;
+const POWER_ACTIONS = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'] as const;
 
 /** Combines the keyboard and any connected gamepad into one set of controls. */
 export class Keyboard {

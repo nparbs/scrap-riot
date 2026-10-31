@@ -41,16 +41,17 @@ The current tuning comes from AI-versus-AI data and has not had a human playtest
 
 ## v0.3: More to fight with
 
-- [ ] Two more arenas with distinct hazards
+- [x] Five new maps: rooftop, furnace, canyon, foundry, frozen lake
+- [x] Every weapon found in the original games ([notes](docs/original-research.md))
+- [x] Ammo for turrets
+- [x] Paint shop: colors, patterns, toppers
 - [ ] Rear-mounted weapon option
-- [ ] Two to three new weapons per slot
-- [ ] Paint and decal customization
 - [ ] Per-part damage visuals
 
 ## v0.4: Single-player career
 
 - [ ] Ladder of named rivals with escalating builds
-- [ ] New modes: last robot standing, king of the hill
+- [x] New modes: last robot standing, king of the hill
 - [ ] Boss robots
 - [ ] Achievements and match stats
 

@@ -90,8 +90,26 @@ export class Sfx {
   }
 
   shot(kind: TurretId, volume: number): void {
-    if (kind === 'rockets') this.burst(0.5 * volume, 0.35, 900, 'lowpass');
-    else this.burst(0.28 * volume, 0.06, 2600, 'highpass');
+    switch (kind) {
+      case 'rockets':
+      case 'guided':
+      case 'seeker':
+        this.burst(0.5 * volume, 0.35, 900, 'lowpass');
+        break;
+      case 'mortar':
+      case 'grenade':
+        this.burst(0.4 * volume, 0.14, 420, 'lowpass');
+        this.tone(0.2 * volume, 0.12, 220, 90, 'triangle');
+        break;
+      case 'spear':
+        this.tone(0.18 * volume, 0.1, 900, 220, 'sawtooth');
+        break;
+      case 'discs':
+        this.tone(0.12 * volume, 0.12, 1400, 2200, 'triangle');
+        break;
+      default:
+        this.burst(0.28 * volume, 0.06, 2600, 'highpass');
+    }
   }
 
   arc(volume: number): void {

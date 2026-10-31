@@ -344,6 +344,91 @@ button:focus-visible {
   background: var(--accent);
 }
 
+.garage-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  width: min(620px, 100%);
+  flex: none;
+}
+
+.tab {
+  flex: 1 1 auto;
+  padding: 7px 6px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  background: #1e2024;
+  color: var(--muted);
+  font: 600 12px var(--body);
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab-on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #1a0f05;
+}
+
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 5px;
+}
+
+.swatch {
+  aspect-ratio: 1;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  outline: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+}
+
+.swatch-on {
+  border-color: #fff;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.hud-mode {
+  position: absolute;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.hud-blind {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.slot-ammo {
+  position: absolute !important;
+  right: 4px;
+  bottom: 4px;
+  left: 4px;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.slot-ammo i {
+  display: block;
+  height: 100%;
+}
+
 .garage-actions {
   display: flex;
   gap: 8px;
@@ -515,6 +600,10 @@ button:focus-visible {
   .cards,
   .cards-4 {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .swatches {
+    grid-template-columns: repeat(6, 1fr);
   }
 }
 

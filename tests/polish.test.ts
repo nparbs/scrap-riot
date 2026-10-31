@@ -103,7 +103,7 @@ describe('tutorial', () => {
   });
 
   it('runs to completion and shows rebound keys', () => {
-    const t = new Tutorial({ ...DEFAULT_BINDINGS, power2: 'KeyQ' });
+    const t = new Tutorial({ ...DEFAULT_BINDINGS, power6: 'KeyQ' });
     t.update(2, { ...idle, throttle: 1 });
     t.update(2, { ...idle, steer: 1 });
     t.update(2, { ...idle, turret: true });

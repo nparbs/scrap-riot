@@ -19,8 +19,8 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => s.close()));
 });
 
-async function server(room: Record<string, number> = {}, extra: Record<string, unknown> = {}): Promise<GameServer> {
-  const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 80, fullLobbyMs: 10, graceMs: 200, ...room }, ...extra });
+async function server(room: Record<string, unknown> = {}, extra: Record<string, unknown> = {}): Promise<GameServer> {
+  const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 80, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', ...room }, ...extra });
   servers.push(s);
   return s;
 }
@@ -96,6 +96,27 @@ describe('protocol', () => {
 });
 
 describe('online match', () => {
+  it('sends the same map and mode to every player, and rolls them when not fixed', async () => {
+    const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 60, fullLobbyMs: 10 } });
+    servers.push(s);
+    const a = client(s.port);
+    const b = client(s.port);
+    await until(() => a.state.started && b.state.started);
+    expect(a.c.match!.arena.id).toBe(b.c.match!.arena.id);
+    expect(a.c.match!.mode).toBe(b.c.match!.mode);
+  });
+
+  it('shows other players a validated paint job', async () => {
+    const s = await server();
+    const { ws, inbox, opened } = raw(s.port);
+    await opened;
+    const paint = { primary: 0x35d0e6, secondary: 123456, eye: 'red', pattern: 'flames', topper: '<script>' };
+    ws.send(JSON.stringify({ t: 'join', v: PROTOCOL_VERSION, name: 'Painter', loadout: { paint } }));
+    await until(() => inbox.some((m) => m.t === 'start'));
+    const start = inbox.find((m) => m.t === 'start') as unknown as { setups: { loadout: { paint: Record<string, unknown> } }[] };
+    expect(start.setups[0].loadout.paint).toEqual({ primary: 0x35d0e6, secondary: 0x33363b, eye: 0x35d0e6, pattern: 'flames', topper: 'none' });
+  });
+
   it('puts two players in one match and fills the rest with bots', async () => {
     const s = await server();
     const a = client(s.port, 'Ann');

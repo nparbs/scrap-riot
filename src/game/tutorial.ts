@@ -46,7 +46,7 @@ const STEPS: Step[] = [
     done: (input) => input.defense,
   },
   {
-    prompt: (b) => `Press ${k(b.power2)} for Turbo. Powerups are limited, so choose your moment.`,
+    prompt: (b) => `Press ${k(b.power6)} for Turbo. Powerups are limited, so choose your moment.`,
     hold: 0,
     done: (_, used) => used,
   },

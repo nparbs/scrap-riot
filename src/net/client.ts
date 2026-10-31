@@ -1,3 +1,5 @@
+import type { ArenaId } from '../sim/arena';
+import type { ModeId } from '../sim/data';
 import { emptyInput, lerpAngle, Match, STEP, type Bot, type BotInput, type Loadout } from '../sim/match';
 import {
   INPUT_RATE,
@@ -26,7 +28,7 @@ const MAX_CORRECTION = 6;
 export type NetFailure = ErrorCode | 'unreachable' | 'lost';
 
 export interface NetClientEvents {
-  onQueue?: (players: number, capacity: number, startsIn: number) => void;
+  onQueue?: (players: number, capacity: number, startsIn: number, arena: ArenaId, mode: ModeId) => void;
   onStart?: (match: Match, player: Bot) => void;
   onOver?: () => void;
   onFail?: (reason: NetFailure) => void;
@@ -130,7 +132,7 @@ export class NetClient {
   private handle(message: ServerMessage): void {
     switch (message.t) {
       case 'queue':
-        this.events.onQueue?.(message.players, message.capacity, message.startsIn);
+        this.events.onQueue?.(message.players, message.capacity, message.startsIn, message.arena, message.mode);
         break;
       case 'start':
         this.handleStart(message);
@@ -161,7 +163,13 @@ export class NetClient {
     if (this.start?.match === message.match) return;
     this.start = message;
     this.snaps = [];
-    this.match = new Match(message.setups, { seed: message.seed, duration: message.duration, killTarget: message.killTarget });
+    this.match = new Match(message.setups, {
+      seed: message.seed,
+      arena: message.arena,
+      mode: message.mode,
+      duration: message.duration,
+      killTarget: message.killTarget,
+    });
     this.player = this.match.bots[message.you];
     const { x, z, heading, vx, vz } = this.player;
     this.pred = { x, z, heading, vx, vz };

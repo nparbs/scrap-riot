@@ -27,6 +27,8 @@ export interface BurstOptions {
   gravity?: number;
   y?: number;
   spread?: number;
+  /** Sprays along this direction instead of bursting outward. */
+  dir?: { x: number; z: number; jitter: number };
 }
 
 /** Pooled box particles drawn as one instanced mesh. Effects are cosmetic, so Math.random is fine here. */
@@ -68,9 +70,9 @@ export class Particles {
         x,
         y: o.y ?? 0.8,
         z,
-        vx: Math.cos(a) * speed * flat,
-        vy: up * speed,
-        vz: Math.sin(a) * speed * flat,
+        vx: o.dir ? o.dir.x * speed + (Math.random() - 0.5) * o.dir.jitter : Math.cos(a) * speed * flat,
+        vy: o.dir ? (up - 0.5) * o.dir.jitter : up * speed,
+        vz: o.dir ? o.dir.z * speed + (Math.random() - 0.5) * o.dir.jitter : Math.sin(a) * speed * flat,
         life,
         maxLife: life,
         size: o.size * (0.5 + Math.random() * 0.5),

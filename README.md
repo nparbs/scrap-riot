@@ -23,7 +23,7 @@ npm run dev
 | X | Front weapon |
 | C | Turret (aims itself, you choose when to fire) |
 | V | Defense |
-| 1 to 4 | Repair, Turbo, Overdrive, EMP |
+| 1 to 6 | Rage, Mega Shield, Cloaking, X-Ray, Repair, Turbo |
 | Ctrl (hold) | Look behind |
 | M / Esc | Mute / Pause |
 
@@ -39,14 +39,14 @@ The server is authoritative: it runs the same simulation as the game, and client
 
 ## What's in the game
 
-- **3 chassis:** Whippet, Bruiser, Anvil
-- **3 front weapons:** Chainsaw, Sledgehammer, Spike Ram
-- **3 turrets:** Minigun, Rocket Pod, Arc Coil
-- **3 defenses:** Energy Shield, Mine Layer, Oil Slick
-- **4 powerups:** Repair Kit, Turbo, Overdrive, EMP Burst
+- **5 chassis**, from the quick Whippet to the Anvil
+- **37 weapons:** 9 front weapons, 11 turrets and 17 defenses, drawn from every version of the original ([research notes](docs/original-research.md))
+- **6 powerups:** Rage, Mega Shield, Cloaking, X-Ray, Repair Kit, Turbo
 - **3 upgrade tracks** of 5 levels each: armor, engine, weapons
+- **6 maps:** walled pits, a rooftop and a canyon with lethal drops, a furnace, a piston foundry, and a frozen lake
+- **3 modes:** Free-for-All, Last Robot Standing, King of the Hill
+- **Paint shop:** colors, patterns and toppers, all visible to other players
 - **AI rivals** that get tougher as you invest in upgrades
-- **1 arena** with pillars, sliding floor saws, and repair pickups
 
 See [ROADMAP.md](ROADMAP.md) for what's next.
 

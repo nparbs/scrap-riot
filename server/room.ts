@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { makeRivals } from '../src/game/progress';
+import { makeRivals, randomArena } from '../src/game/progress';
 import { MAX_PLAYERS, onlineLoadout, sanitizeName, SNAPSHOT_STEPS, unpackFlags, type ServerMessage, type StartMessage } from '../src/net/protocol';
 import { encodeSnapshot } from '../src/net/snapshot';
-import { MATCH, POWERUP_ORDER } from '../src/sim/data';
+import type { ArenaId } from '../src/sim/arena';
+import { MODES, POWERUP_ORDER, type ModeId } from '../src/sim/data';
 import { Match, STEP, type BotSetup } from '../src/sim/match';
+import { makeRng } from '../src/sim/rng';
 
 export interface Conn {
   send(data: string): void;
@@ -18,16 +20,19 @@ export interface RoomOptions {
   fullLobbyMs: number;
   /** How long a match with no connected humans survives waiting for a reconnect. */
   graceMs: number;
-  duration: number;
+  /** Fixes the match length. By default each mode uses its own. */
+  duration?: number;
   killTarget: number;
+  /** Fixes the map and mode, otherwise each room rolls its own. */
+  arena?: ArenaId;
+  mode?: ModeId;
 }
 
 export const DEFAULT_ROOM_OPTIONS: RoomOptions = {
   lobbyMs: 10_000,
   fullLobbyMs: 2_000,
   graceMs: 20_000,
-  duration: MATCH.duration,
-  killTarget: MATCH.killTarget,
+  killTarget: 12,
 };
 
 const HUMAN_COLORS = [0xff8a2a, 0x35d0e6, 0xf25fd0, 0x9be03a, 0xf4f1e8, 0xffd23a];
@@ -50,6 +55,9 @@ export class Room {
   match: Match | null = null;
   finished = false;
   private startAt: number;
+  readonly arena: ArenaId;
+  readonly mode: ModeId;
+  private readonly duration: number;
   private seed = Math.floor(Math.random() * 2 ** 31);
   private setups: BotSetup[] = [];
   private last = 0;
@@ -60,6 +68,12 @@ export class Room {
 
   constructor(private readonly options: RoomOptions, now: number) {
     this.startAt = now + options.lobbyMs;
+    const rng = makeRng(this.seed);
+    this.arena = options.arena ?? randomArena(rng);
+    // Mostly free-for-all, with the other two modes mixed in for variety.
+    const roll = rng();
+    this.mode = options.mode ?? (roll < 0.6 ? 'ffa' : roll < 0.8 ? 'lms' : 'koth');
+    this.duration = options.duration ?? MODES[this.mode].duration;
   }
 
   get open(): boolean {
@@ -161,7 +175,7 @@ export class Room {
     const humans = [...this.players.values()];
     const humanSetups: BotSetup[] = humans.map((player, i) => {
       player.botId = i;
-      return { name: player.name, color: HUMAN_COLORS[i], loadout: player.loadout, isAI: false };
+      return { name: player.name, color: player.loadout.paint?.primary ?? HUMAN_COLORS[i], loadout: player.loadout, isAI: false };
     });
     const rivals = makeRivals(null, MAX_PLAYERS - humans.length, this.seed).map((rival) => ({
       ...rival,
@@ -170,7 +184,9 @@ export class Room {
     this.setups = [...humanSetups, ...rivals];
     this.match = new Match(this.setups, {
       seed: this.seed,
-      duration: this.options.duration,
+      arena: this.arena,
+      mode: this.mode,
+      duration: this.duration,
       killTarget: this.options.killTarget,
     });
     this.last = now;
@@ -185,9 +201,11 @@ export class Room {
       you: player.botId,
       token: player.token,
       seed: this.seed,
+      arena: this.arena,
+      mode: this.mode,
       // Clients run no AI, so every robot is a puppet driven by snapshots.
       setups: this.setups.map(({ name, color, loadout }) => ({ name, color, loadout, isAI: false })),
-      duration: this.options.duration,
+      duration: this.duration,
       killTarget: this.options.killTarget,
     };
   }
@@ -204,6 +222,8 @@ export class Room {
       players: this.players.size,
       capacity: MAX_PLAYERS,
       startsIn: Math.max(0, Math.ceil((this.startAt - now) / 1000)),
+      arena: this.arena,
+      mode: this.mode,
     });
   }
 
