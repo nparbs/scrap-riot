@@ -281,8 +281,11 @@ describe('online match', () => {
     expect(res.ok).toBe(true);
     const ws = new WebSocket(`ws://127.0.0.1:${s.port}`);
     sockets.push(ws);
-    await new Promise<void>((resolve) => (ws.onclose = () => resolve()));
-    expect(ws.readyState).toBe(WebSocket.CLOSED);
+    const outcome = await new Promise<string>((resolve) => {
+      ws.onopen = () => resolve('open');
+      ws.onerror = ws.onclose = () => resolve('refused');
+    });
+    expect(outcome).toBe('refused');
   });
 
   it('tells the player when the server is unreachable', async () => {

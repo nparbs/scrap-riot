@@ -80,8 +80,11 @@ export class NetClient {
       else this.send({ t: 'join', v: PROTOCOL_VERSION, name: this.hello.name, loadout: this.hello.loadout });
     };
     ws.onmessage = (e) => this.handle(JSON.parse(String(e.data)) as ServerMessage);
-    ws.onclose = () => {
-      if (ws === this.ws) this.handleClose();
+    // Not every runtime follows a failed connection's error event with a close event.
+    ws.onerror = ws.onclose = () => {
+      if (ws !== this.ws) return;
+      this.ws = null;
+      this.handleClose();
     };
   }
 
