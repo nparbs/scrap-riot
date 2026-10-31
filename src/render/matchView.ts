@@ -12,6 +12,8 @@ const MAX_WRECKS = 12;
 const WRECK_LIFE = 12;
 const FALL_TIME = 1;
 const ENVIRONMENT_INTENSITY = 0.55;
+const MATTE_METALNESS = 0.15;
+const FILL_LIGHT = 1.3;
 
 interface BotVisual {
   model: RobotModel;
@@ -66,6 +68,7 @@ export class MatchView {
   private match: Match | null = null;
   private readonly scenes = new Map<ArenaId, ArenaScene>();
   private environment: THREE.Texture | null = null;
+  private reflections = true;
   private readonly transients: Transient[] = [];
   private readonly droneMeshes = new Map<number, THREE.Group>();
   private readonly visuals = new Map<number, BotVisual>();
@@ -107,16 +110,41 @@ export class MatchView {
     let scene = this.scenes.get(id);
     if (!scene) {
       scene = buildArena(ARENAS[id]);
-      scene.scene.environment = this.environment;
       scene.scene.environmentIntensity = ENVIRONMENT_INTENSITY;
       this.scenes.set(id, scene);
+      if (!this.reflections) this.applyDetail(scene);
+      else scene.scene.environment = this.environment;
     }
     return scene;
   }
 
   setEnvironment(texture: THREE.Texture): void {
     this.environment = texture;
-    for (const scene of this.scenes.values()) scene.scene.environment = texture;
+    for (const scene of this.scenes.values()) scene.scene.environment = this.reflections ? texture : null;
+  }
+
+  /** Without reflections, shiny metal has nothing to show and renders black, so it goes matte. */
+  private dullMetal(scene: THREE.Scene): void {
+    scene.traverse((node) => {
+      if (!(node instanceof THREE.Mesh)) return;
+      const material = node.material;
+      if (!(material instanceof THREE.MeshStandardMaterial)) return;
+      material.userData.metalness ??= material.metalness;
+      material.metalness = this.reflections ? material.userData.metalness : Math.min(material.userData.metalness, MATTE_METALNESS);
+      material.needsUpdate = true;
+    });
+  }
+
+  private applyDetail(scene: ArenaScene): void {
+    scene.scene.environment = this.reflections ? this.environment : null;
+    scene.fill.intensity = this.reflections ? 0 : FILL_LIGHT;
+    this.dullMetal(scene.scene);
+  }
+
+  /** Materials compile with or without reflections and shadows, so they all rebuild when those change. */
+  setDetail(reflections: boolean): void {
+    this.reflections = reflections;
+    for (const scene of this.scenes.values()) this.applyDetail(scene);
   }
 
   setMatch(match: Match, followId: number): void {
@@ -127,6 +155,7 @@ export class MatchView {
     this.match = match;
     this.followId = followId;
     for (const bot of match.bots) this.addBot(bot);
+    if (!this.reflections) this.dullMetal(this.arena.scene);
     const bot = match.bots[followId];
     this.camHeading = bot.heading;
     this.camPos.set(bot.x - Math.sin(bot.heading) * CAM_DISTANCE, CAM_HEIGHT, bot.z - Math.cos(bot.heading) * CAM_DISTANCE);

@@ -3,7 +3,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { Sfx } from './audio';
 import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, randomArena, writeSave, type Save, type Slot } from './game/progress';
 import { awardMedal, careerResult, fightSetups, loadCareer, writeCareer, type Fight } from './game/career';
-import { DEFAULT_BINDINGS, loadSettings, QUALITY, rebind, writeSettings, type Action } from './game/settings';
+import { activeLevel, AutoQuality, DEFAULT_BINDINGS, loadSettings, QUALITY, rebind, writeSettings, type Action } from './game/settings';
 import { Tutorial } from './game/tutorial';
 import { Keyboard } from './input';
 import { Api, ApiError } from './net/api';
@@ -44,8 +44,12 @@ function safeStorage(): Storage | null {
 class Game {
   private readonly stage = document.getElementById('stage')!;
   private readonly ui = document.getElementById('ui')!;
-  private readonly renderer = new THREE.WebGLRenderer({ antialias: true });
   private readonly storage = safeStorage();
+  private readonly settings = loadSettings(this.storage);
+  // Antialiasing can't change once the page has started, so it follows the level at load.
+  // Without the preference, laptops with two graphics chips can pick the slower one.
+  private readonly renderer = new THREE.WebGLRenderer({ antialias: QUALITY[activeLevel(this.settings)].reflections, powerPreference: 'high-performance' });
+  private autoQuality = new AutoQuality();
   private save: Save = loadSave(this.storage);
   /** The server's copy of this player, when connected. It then replaces the local save. */
   private profile: Profile | null = null;
@@ -55,7 +59,6 @@ class Game {
   private history: HistoryEntry[] = [];
   private leaderboard: LeaderboardEntry[] = [];
   private confirmDelete = false;
-  private readonly settings = loadSettings(this.storage);
   private readonly career = loadCareer(this.storage);
   private careerFight: Fight | null = null;
   private readonly view = new MatchView();
@@ -68,6 +71,7 @@ class Game {
   private hud: Hud | null = null;
   private net: NetClient | null = null;
   private notice = '';
+  private softwareWarning = '';
   private garageTab: GarageTab = 'chassis';
   private tutorial: Tutorial | null = null;
   private readonly tutorialInput = emptyInput();
@@ -95,6 +99,7 @@ class Game {
     this.garage.scene.environmentIntensity = 0.55;
 
     window.addEventListener('resize', () => this.resize());
+    this.checkForSoftwareRendering();
     this.applyQuality();
 
     this.fpsEl.className = 'fps-counter';
@@ -117,18 +122,35 @@ class Game {
     requestAnimationFrame((t) => this.frame(t));
   }
 
+  /** With hardware acceleration off nothing else will help much, so the player needs to know. */
+  private checkForSoftwareRendering(): void {
+    const gl = this.renderer.getContext();
+    const info = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : '';
+    if (!/swiftshader|llvmpipe|software|basic render/i.test(name)) return;
+    this.settings.autoLevel = 'lowest';
+    this.softwareWarning = "Your browser isn't using your graphics card, so the game will run slowly. Turn on hardware acceleration in your browser's settings.";
+  }
+
   private applyQuality(): void {
-    const quality = QUALITY[this.settings.quality];
+    const quality = QUALITY[activeLevel(this.settings)];
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatio));
     this.renderer.shadowMap.enabled = quality.shadows;
     this.view.setParticleDensity(quality.particles);
-    // Materials compile with or without shadow support, so they must rebuild when it changes.
-    for (const scene of [this.view.arena.scene, this.garage.scene]) {
-      scene.traverse((node) => {
-        if (node instanceof THREE.Mesh) (node.material as THREE.Material).needsUpdate = true;
-      });
-    }
+    this.view.setDetail(quality.reflections);
+    this.garage.scene.traverse((node) => {
+      if (node instanceof THREE.Mesh) (node.material as THREE.Material).needsUpdate = true;
+    });
     this.resize();
+  }
+
+  private updateAutoQuality(dt: number): void {
+    if (this.settings.quality !== 'auto' || (this.mode !== 'match' && this.mode !== 'menu')) return;
+    const next = this.autoQuality.sample(dt, this.settings.autoLevel);
+    if (!next) return;
+    this.settings.autoLevel = next;
+    writeSettings(this.storage, this.settings);
+    this.applyQuality();
   }
 
   private openSettings(back: () => void): void {
@@ -139,6 +161,11 @@ class Game {
         settingsScreen(this.settings, waiting, {
           onQuality: (quality) => {
             this.settings.quality = quality;
+            // Choosing Auto again gives this device a fresh start.
+            if (quality === 'auto') {
+              this.settings.autoLevel = 'high';
+              this.autoQuality = new AutoQuality();
+            }
             save();
             this.applyQuality();
             render();
@@ -326,7 +353,7 @@ class Game {
         })
         .catch(() => this.sfx.deny());
     };
-    const notice = this.notice;
+    const notice = this.notice || this.softwareWarning;
     this.notice = '';
     this.setScreen(
       garageScreen(
@@ -565,6 +592,7 @@ class Game {
     this.last = now;
     this.clock += dt;
     this.updateFps(dt);
+    this.updateAutoQuality(dt);
 
     switch (this.mode) {
       case 'garage':

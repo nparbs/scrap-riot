@@ -1,6 +1,6 @@
 import type { ArenaId } from '../sim/arena';
 import type { ModeId } from '../sim/data';
-import { emptyInput, lerpAngle, Match, STEP, type Bot, type BotInput, type Loadout } from '../sim/match';
+import { emptyInput, lerpAngle, Match, STEP, wrapAngle, type Bot, type BotInput, type Loadout } from '../sim/match';
 import {
   INPUT_RATE,
   INPUT_STEPS,
@@ -24,6 +24,7 @@ const PING_INTERVAL = 2;
 const CORRECTION_DECAY = 10;
 /** A jump this large is a respawn or heavy lag, so snap instead of sliding across the arena. */
 const MAX_CORRECTION = 6;
+const MAX_CATCH_UP_STEPS = 6;
 
 export type NetFailure = ErrorCode | 'unreachable' | 'lost';
 
@@ -59,8 +60,11 @@ export class NetClient {
   private snaps: SnapshotMessage[] = [];
   private renderTime = 0;
   private pred = { x: 0, z: 0, heading: 0, vx: 0, vz: 0 };
+  /** Where the prediction was one input ago. The robot is drawn between the two, or it would move at only 30 Hz. */
+  private predFrom = { x: 0, z: 0, heading: 0 };
   private corrX = 0;
   private corrZ = 0;
+  private corrHeading = 0;
 
   constructor(
     private readonly url: string,
@@ -173,6 +177,7 @@ export class NetClient {
     this.player = this.match.bots[message.you];
     const { x, z, heading, vx, vz } = this.player;
     this.pred = { x, z, heading, vx, vz };
+    this.predFrom = { x, z, heading };
     this.events.onStart?.(this.match, this.player);
   }
 
@@ -186,27 +191,53 @@ export class NetClient {
 
     const row = snap.bots[player.id];
     applyBotState(player, row);
-    this.reconcile(row, snap.ack);
+    this.reconcile(row, snap.ack, snap.due ?? 0);
   }
 
   /** Rewinds to what the server says, then replays the inputs it has not seen yet. */
-  private reconcile(row: number[], ack: number): void {
+  private reconcile(row: number[], ack: number, due: number): void {
     const before = this.pred;
     const server = readMotion(row);
-    this.pending = this.pending.filter((p) => p.seq > ack);
+    this.pending = this.pending.filter((p) => p.seq >= ack);
     this.pred = { x: server.x, z: server.z, heading: server.heading, vx: server.vx, vz: server.vz };
     if (!readAlive(row)) {
       this.pending = [];
-      this.corrX = this.corrZ = 0;
+      this.snapToPrediction();
       return;
     }
-    for (const p of this.pending) this.predictSteps(p.throttle, p.steer);
-    this.corrX += before.x - this.pred.x;
-    this.corrZ += before.z - this.pred.z;
-    if (Math.hypot(this.corrX, this.corrZ) > MAX_CORRECTION) this.corrX = this.corrZ = 0;
+    let skip = Math.max(0, -due);
+    for (const p of this.pending) {
+      const steps = p.seq === ack ? Math.max(0, due) : INPUT_STEPS;
+      const skipped = Math.min(skip, steps);
+      skip -= skipped;
+      this.predictSteps(p.throttle, p.steer, steps - skipped);
+    }
+    // The server has outrun everything sent so far. Sending sooner gets back ahead of it, which
+    // is what lets the replay above land exactly on the prediction.
+    this.inputTimer += Math.min(skip, MAX_CATCH_UP_STEPS) * STEP;
+    const shiftX = this.pred.x - before.x;
+    const shiftZ = this.pred.z - before.z;
+    const shiftHeading = wrapAngle(this.pred.heading - before.heading);
+    this.corrX -= shiftX;
+    this.corrZ -= shiftZ;
+    this.corrHeading -= shiftHeading;
+    if (Math.hypot(this.corrX, this.corrZ) > MAX_CORRECTION) {
+      this.snapToPrediction();
+      return;
+    }
+    // Both ends of the blend move together, so the correction alone decides what's drawn.
+    this.predFrom.x += shiftX;
+    this.predFrom.z += shiftZ;
+    this.predFrom.heading += shiftHeading;
   }
 
-  private predictSteps(throttle: number, steer: number): void {
+  private snapToPrediction(): void {
+    this.corrX = this.corrZ = this.corrHeading = 0;
+    const { x, z, heading } = this.pred;
+    this.predFrom = { x, z, heading };
+  }
+
+  private predictSteps(throttle: number, steer: number, steps = INPUT_STEPS): void {
     const { match, player, pred } = this;
     if (!match || !player) return;
     player.x = pred.x;
@@ -214,7 +245,7 @@ export class NetClient {
     player.heading = pred.heading;
     player.vx = pred.vx;
     player.vz = pred.vz;
-    for (let i = 0; i < INPUT_STEPS; i++) match.predict(player, throttle, steer, STEP);
+    for (let i = 0; i < steps; i++) match.predict(player, throttle, steer, STEP);
     this.pred = { x: player.x, z: player.z, heading: player.heading, vx: player.vx, vz: player.vz };
   }
 
@@ -246,10 +277,13 @@ export class NetClient {
     const decay = Math.exp(-dt * CORRECTION_DECAY);
     this.corrX *= decay;
     this.corrZ *= decay;
+    this.corrHeading *= decay;
     if (player.alive) {
-      player.x = player.prevX = this.pred.x + this.corrX;
-      player.z = player.prevZ = this.pred.z + this.corrZ;
-      player.heading = player.prevHeading = this.pred.heading;
+      const { pred, predFrom } = this;
+      const blend = this.inputTimer / interval;
+      player.x = player.prevX = predFrom.x + (pred.x - predFrom.x) * blend + this.corrX;
+      player.z = player.prevZ = predFrom.z + (pred.z - predFrom.z) * blend + this.corrZ;
+      player.heading = player.prevHeading = wrapAngle(lerpAngle(predFrom.heading, pred.heading, blend) + this.corrHeading);
       player.vx = this.pred.vx;
       player.vz = this.pred.vz;
     }
@@ -258,6 +292,8 @@ export class NetClient {
   private sampleInput(readInput: (input: BotInput) => void): void {
     const { current, player } = this;
     if (!player) return;
+    const { x, z, heading } = this.pred;
+    this.predFrom = { x, z, heading };
     readInput(current);
     this.seq++;
     this.send({

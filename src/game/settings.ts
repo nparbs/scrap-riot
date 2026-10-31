@@ -1,4 +1,5 @@
 const SETTINGS_KEY = 'scrap-riot.settings.v1';
+const SETTINGS_VERSION = 2;
 
 export type Action =
   | 'forward' | 'back' | 'left' | 'right'
@@ -7,7 +8,8 @@ export type Action =
   | 'rear';
 
 export type Bindings = Record<Action, string>;
-export type Quality = 'high' | 'medium' | 'low';
+export type Level = 'high' | 'medium' | 'low' | 'lowest';
+export type Quality = 'auto' | Level;
 
 export const ACTIONS: { id: Action; label: string }[] = [
   { id: 'forward', label: 'Forward' },
@@ -27,6 +29,25 @@ export const ACTIONS: { id: Action; label: string }[] = [
 ];
 
 export const DEFAULT_BINDINGS: Bindings = {
+  forward: 'KeyW',
+  back: 'KeyS',
+  left: 'KeyA',
+  right: 'KeyD',
+  melee: 'KeyE',
+  turret: 'KeyQ',
+  defense: 'KeyR',
+  power1: 'Digit1',
+  power2: 'Digit2',
+  power3: 'Digit3',
+  power4: 'Digit4',
+  power5: 'Digit5',
+  power6: 'Digit6',
+  rear: 'Space',
+};
+
+/** The defaults before version 2. Nobody chose these, so they move to the new defaults. */
+const OLD_DEFAULT_BINDINGS: Bindings = {
+  ...DEFAULT_BINDINGS,
   forward: 'ArrowUp',
   back: 'ArrowDown',
   left: 'ArrowLeft',
@@ -34,33 +55,61 @@ export const DEFAULT_BINDINGS: Bindings = {
   melee: 'KeyX',
   turret: 'KeyC',
   defense: 'KeyV',
-  power1: 'Digit1',
-  power2: 'Digit2',
-  power3: 'Digit3',
-  power4: 'Digit4',
-  power5: 'Digit5',
-  power6: 'Digit6',
   rear: 'ControlLeft',
 };
 
-/** Pause and mute always work, so a bad rebind can never trap the player. */
-export const RESERVED_KEYS = new Set(['Escape', 'KeyM']);
+/**
+ * Pause and mute always work, so a bad rebind can never trap the player. Ctrl stays free because
+ * holding it to play would turn Ctrl+W into closing the tab, which a page can't prevent.
+ */
+export const RESERVED_KEYS = new Set(['Escape', 'KeyM', 'ControlLeft', 'ControlRight']);
 
-export const QUALITY: Record<Quality, { label: string; pixelRatio: number; shadows: boolean; particles: number }> = {
-  high: { label: 'High', pixelRatio: 2, shadows: true, particles: 1 },
-  medium: { label: 'Medium', pixelRatio: 1, shadows: true, particles: 0.6 },
-  low: { label: 'Low', pixelRatio: 0.75, shadows: false, particles: 0.3 },
+/** Reflections and resolution cost far more than shadows or draw calls, because they're paid per pixel. */
+export const QUALITY: Record<Level, { label: string; pixelRatio: number; shadows: boolean; reflections: boolean; particles: number }> = {
+  high: { label: 'High', pixelRatio: 2, shadows: true, reflections: true, particles: 1 },
+  medium: { label: 'Medium', pixelRatio: 1, shadows: true, reflections: true, particles: 0.6 },
+  low: { label: 'Low', pixelRatio: 0.75, shadows: false, reflections: false, particles: 0.3 },
+  lowest: { label: 'Lowest', pixelRatio: 0.5, shadows: false, reflections: false, particles: 0.15 },
 };
+
+export const LEVELS: Level[] = ['high', 'medium', 'low', 'lowest'];
+
+const AUTO_MIN_FPS = 45;
+const AUTO_WINDOW = 3;
+
+/** Steps the graphics down while the frame rate stays low. It never steps back up, which would oscillate. */
+export class AutoQuality {
+  private frames = 0;
+  private time = 0;
+
+  /** Call once per frame. Returns a new level when it's time to drop to one. */
+  sample(dt: number, level: Level): Level | null {
+    this.frames++;
+    this.time += dt;
+    if (this.time < AUTO_WINDOW) return null;
+    const fps = this.frames / this.time;
+    this.frames = 0;
+    this.time = 0;
+    const next = LEVELS[LEVELS.indexOf(level) + 1];
+    return fps < AUTO_MIN_FPS && next ? next : null;
+  }
+}
 
 export interface Settings {
   bindings: Bindings;
   quality: Quality;
+  /** What Auto has settled on for this device. */
+  autoLevel: Level;
   showFps: boolean;
   tutorialDone: boolean;
 }
 
 export function defaultSettings(): Settings {
-  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'high', showFps: false, tutorialDone: false };
+  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, tutorialDone: false };
+}
+
+export function activeLevel(settings: Settings): Level {
+  return settings.quality === 'auto' ? settings.autoLevel : settings.quality;
 }
 
 export function loadSettings(storage: Pick<Storage, 'getItem'> | null): Settings {
@@ -68,12 +117,16 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null): Settings
   try {
     const raw = storage?.getItem(SETTINGS_KEY);
     if (!raw) return settings;
-    const saved = JSON.parse(raw) as Partial<Settings>;
+    const saved = JSON.parse(raw) as Partial<Settings> & { version?: number };
+    const old = saved.version !== SETTINGS_VERSION;
+    const untouched = old && ACTIONS.every(({ id }) => saved.bindings?.[id] === OLD_DEFAULT_BINDINGS[id]);
     for (const { id } of ACTIONS) {
       const code = saved.bindings?.[id];
-      if (typeof code === 'string' && code && !RESERVED_KEYS.has(code)) settings.bindings[id] = code;
+      if (!untouched && typeof code === 'string' && code && !RESERVED_KEYS.has(code)) settings.bindings[id] = code;
     }
-    if (saved.quality && saved.quality in QUALITY) settings.quality = saved.quality;
+    // High used to be the default, so an old save with it may never have been a choice.
+    if (saved.quality === 'auto' || (saved.quality && saved.quality in QUALITY && !(old && saved.quality === 'high'))) settings.quality = saved.quality;
+    if (saved.autoLevel && saved.autoLevel in QUALITY) settings.autoLevel = saved.autoLevel;
     settings.showFps = saved.showFps === true;
     settings.tutorialDone = saved.tutorialDone === true;
   } catch {
@@ -84,7 +137,7 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null): Settings
 
 export function writeSettings(storage: Pick<Storage, 'setItem'> | null, settings: Settings): void {
   try {
-    storage?.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    storage?.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, version: SETTINGS_VERSION }));
   } catch {
     // Settings still apply for this session.
   }

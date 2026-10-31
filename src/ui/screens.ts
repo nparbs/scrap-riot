@@ -1,6 +1,6 @@
 import { ACHIEVEMENTS, CAREER, isUnlocked, type AchievementStats, type CareerProgress, type Fight, type Medal } from '../game/career';
 import { CATALOG, upgradeCost, type Save, type Slot } from '../game/progress';
-import { ACTIONS, keyLabel, QUALITY, type Action, type Bindings, type Quality, type Settings } from '../game/settings';
+import { ACTIONS, activeLevel, keyLabel, LEVELS, QUALITY, type Action, type Bindings, type Quality, type Settings } from '../game/settings';
 import { NAME_MAX, type HistoryEntry, type LeaderboardEntry, type Profile } from '../net/protocol';
 import { ARENA_ORDER, ARENAS, type ArenaId } from '../sim/arena';
 import {
@@ -391,9 +391,12 @@ export interface SettingsActions {
 export function settingsScreen(settings: Settings, waitingFor: Action | null, actions: SettingsActions): HTMLElement {
   const el = document.createElement('div');
   el.className = 'screen screen-pause';
-  const qualities = (Object.keys(QUALITY) as Quality[])
-    .map((q) => `<button class="mini-btn${settings.quality === q ? ' mini-on' : ''}" data-quality="${q}">${QUALITY[q].label}</button>`)
+  const qualities = (['auto', ...LEVELS] as Quality[])
+    .map((q) => `<button class="mini-btn${settings.quality === q ? ' mini-on' : ''}" data-quality="${q}">${q === 'auto' ? 'Auto' : QUALITY[q].label}</button>`)
     .join('');
+  const autoHint = settings.quality === 'auto'
+    ? `<p class="settings-hint">Auto lowers the graphics if the game can't hold 45 frames a second. It's on ${QUALITY[activeLevel(settings)].label} on this device.</p>`
+    : '';
   const bindings = ACTIONS.map(({ id, label }) => {
     const waiting = waitingFor === id;
     return `<div class="settings-row"><span>${label}</span>
@@ -404,11 +407,12 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
       <h2>Settings</h2>
       <h3>Graphics</h3>
       <div class="settings-row"><span>Quality</span><div class="segmented">${qualities}</div></div>
+      ${autoHint}
       <div class="settings-row"><span>Show frame rate</span>
         <button class="mini-btn${settings.showFps ? ' mini-on' : ''}" data-fps>${settings.showFps ? 'On' : 'Off'}</button></div>
       <h3>Keyboard</h3>
       ${bindings}
-      <p class="settings-hint">Esc cancels a rebind. Using a key that's taken swaps the two actions. Esc and M stay reserved for pause and mute.</p>
+      <p class="settings-hint">Esc cancels a rebind. Using a key that's taken swaps the two actions. Esc and M stay reserved for pause and mute, and Ctrl for browser shortcuts.</p>
       <h3>Gamepad</h3>
       <p class="settings-hint">Right and left triggers drive, the left stick steers. A: front weapon, RB: turret, B: defense, D-pad: first four powerups, LB: Repair Kit, X: Turbo, Y: look behind, Start: menu.</p>
       <button class="btn" data-reset>Reset keys</button>

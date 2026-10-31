@@ -188,6 +188,8 @@ export interface ArenaScene {
   pistons: THREE.Group[];
   fire: THREE.MeshStandardMaterial;
   hill: THREE.Mesh;
+  /** Stands in for the light reflections would give, on settings without them. */
+  fill: THREE.AmbientLight;
 }
 
 export function buildArena(def: ArenaDef): ArenaScene {
@@ -197,6 +199,8 @@ export function buildArena(def: ArenaDef): ArenaScene {
   scene.fog = new THREE.Fog(theme.sky, theme.fogNear, theme.fogFar);
 
   scene.add(new THREE.HemisphereLight(0xc8d4e8, 0x38302a, 1.1));
+  const fill = new THREE.AmbientLight(0xffffff, 0);
+  scene.add(fill);
   const sun = new THREE.DirectionalLight(theme.light, theme.sunIntensity);
   sun.position.set(24, 50, 16);
   sun.castShadow = true;
@@ -387,5 +391,5 @@ export function buildArena(def: ArenaDef): ArenaScene {
   hill.visible = false;
   scene.add(hill);
 
-  return { def, scene, saws, shockers, pistons, fire, hill };
+  return { def, scene, saws, shockers, pistons, fire, hill, fill };
 }

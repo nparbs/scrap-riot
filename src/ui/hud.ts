@@ -5,6 +5,7 @@ import { relativeBearing, type Bot, type GameEvent, type Match } from '../sim/ma
 
 const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
 const DAMAGE_MARK_TIME = 1;
+const MAP_INTERVAL = 1 / 20;
 
 function hex(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`;
@@ -29,6 +30,8 @@ export class Hud {
   private readonly powerCounts: HTMLElement[] = [];
   private readonly minimap: CanvasRenderingContext2D;
   private boardTimer = 0;
+  private mapTimer = 0;
+  private boardHtml = '';
   private lastMoney = -1;
   private lastCenter = '';
   /** Takes priority over the respawn message. */
@@ -155,10 +158,10 @@ export class Hud {
     const health = player.hp / player.maxHp;
     this.hpFill.style.width = `${health * 100}%`;
     this.hpFill.style.background = health > 0.5 ? '#5be36a' : health > 0.25 ? '#f2c037' : '#e84a3a';
-    this.hpText.textContent = `${Math.ceil(player.hp)} / ${Math.round(player.maxHp)}`;
+    this.setText(this.hpText, `${Math.ceil(player.hp)} / ${Math.round(player.maxHp)}`);
 
     const left = Math.ceil(match.timeLeft);
-    this.timer.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    this.setText(this.timer, `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`);
     this.timer.classList.toggle('hud-timer-low', left <= 15);
 
     const money = Math.round(player.earned);
@@ -213,7 +216,16 @@ export class Hud {
       this.boardTimer = 0.25;
       this.drawBoard();
     }
-    this.drawMap();
+    this.mapTimer -= dt;
+    if (this.mapTimer <= 0) {
+      this.mapTimer = MAP_INTERVAL;
+      this.drawMap();
+    }
+  }
+
+  /** Writing text makes the browser lay the page out again, even when the text is the same. */
+  private setText(el: HTMLElement, text: string): void {
+    if (el.textContent !== text) el.textContent = text;
   }
 
   setPing(ms: number): void {
@@ -226,13 +238,16 @@ export class Hud {
   }
 
   private drawBoard(): void {
-    this.board.innerHTML = this.match.ranked()
+    const html = this.match.ranked()
       .map(
         (bot) =>
           `<div class="board-row${bot === this.player ? ' board-me' : ''}${bot.alive ? '' : ' board-dead'}">` +
           `<i style="background:${hex(bot.color)}"></i><span>${escapeText(bot.name)}</span><b>${this.match.score(bot)}</b></div>`,
       )
       .join('');
+    if (html === this.boardHtml) return;
+    this.boardHtml = html;
+    this.board.innerHTML = html;
   }
 
   private drawMap(): void {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultSettings, DEFAULT_BINDINGS, keyLabel, loadSettings, rebind, writeSettings } from '../src/game/settings';
+import { activeLevel, AutoQuality, defaultSettings, DEFAULT_BINDINGS, keyLabel, loadSettings, rebind, writeSettings } from '../src/game/settings';
 import { Tutorial, type TutorialInput } from '../src/game/tutorial';
 import { deadzone, PadReader, type PadLike } from '../src/gamepad';
 import { relativeBearing } from '../src/sim/match';
@@ -9,17 +9,31 @@ describe('key bindings', () => {
     const b = { ...DEFAULT_BINDINGS };
     expect(rebind(b, 'melee', 'KeyZ')).toBe(true);
     expect(b.melee).toBe('KeyZ');
-    expect(rebind(b, 'melee', 'KeyC')).toBe(true);
-    expect(b.melee).toBe('KeyC');
+    expect(rebind(b, 'melee', 'KeyQ')).toBe(true);
+    expect(b.melee).toBe('KeyQ');
     expect(b.turret).toBe('KeyZ');
     expect(new Set(Object.values(b)).size).toBe(Object.keys(b).length);
+  });
+
+  it('defaults to WASD, with E, Q and R for weapons', () => {
+    const b = DEFAULT_BINDINGS;
+    expect([b.forward, b.left, b.back, b.right]).toEqual(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
+    expect([b.melee, b.turret, b.defense]).toEqual(['KeyE', 'KeyQ', 'KeyR']);
+    expect(b.power6).toBe('Digit6');
+    expect(new Set(Object.values(b)).size).toBe(Object.keys(b).length);
+  });
+
+  it('refuses Ctrl, since Ctrl+W would close the tab mid-match', () => {
+    const b = { ...DEFAULT_BINDINGS };
+    expect(rebind(b, 'rear', 'ControlLeft')).toBe(false);
+    expect(b.rear).toBe('Space');
   });
 
   it('refuses keys reserved for pause and mute', () => {
     const b = { ...DEFAULT_BINDINGS };
     expect(rebind(b, 'melee', 'Escape')).toBe(false);
     expect(rebind(b, 'melee', 'KeyM')).toBe(false);
-    expect(b.melee).toBe('KeyX');
+    expect(b.melee).toBe('KeyE');
   });
 
   it('labels keys readably', () => {
@@ -45,14 +59,72 @@ describe('settings storage', () => {
     const key = [...store.keys()][0];
     store.set(key, JSON.stringify({ quality: 'ultra', bindings: { melee: 'Escape', turret: 7 }, showFps: 'yes' }));
     const odd = loadSettings(storage);
-    expect(odd.quality).toBe('high');
-    expect(odd.bindings.melee).toBe('KeyX');
-    expect(odd.bindings.turret).toBe('KeyC');
+    expect(odd.quality).toBe('auto');
+    expect(odd.bindings.melee).toBe('KeyE');
+    expect(odd.bindings.turret).toBe('KeyQ');
     expect(odd.showFps).toBe(false);
 
     store.set(key, '{nope');
+    expect(loadSettings(storage).quality).toBe('auto');
+    expect(loadSettings(null).quality).toBe('auto');
+  });
+
+  const oldDefaults = {
+    forward: 'ArrowUp', back: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', melee: 'KeyX', turret: 'KeyC', defense: 'KeyV',
+    power1: 'Digit1', power2: 'Digit2', power3: 'Digit3', power4: 'Digit4', power5: 'Digit5', power6: 'Digit6', rear: 'ControlLeft',
+  };
+  const saved = (value: unknown) => ({ getItem: () => JSON.stringify(value) });
+
+  it('moves old saves that never changed anything to the new defaults', () => {
+    const settings = loadSettings(saved({ bindings: oldDefaults, quality: 'high', tutorialDone: true }));
+    expect(settings.bindings).toEqual(DEFAULT_BINDINGS);
+    expect(settings.quality).toBe('auto');
+    expect(settings.tutorialDone).toBe(true);
+  });
+
+  it('keeps keys and quality the player chose', () => {
+    const settings = loadSettings(saved({ bindings: { ...oldDefaults, melee: 'KeyZ' }, quality: 'low' }));
+    expect(settings.bindings.melee).toBe('KeyZ');
+    expect(settings.bindings.forward).toBe('ArrowUp');
+    expect(settings.bindings.rear).toBe('Space');
+    expect(settings.quality).toBe('low');
+  });
+
+  it('keeps a choice of High or arrow keys made under the new defaults', () => {
+    const store = new Map<string, string>();
+    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    const settings = defaultSettings();
+    settings.quality = 'high';
+    settings.bindings = { ...settings.bindings, forward: 'ArrowUp' };
+    writeSettings(storage, settings);
     expect(loadSettings(storage).quality).toBe('high');
-    expect(loadSettings(null).quality).toBe('high');
+    expect(loadSettings(storage).bindings.forward).toBe('ArrowUp');
+  });
+});
+
+describe('auto quality', () => {
+  const run = (auto: AutoQuality, fps: number, seconds: number, level: 'high' | 'lowest' = 'high') => {
+    let result = null;
+    for (let i = 0; i < fps * seconds; i++) result = auto.sample(1 / fps, level) ?? result;
+    return result;
+  };
+
+  it('steps down only after the frame rate stays low', () => {
+    expect(run(new AutoQuality(), 60, 10)).toBeNull();
+    expect(run(new AutoQuality(), 20, 1)).toBeNull();
+    expect(run(new AutoQuality(), 20, 4)).toBe('medium');
+  });
+
+  it('stops at the lowest level', () => {
+    expect(run(new AutoQuality(), 10, 10, 'lowest')).toBeNull();
+  });
+
+  it('a fixed choice overrides what Auto picked', () => {
+    const settings = defaultSettings();
+    settings.autoLevel = 'low';
+    expect(activeLevel(settings)).toBe('low');
+    settings.quality = 'medium';
+    expect(activeLevel(settings)).toBe('medium');
   });
 });
 
@@ -93,7 +165,7 @@ describe('tutorial', () => {
   it('advances only when the player does the thing, for long enough', () => {
     const t = new Tutorial(DEFAULT_BINDINGS);
     const first = t.prompt;
-    expect(first).toContain('↑');
+    expect(first).toContain('W');
     t.update(5, idle);
     expect(t.prompt).toBe(first);
     t.update(0.2, { ...idle, throttle: 1 });
@@ -103,13 +175,13 @@ describe('tutorial', () => {
   });
 
   it('runs to completion and shows rebound keys', () => {
-    const t = new Tutorial({ ...DEFAULT_BINDINGS, power6: 'KeyQ' });
+    const t = new Tutorial({ ...DEFAULT_BINDINGS, power6: 'KeyZ' });
     t.update(2, { ...idle, throttle: 1 });
     t.update(2, { ...idle, steer: 1 });
     t.update(2, { ...idle, turret: true });
     t.update(2, { ...idle, melee: true });
     t.update(0, { ...idle, defense: true });
-    expect(t.prompt).toContain('Q');
+    expect(t.prompt).toContain('Z');
     t.update(1, idle);
     expect(t.finished).toBe(false);
     t.update(1, { ...idle, powerups: 1 });
