@@ -1,6 +1,10 @@
 import { ARENA, sawPos } from '../sim/arena';
+import { keyLabel, type Action, type Bindings } from '../game/settings';
 import { DEFENSES, MELEE, POWERUPS, POWERUP_ORDER, TURRETS, UPGRADES } from '../sim/data';
-import type { Bot, GameEvent, Match } from '../sim/match';
+import { relativeBearing, type Bot, type GameEvent, type Match } from '../sim/match';
+
+const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4'];
+const DAMAGE_MARK_TIME = 1;
 
 function hex(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`;
@@ -31,7 +35,12 @@ export class Hud {
   notice = '';
   private readonly ping: HTMLElement;
 
-  constructor(private readonly match: Match, private readonly player: Bot) {
+  private readonly tutorial: HTMLElement;
+  private readonly damageLayer: HTMLElement;
+  /** One indicator per attacker, refreshed while they keep hitting. */
+  private readonly damageMarks = new Map<number, { el: HTMLElement; time: number }>();
+
+  constructor(private readonly match: Match, private readonly player: Bot, keys: Bindings) {
     const { loadout } = player;
     this.root.className = 'hud';
     this.root.innerHTML = `
@@ -45,14 +54,16 @@ export class Hud {
       <div class="hud-ping"></div>
       <div class="hud-board"></div>
       <div class="hud-feed"></div>
+      <div class="hud-damage"></div>
       <div class="hud-center"></div>
+      <div class="hud-tutorial" role="status"></div>
       <div class="hud-slots">
-        ${this.slot('X', MELEE[loadout.melee].name, 'melee')}
-        ${this.slot('C', TURRETS[loadout.turret].name, 'turret')}
-        ${this.slot('V', DEFENSES[loadout.defense].name, 'defense')}
+        ${this.slot(keyLabel(keys.melee), MELEE[loadout.melee].name, 'melee')}
+        ${this.slot(keyLabel(keys.turret), TURRETS[loadout.turret].name, 'turret')}
+        ${this.slot(keyLabel(keys.defense), DEFENSES[loadout.defense].name, 'defense')}
         <div class="slot-gap"></div>
         ${POWERUP_ORDER.map(
-          (id, i) => `<div class="slot slot-power"><kbd>${i + 1}</kbd><span>${POWERUPS[id].name}</span><b data-power="${i}"></b></div>`,
+          (id, i) => `<div class="slot slot-power"><kbd>${keyLabel(keys[POWER_ACTIONS[i]])}</kbd><span>${POWERUPS[id].name}</span><b data-power="${i}"></b></div>`,
         ).join('')}
       </div>
       <canvas class="hud-map" width="180" height="180"></canvas>
@@ -62,6 +73,8 @@ export class Hud {
     this.hpText = q('.hp-text');
     this.timer = q('.hud-timer');
     this.ping = q('.hud-ping');
+    this.tutorial = q('.hud-tutorial');
+    this.damageLayer = q('.hud-damage');
     this.board = q('.hud-board');
     this.feed = q('.hud-feed');
     this.center = q('.hud-center');
@@ -76,7 +89,46 @@ export class Hud {
     return `<div class="slot"><div class="slot-cd" data-cd="${id}"></div><kbd>${key}</kbd><span>${name}</span></div>`;
   }
 
+  private markDamage(source: number): void {
+    let mark = this.damageMarks.get(source);
+    if (!mark) {
+      const el = document.createElement('div');
+      el.className = 'damage-mark';
+      // Hidden until the next update rotates it, or it would flash pointing straight ahead.
+      el.style.opacity = '0';
+      this.damageLayer.appendChild(el);
+      mark = { el, time: 0 };
+      this.damageMarks.set(source, mark);
+    }
+    mark.time = DAMAGE_MARK_TIME;
+  }
+
+  private updateDamageMarks(dt: number): void {
+    const { player, match } = this;
+    for (const [source, mark] of this.damageMarks) {
+      mark.time -= dt;
+      if (mark.time <= 0) {
+        mark.el.remove();
+        this.damageMarks.delete(source);
+        continue;
+      }
+      const from = match.bots[source];
+      const angle = relativeBearing(player.x, player.z, player.heading, from.x, from.z);
+      // Positive means left of the robot, which is counterclockwise on screen.
+      mark.el.style.transform = `rotate(${-angle}rad)`;
+      mark.el.style.opacity = String(Math.min(1, mark.time * 2));
+    }
+  }
+
+  setTutorialPrompt(text: string): void {
+    if (this.tutorial.textContent !== text) this.tutorial.textContent = text;
+  }
+
   handleEvent(event: GameEvent): void {
+    if (event.type === 'hit' && event.target === this.player.id && event.source >= 0 && event.source !== this.player.id) {
+      this.markDamage(event.source);
+      return;
+    }
     if (event.type !== 'kill') return;
     const { bots } = this.match;
     const victim = bots[event.victim];
@@ -93,6 +145,7 @@ export class Hud {
 
   update(dt: number): void {
     const { match, player } = this;
+    this.updateDamageMarks(dt);
     const health = player.hp / player.maxHp;
     this.hpFill.style.width = `${health * 100}%`;
     this.hpFill.style.background = health > 0.5 ? '#5be36a' : health > 0.25 ? '#f2c037' : '#e84a3a';

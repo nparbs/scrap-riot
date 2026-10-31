@@ -25,6 +25,8 @@ Then open the URL Vite prints. A keyboard and a WebGL-capable browser are requir
 | Ctrl (hold) | Look behind |
 | M / Esc | Mute / Pause |
 
+These are the default keys. You can rebind them in Settings, which also lists the gamepad layout.
+
 A match ends after 2:30 or when a robot reaches 12 kills. Damage, kills and scrap pickups earn money, and you get a bonus for your final placement. Progress is saved in the browser's local storage.
 
 ## Online play

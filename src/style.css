@@ -356,6 +356,12 @@ button:focus-visible {
   font-size: 24px;
 }
 
+.garage-actions .btn-settings {
+  flex: 0 0 auto;
+  width: auto;
+  font-size: 16px;
+}
+
 .garage-name {
   color: var(--muted);
   font-size: 13px;
@@ -377,6 +383,118 @@ button:focus-visible {
   border-left: 4px solid #e8695b;
   background: var(--panel);
   font-size: 14px;
+}
+
+.hud-tutorial {
+  position: absolute;
+  top: 20%;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(560px, 90vw);
+  text-align: center;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.hud-tutorial:not(:empty) {
+  padding: 8px 16px;
+  border-bottom: 3px solid var(--stripe);
+  background: rgba(10, 11, 13, 0.75);
+}
+
+/* Each mark is a full-size square rotated around the screen center, with an arc at its top edge. */
+.hud-damage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+}
+
+.damage-mark {
+  position: absolute;
+  top: -180px;
+  left: -180px;
+  width: 360px;
+  height: 360px;
+}
+
+.damage-mark::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 90px;
+  width: 180px;
+  height: 46px;
+  border-top: 8px solid #ff3a2a;
+  border-radius: 50% / 100% 100% 0 0;
+  filter: drop-shadow(0 0 6px #ff3a2a);
+}
+
+.fps-counter {
+  position: fixed;
+  right: 4px;
+  bottom: 2px;
+  z-index: 5;
+  color: var(--muted);
+  font: 11px var(--body);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.settings-card {
+  width: min(560px, 100%);
+}
+
+.settings-card h3 {
+  margin: 16px 0 6px;
+  color: var(--muted);
+  font-size: 17px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 14px;
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+}
+
+.mini-btn {
+  min-width: 72px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #2a2d32;
+  color: var(--text);
+  font: 600 13px var(--body);
+  cursor: pointer;
+}
+
+.mini-btn:hover {
+  background: #383c42;
+}
+
+.mini-on {
+  border-color: var(--accent);
+  background: rgba(255, 138, 42, 0.2);
+}
+
+.mini-wait {
+  border-color: var(--stripe);
+  color: var(--stripe);
+}
+
+.settings-hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .hud-ping {

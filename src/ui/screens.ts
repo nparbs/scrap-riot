@@ -1,22 +1,27 @@
 import { CATALOG, upgradeCost, type Save, type Slot } from '../game/progress';
+import { ACTIONS, keyLabel, QUALITY, type Action, type Bindings, type Quality, type Settings } from '../game/settings';
 import { NAME_MAX } from '../net/protocol';
 import { POWERUPS, POWERUP_CAP, POWERUP_ORDER, UPGRADES, type PowerupId, type UpgradeId } from '../sim/data';
 import type { Standing } from '../sim/match';
 import { escapeText, UPGRADE_ORDER } from './hud';
 
 export const PLAYER_COLOR = 0xff8a2a;
-const CONTROLS = `
+const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4'];
+function controlsTable(keys: Bindings): string {
+  const key = (action: Action) => `<kbd>${keyLabel(keys[action])}</kbd>`;
+  return `
   <table class="controls">
-    <tr><td><kbd>&uarr;</kbd><kbd>&darr;</kbd><kbd>&larr;</kbd><kbd>&rarr;</kbd></td><td>Drive</td></tr>
-    <tr><td><kbd>X</kbd></td><td>Front weapon</td></tr>
-    <tr><td><kbd>C</kbd></td><td>Turret (aims itself)</td></tr>
-    <tr><td><kbd>V</kbd></td><td>Defense</td></tr>
-    <tr><td><kbd>1</kbd>&ndash;<kbd>4</kbd></td><td>Powerups</td></tr>
-    <tr><td><kbd>Ctrl</kbd></td><td>Look behind</td></tr>
+    <tr><td>${key('forward')}${key('back')}${key('left')}${key('right')}</td><td>Drive</td></tr>
+    <tr><td>${key('melee')}</td><td>Front weapon</td></tr>
+    <tr><td>${key('turret')}</td><td>Turret (aims itself)</td></tr>
+    <tr><td>${key('defense')}</td><td>Defense</td></tr>
+    <tr><td>${key('power1')}${key('power2')}${key('power3')}${key('power4')}</td><td>Powerups</td></tr>
+    <tr><td>${key('rear')}</td><td>Look behind</td></tr>
     <tr><td><kbd>M</kbd> / <kbd>Esc</kbd></td><td>Mute / Pause</td></tr>
   </table>`;
+}
 
-export function menuScreen(onStart: () => void): HTMLElement {
+export function menuScreen(onStart: () => void, onSettings: () => void, keys: Bindings): HTMLElement {
   const el = document.createElement('div');
   el.className = 'screen screen-menu';
   el.innerHTML = `
@@ -24,13 +29,15 @@ export function menuScreen(onStart: () => void): HTMLElement {
       <h1>SCRAP<span>RIOT</span></h1>
       <p class="tagline">Bolt on a chainsaw. Enter the pit. Sell whatever is left.</p>
       <button class="btn btn-primary" data-start>Enter the garage</button>
-      ${CONTROLS}
+      <button class="btn" data-settings>Settings</button>
+      ${controlsTable(keys)}
     </div>`;
   el.querySelector('[data-start]')!.addEventListener('click', onStart);
+  el.querySelector('[data-settings]')!.addEventListener('click', onSettings);
   return el;
 }
 
-export function pauseScreen(online: boolean, onResume: () => void, onQuit: () => void): HTMLElement {
+export function pauseScreen(online: boolean, onResume: () => void, onQuit: () => void, keys: Bindings): HTMLElement {
   const el = document.createElement('div');
   el.className = 'screen screen-pause';
   el.innerHTML = `
@@ -39,7 +46,7 @@ export function pauseScreen(online: boolean, onResume: () => void, onQuit: () =>
       ${online ? '<p class="tagline">The match keeps running. A bot takes over your robot if you leave.</p>' : ''}
       <button class="btn btn-primary" data-resume>Resume</button>
       <button class="btn" data-quit>${online ? 'Leave match (no payout)' : 'Forfeit match'}</button>
-      ${CONTROLS}
+      ${controlsTable(keys)}
     </div>`;
   el.querySelector('[data-resume]')!.addEventListener('click', onResume);
   el.querySelector('[data-quit]')!.addEventListener('click', onQuit);
@@ -73,20 +80,22 @@ export interface GarageActions {
   onFight: () => void;
   onOnline: () => void;
   onName: (name: string) => void;
+  onSettings: () => void;
 }
 
 export interface GarageOptions {
   onlineAvailable: boolean;
   /** One-off message, such as why the last online attempt failed. */
   notice: string;
+  keys: Bindings;
 }
 
-const SLOT_TITLES: Record<Slot, string> = {
-  chassis: 'Chassis',
-  melee: 'Front weapon [X]',
-  turret: 'Turret [C]',
-  defense: 'Defense [V]',
-};
+function slotTitle(slot: Slot, keys: Bindings): string {
+  if (slot === 'chassis') return 'Chassis';
+  if (slot === 'melee') return `Front weapon [${keyLabel(keys.melee)}]`;
+  if (slot === 'turret') return `Turret [${keyLabel(keys.turret)}]`;
+  return `Defense [${keyLabel(keys.defense)}]`;
+}
 
 function statLine(slot: Slot, id: string): string {
   if (slot !== 'chassis') return '';
@@ -112,7 +121,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
           <strong>${item.name}</strong><span>${item.blurb}</span>${statLine(slot, id)}<em>${label}</em></button>`;
       })
       .join('');
-    return `<section><h3>${SLOT_TITLES[slot]}</h3><div class="cards">${cards}</div></section>`;
+    return `<section><h3>${slotTitle(slot, options.keys)}</h3><div class="cards">${cards}</div></section>`;
   };
 
   const powerups = POWERUP_ORDER.map((id, i) => {
@@ -121,7 +130,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     const full = n >= POWERUP_CAP;
     const broke = !full && save.money < def.price;
     return `<button class="card${broke ? ' card-broke' : ''}" data-power="${id}">
-      <strong>[${i + 1}] ${def.name}</strong><span>${def.blurb}</span><small>Carrying ${n}/${POWERUP_CAP}</small><em>${full ? 'Full' : `$${def.price}`}</em></button>`;
+      <strong>[${keyLabel(options.keys[POWER_ACTIONS[i]])}] ${def.name}</strong><span>${def.blurb}</span><small>Carrying ${n}/${POWERUP_CAP}</small><em>${full ? 'Full' : `$${def.price}`}</em></button>`;
   }).join('');
 
   const upgrades = UPGRADE_ORDER.map((id) => {
@@ -153,6 +162,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     <div class="garage-actions">
       ${options.onlineAvailable ? '<button class="btn btn-primary" data-online>Fight online</button>' : ''}
       <button class="btn${options.onlineAvailable ? '' : ' btn-primary'}" data-fight>${options.onlineAvailable ? 'Practice vs bots' : 'Fight!'}</button>
+      <button class="btn btn-settings" data-settings>Settings</button>
     </div>`;
 
   el.querySelector<HTMLInputElement>('[data-name]')!.addEventListener('change', (e) => {
@@ -168,6 +178,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     else if (upgrade) actions.onUpgrade(upgrade as UpgradeId);
     else if ('fight' in target.dataset) actions.onFight();
     else if ('online' in target.dataset) actions.onOnline();
+    else if ('settings' in target.dataset) actions.onSettings();
   });
   return el;
 }
@@ -193,5 +204,52 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
       <button class="btn btn-primary" data-continue>Back to the garage</button>
     </div>`;
   el.querySelector('[data-continue]')!.addEventListener('click', onContinue);
+  return el;
+}
+
+export interface SettingsActions {
+  onQuality: (quality: Quality) => void;
+  onFps: () => void;
+  onBind: (action: Action) => void;
+  onReset: () => void;
+  onBack: () => void;
+}
+
+export function settingsScreen(settings: Settings, waitingFor: Action | null, actions: SettingsActions): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'screen screen-pause';
+  const qualities = (Object.keys(QUALITY) as Quality[])
+    .map((q) => `<button class="mini-btn${settings.quality === q ? ' mini-on' : ''}" data-quality="${q}">${QUALITY[q].label}</button>`)
+    .join('');
+  const bindings = ACTIONS.map(({ id, label }) => {
+    const waiting = waitingFor === id;
+    return `<div class="settings-row"><span>${label}</span>
+      <button class="mini-btn${waiting ? ' mini-wait' : ''}" data-bind="${id}">${waiting ? 'Press a key' : escapeText(keyLabel(settings.bindings[id]))}</button></div>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="menu-card settings-card">
+      <h2>Settings</h2>
+      <h3>Graphics</h3>
+      <div class="settings-row"><span>Quality</span><div class="segmented">${qualities}</div></div>
+      <div class="settings-row"><span>Show frame rate</span>
+        <button class="mini-btn${settings.showFps ? ' mini-on' : ''}" data-fps>${settings.showFps ? 'On' : 'Off'}</button></div>
+      <h3>Keyboard</h3>
+      ${bindings}
+      <p class="settings-hint">Esc cancels a rebind. Using a key that's taken swaps the two actions. Esc and M stay reserved for pause and mute.</p>
+      <h3>Gamepad</h3>
+      <p class="settings-hint">Right and left triggers drive, the left stick steers. A: front weapon, RB: turret, B: defense, D-pad: powerups, Y: look behind, Start: menu.</p>
+      <button class="btn" data-reset>Reset keys</button>
+      <button class="btn btn-primary" data-back>Done</button>
+    </div>`;
+  el.addEventListener('click', (e) => {
+    const target = (e.target as HTMLElement).closest<HTMLElement>('button');
+    if (!target) return;
+    const { quality, bind } = target.dataset;
+    if (quality) actions.onQuality(quality as Quality);
+    else if (bind) actions.onBind(bind as Action);
+    else if ('fps' in target.dataset) actions.onFps();
+    else if ('reset' in target.dataset) actions.onReset();
+    else if ('back' in target.dataset) actions.onBack();
+  });
   return el;
 }

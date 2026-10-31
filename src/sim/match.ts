@@ -195,6 +195,11 @@ export function bearing(fromX: number, fromZ: number, toX: number, toZ: number):
   return Math.atan2(toX - fromX, toZ - fromZ);
 }
 
+/** Where a point lies relative to the way a robot faces: 0 ahead, positive to its left. */
+export function relativeBearing(x: number, z: number, heading: number, toX: number, toZ: number): number {
+  return wrapAngle(bearing(x, z, toX, toZ) - heading);
+}
+
 export class Match {
   readonly rng: Rng;
   readonly bots: Bot[] = [];

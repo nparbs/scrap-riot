@@ -30,10 +30,13 @@ The current tuning comes from AI-versus-AI data and has not had a human playtest
 
 - [ ] Human playtest pass on handling, camera and weapon feel
 - [ ] Balance against human play, including the shop's money curve
-- [ ] Measure frame rate on real hardware and add quality settings
-- [ ] First-match tutorial prompts
-- [ ] Hit feedback: damage direction, wreck debris, better weapon sounds
-- [ ] Rebindable keys and gamepad support
+- [x] Quality settings and a frame rate counter
+- [ ] Measure frame rate on real hardware
+- [x] First-match tutorial prompts
+- [x] Hit feedback: damage direction, wreck debris
+- [ ] Better weapon sounds
+- [x] Rebindable keys
+- [ ] Gamepad support: built, needs testing with a real controller
 - [ ] Publish a public build (GitHub Pages requires the repo to be public, or a paid plan)
 
 ## v0.3: More to fight with

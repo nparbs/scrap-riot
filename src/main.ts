@@ -2,14 +2,16 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Sfx } from './audio';
 import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, writeSave, type Save, type Slot } from './game/progress';
+import { DEFAULT_BINDINGS, loadSettings, QUALITY, rebind, writeSettings, type Action } from './game/settings';
+import { Tutorial } from './game/tutorial';
 import { Keyboard } from './input';
 import { NetClient, type NetFailure } from './net/client';
 import { sanitizeName } from './net/protocol';
 import { GarageView } from './render/garageView';
 import { MatchView } from './render/matchView';
-import { Match, STEP, type Bot, type BotSetup, type GameEvent } from './sim/match';
+import { emptyInput, Match, STEP, type Bot, type BotSetup, type GameEvent } from './sim/match';
 import { Hud } from './ui/hud';
-import { garageScreen, lobbyScreen, menuScreen, PLAYER_COLOR, pauseScreen, resultsScreen } from './ui/screens';
+import { garageScreen, lobbyScreen, menuScreen, PLAYER_COLOR, pauseScreen, resultsScreen, settingsScreen } from './ui/screens';
 
 type Mode = 'menu' | 'garage' | 'lobby' | 'match' | 'paused' | 'results';
 
@@ -39,9 +41,10 @@ class Game {
   private readonly renderer = new THREE.WebGLRenderer({ antialias: true });
   private readonly storage = safeStorage();
   private readonly save: Save = loadSave(this.storage);
+  private readonly settings = loadSettings(this.storage);
   private readonly view = new MatchView();
   private readonly garage = new GarageView();
-  private readonly keyboard = new Keyboard();
+  private readonly keyboard = new Keyboard(this.settings.bindings);
   private readonly sfx = new Sfx();
   private mode: Mode = 'menu';
   private match: Match | null = null;
@@ -49,13 +52,17 @@ class Game {
   private hud: Hud | null = null;
   private net: NetClient | null = null;
   private notice = '';
+  private tutorial: Tutorial | null = null;
+  private readonly tutorialInput = emptyInput();
+  private readonly fpsEl = document.createElement('div');
+  private fpsFrames = 0;
+  private fpsTime = 0;
   private accumulator = 0;
   private last = performance.now();
   private clock = 0;
 
   constructor() {
     const r = this.renderer;
-    r.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     r.toneMapping = THREE.ACESFilmicToneMapping;
@@ -72,7 +79,11 @@ class Game {
     }
 
     window.addEventListener('resize', () => this.resize());
-    this.resize();
+    this.applyQuality();
+
+    this.fpsEl.className = 'fps-counter';
+    this.fpsEl.hidden = !this.settings.showFps;
+    document.body.appendChild(this.fpsEl);
 
     this.keyboard.onFirstInput = () => this.sfx.unlock();
     this.keyboard.onPause = () => this.togglePause();
@@ -90,6 +101,90 @@ class Game {
     requestAnimationFrame((t) => this.frame(t));
   }
 
+  private applyQuality(): void {
+    const quality = QUALITY[this.settings.quality];
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatio));
+    this.renderer.shadowMap.enabled = quality.shadows;
+    this.view.setParticleDensity(quality.particles);
+    // Materials compile with or without shadow support, so they must rebuild when it changes.
+    for (const scene of [this.view.arena.scene, this.garage.scene]) {
+      scene.traverse((node) => {
+        if (node instanceof THREE.Mesh) (node.material as THREE.Material).needsUpdate = true;
+      });
+    }
+    this.resize();
+  }
+
+  private openSettings(back: () => void): void {
+    let waiting: Action | null = null;
+    const save = () => writeSettings(this.storage, this.settings);
+    const render = () => {
+      this.setScreen(
+        settingsScreen(this.settings, waiting, {
+          onQuality: (quality) => {
+            this.settings.quality = quality;
+            save();
+            this.applyQuality();
+            render();
+          },
+          onFps: () => {
+            this.settings.showFps = !this.settings.showFps;
+            this.fpsEl.hidden = !this.settings.showFps;
+            save();
+            render();
+          },
+          onBind: (action) => {
+            waiting = action;
+            render();
+            this.keyboard.captureNextKey((code) => {
+              waiting = null;
+              if (code && rebind(this.settings.bindings, action, code)) {
+                this.keyboard.setBindings(this.settings.bindings);
+                save();
+              }
+              render();
+            });
+          },
+          onReset: () => {
+            this.keyboard.cancelCapture();
+            waiting = null;
+            this.settings.bindings = { ...DEFAULT_BINDINGS };
+            this.keyboard.setBindings(this.settings.bindings);
+            save();
+            render();
+          },
+          onBack: () => {
+            this.keyboard.cancelCapture();
+            back();
+          },
+        }),
+      );
+    };
+    this.sfx.click();
+    render();
+  }
+
+  private beginTutorial(): void {
+    this.tutorial = this.settings.tutorialDone ? null : new Tutorial(this.settings.bindings);
+  }
+
+  private endTutorial(): void {
+    this.tutorial = null;
+    if (this.settings.tutorialDone) return;
+    this.settings.tutorialDone = true;
+    writeSettings(this.storage, this.settings);
+  }
+
+  private updateTutorial(dt: number, player: Bot): void {
+    const { tutorial, tutorialInput: input } = this;
+    if (!tutorial) return;
+    this.keyboard.peek(input);
+    const { repair, turbo, overdrive, emp } = player.powerups;
+    tutorial.update(dt, { ...input, powerups: repair + turbo + overdrive + emp });
+    this.hud?.setTutorialPrompt(tutorial.prompt);
+    if (tutorial.finished) this.endTutorial();
+  }
+
   private resize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
@@ -105,7 +200,13 @@ class Game {
   private showMenu(): void {
     this.mode = 'menu';
     this.startDemo();
-    this.setScreen(menuScreen(() => this.showGarage()));
+    this.showMenuScreen();
+  }
+
+  private showMenuScreen(): void {
+    this.setScreen(
+      menuScreen(() => this.showGarage(), () => this.openSettings(() => this.showMenuScreen()), this.settings.bindings),
+    );
   }
 
   /** The title screen runs a real AI-only match in the background. */
@@ -153,12 +254,13 @@ class Game {
           onUpgrade: (id) => buy(buyUpgrade(this.save, id)),
           onFight: () => this.startMatch(),
           onOnline: () => this.startOnline(),
+          onSettings: () => this.openSettings(() => this.refreshGarage()),
           onName: (name) => {
             this.save.name = sanitizeName(name);
             writeSave(this.storage, this.save);
           },
         },
-        { onlineAvailable: SERVER_URL !== '', notice },
+        { onlineAvailable: SERVER_URL !== '', notice, keys: this.settings.bindings },
       ),
     );
     const next = this.ui.querySelector('.garage-panel');
@@ -170,7 +272,8 @@ class Game {
     const me: BotSetup = { name: 'You', color: PLAYER_COLOR, loadout: this.save.loadout, isAI: false };
     this.match = new Match([me, ...makeRivals(this.save, 5, seed)], { seed });
     this.player = this.match.bots[0];
-    this.hud = new Hud(this.match, this.player);
+    this.hud = new Hud(this.match, this.player, this.settings.bindings);
+    this.beginTutorial();
     this.view.setMatch(this.match, this.player.id);
     this.setScreen(this.hud.root);
     this.keyboard.clear();
@@ -190,7 +293,8 @@ class Game {
       onStart: (match, player) => {
         this.match = match;
         this.player = player;
-        this.hud = new Hud(match, player);
+        this.hud = new Hud(match, player, this.settings.bindings);
+        this.beginTutorial();
         this.view.setMatch(match, player.id);
         this.setScreen(this.hud.root);
         this.keyboard.clear();
@@ -214,13 +318,13 @@ class Game {
       // Online the menu is only an overlay, because the match carries on for everyone else.
       const open = this.ui.querySelector('.screen-pause');
       if (open) open.remove();
-      else this.ui.appendChild(pauseScreen(true, () => this.togglePause(), () => this.showGarage()));
+      else this.ui.appendChild(pauseScreen(true, () => this.togglePause(), () => this.showGarage(), this.settings.bindings));
       return;
     }
     if (this.mode === 'match') {
       this.mode = 'paused';
       this.sfx.setLoops(-1, false);
-      const overlay = pauseScreen(false, () => this.togglePause(), () => this.showGarage());
+      const overlay = pauseScreen(false, () => this.togglePause(), () => this.showGarage(), this.settings.bindings);
       this.ui.appendChild(overlay);
     } else if (this.mode === 'paused') {
       this.mode = 'match';
@@ -233,6 +337,7 @@ class Game {
     const { match, player } = this;
     if (!match || !player) return;
     this.mode = 'results';
+    this.endTutorial();
     this.sfx.setLoops(-1, false);
     const standings = match.standings();
     const mine = standings.find((s) => s.bot === player)!;
@@ -282,6 +387,7 @@ class Game {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.clock += dt;
+    this.updateFps(dt);
 
     switch (this.mode) {
       case 'garage':
@@ -308,6 +414,16 @@ class Game {
     this.view.update(dt, this.accumulator / STEP);
     if (this.mode === 'menu') this.view.orbitCamera(this.clock);
     this.renderer.render(this.view.arena.scene, this.view.camera);
+  }
+
+  private updateFps(dt: number): void {
+    if (!this.settings.showFps) return;
+    this.fpsFrames++;
+    this.fpsTime += dt;
+    if (this.fpsTime < 0.5) return;
+    this.fpsEl.textContent = `${Math.round(this.fpsFrames / this.fpsTime)} FPS`;
+    this.fpsFrames = 0;
+    this.fpsTime = 0;
   }
 
   private tickDemo(dt: number): void {
@@ -337,6 +453,7 @@ class Game {
     }
     this.view.rearView = this.keyboard.rearView;
     this.hud?.update(dt);
+    this.updateTutorial(dt, player);
     const top = player.chassis.speed * player.speedMult;
     this.sfx.setLoops(player.alive ? Math.min(1, Math.hypot(player.vx, player.vz) / top) : -1, player.alive && player.meleeActive);
     // Online, the server announces the end of the match and onOver handles it.

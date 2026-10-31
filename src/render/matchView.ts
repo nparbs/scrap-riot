@@ -8,6 +8,8 @@ import { buildRobot, disposeRobot, type RobotModel } from './robots';
 
 const CAM_DISTANCE = 13;
 const CAM_HEIGHT = 8.5;
+const MAX_WRECKS = 12;
+const WRECK_LIFE = 12;
 
 interface BotVisual {
   model: RobotModel;
@@ -55,6 +57,7 @@ export class MatchView {
   private readonly mineMeshes = new Map<number, THREE.Group>();
   private readonly oilMeshes = new Map<number, THREE.Mesh>();
   private readonly pickupMeshes = new Map<number, THREE.Group>();
+  private readonly wrecks: { group: THREE.Group; life: number; scorch: THREE.MeshStandardMaterial }[] = [];
   private readonly flash = new THREE.PointLight(0xffa050, 0, 30);
   private camHeading = 0;
   private camPos = new THREE.Vector3(0, 40, 40);
@@ -66,6 +69,7 @@ export class MatchView {
   private readonly bulletMat = new THREE.MeshBasicMaterial({ color: 0xffe08a, toneMapped: false });
   private readonly rocketGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.9, 8);
   private readonly rocketMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, emissive: 0xff5a1a, emissiveIntensity: 1.5 });
+  private readonly wreckMat = new THREE.MeshStandardMaterial({ color: 0x2a2b2d, metalness: 0.6, roughness: 0.8, flatShading: true });
   private readonly barGeo = new THREE.PlaneGeometry(2.4, 0.22);
   private readonly barBackMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.6, depthTest: false });
 
@@ -111,9 +115,61 @@ export class MatchView {
       v.label.material.dispose();
     }
     this.visuals.clear();
+    for (const wreck of this.wrecks.splice(0)) this.removeWreck(wreck);
     for (const map of [this.projectileMeshes, this.mineMeshes, this.oilMeshes, this.pickupMeshes]) {
       for (const obj of map.values()) scene.remove(obj);
       map.clear();
+    }
+  }
+
+  setParticleDensity(density: number): void {
+    this.particles.density = density;
+  }
+
+  /** A scorch mark and scattered scrap where a robot died, fading after a while. */
+  private addWreck(x: number, z: number): void {
+    if (this.wrecks.length >= MAX_WRECKS) this.removeWreck(this.wrecks.shift()!);
+    const group = new THREE.Group();
+    group.position.set(x, 0, z);
+    const scorch = new THREE.MeshStandardMaterial({ color: 0x050505, transparent: true, opacity: 0.8, roughness: 1, depthWrite: false });
+    const mark = new THREE.Mesh(new THREE.CircleGeometry(2.6, 18), scorch);
+    mark.rotation.x = -Math.PI / 2;
+    mark.position.y = 0.04;
+    group.add(mark);
+    for (let i = 0; i < 6; i++) {
+      const size = 0.2 + Math.random() * 0.45;
+      const scrap = new THREE.Mesh(new THREE.BoxGeometry(size, size * 0.5, size * 1.4), this.wreckMat);
+      const a = Math.random() * Math.PI * 2;
+      const r = 0.5 + Math.random() * 2;
+      scrap.position.set(Math.cos(a) * r, size * 0.25, Math.sin(a) * r);
+      scrap.rotation.y = Math.random() * Math.PI;
+      scrap.castShadow = true;
+      group.add(scrap);
+    }
+    this.arena.scene.add(group);
+    this.wrecks.push({ group, life: WRECK_LIFE, scorch });
+  }
+
+  private removeWreck(wreck: { group: THREE.Group; scorch: THREE.MeshStandardMaterial }): void {
+    this.arena.scene.remove(wreck.group);
+    wreck.group.traverse((node) => {
+      if (node instanceof THREE.Mesh) node.geometry.dispose();
+    });
+    wreck.scorch.dispose();
+  }
+
+  private updateWrecks(dt: number): void {
+    for (let i = this.wrecks.length - 1; i >= 0; i--) {
+      const wreck = this.wrecks[i];
+      wreck.life -= dt;
+      if (wreck.life <= 0) {
+        this.removeWreck(wreck);
+        this.wrecks.splice(i, 1);
+      } else if (wreck.life < 2) {
+        wreck.scorch.opacity = 0.8 * (wreck.life / 2);
+        const sink = wreck.life / 2;
+        wreck.group.position.y = -0.4 * (1 - sink);
+      }
     }
   }
 
@@ -136,6 +192,7 @@ export class MatchView {
     this.syncPickups(match);
     this.particles.update(frameDt);
     this.bolts.update(frameDt);
+    this.updateWrecks(frameDt);
     this.flash.intensity = Math.max(0, this.flash.intensity - frameDt * 900);
     this.updateCamera(match, frameDt, alpha);
     for (const [id, v] of this.visuals) {
@@ -166,6 +223,7 @@ export class MatchView {
         this.particles.burst(event.x, event.z, { count: 16 * n, color: 0x3a3a3a, speed: 5, size: 0.8, life: 1.1, y: 1, gravity: -3 });
         if (event.big) {
           this.particles.burst(event.x, event.z, { count: 14, color: 0x6d7379, speed: 16, size: 0.4, life: 1.4, y: 1 });
+          this.addWreck(event.x, event.z);
         }
         this.flash.position.set(event.x, 3, event.z);
         this.flash.intensity = event.big ? 500 : 250;

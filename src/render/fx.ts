@@ -36,6 +36,8 @@ export class Particles {
   private readonly matrix = new THREE.Matrix4();
   private readonly color = new THREE.Color();
   private readonly hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+  /** Fraction of each burst to actually spawn, lowered by the quality setting. */
+  density = 1;
 
   constructor() {
     this.mesh = new THREE.InstancedMesh(
@@ -54,7 +56,8 @@ export class Particles {
   burst(x: number, z: number, o: BurstOptions): void {
     this.color.set(o.color);
     const { r, g, b } = this.color;
-    for (let i = 0; i < o.count; i++) {
+    const count = Math.ceil(o.count * this.density);
+    for (let i = 0; i < count; i++) {
       if (this.pool.length >= MAX_PARTICLES) this.pool.shift();
       const a = Math.random() * Math.PI * 2;
       const up = Math.random();
