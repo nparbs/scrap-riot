@@ -344,11 +344,49 @@ button:focus-visible {
   background: var(--accent);
 }
 
-.btn-fight {
+.garage-actions {
+  display: flex;
+  gap: 8px;
   width: min(620px, 100%);
-  margin: 0;
   flex: none;
-  font-size: 26px;
+}
+
+.garage-actions .btn {
+  margin: 0;
+  font-size: 24px;
+}
+
+.garage-name {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.garage-name input {
+  width: 12em;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #1e2024;
+  color: var(--text);
+  font: inherit;
+}
+
+.garage-notice {
+  width: min(620px, 100%);
+  padding: 8px 12px;
+  border-left: 4px solid #e8695b;
+  background: var(--panel);
+  font-size: 14px;
+}
+
+.hud-ping {
+  position: absolute;
+  top: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 620px) {

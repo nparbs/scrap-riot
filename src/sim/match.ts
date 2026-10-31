@@ -187,6 +187,10 @@ export function wrapAngle(a: number): number {
   return a;
 }
 
+export function lerpAngle(a: number, b: number, t: number): number {
+  return a + wrapAngle(b - a) * t;
+}
+
 export function bearing(fromX: number, fromZ: number, toX: number, toZ: number): number {
   return Math.atan2(toX - fromX, toZ - fromZ);
 }
@@ -684,35 +688,62 @@ export class Match {
   }
 
   private collideWorld(): void {
-    const half = ARENA.half;
     for (const bot of this.bots) {
-      if (!bot.alive) continue;
-      const limit = half - bot.radius;
-      if (bot.x > limit || bot.x < -limit) {
-        bot.x = Math.max(-limit, Math.min(limit, bot.x));
-        bot.vx *= -0.3;
-      }
-      if (bot.z > limit || bot.z < -limit) {
-        bot.z = Math.max(-limit, Math.min(limit, bot.z));
-        bot.vz *= -0.3;
-      }
-      for (const pillar of ARENA.pillars) {
-        const dx = bot.x - pillar.x;
-        const dz = bot.z - pillar.z;
-        const dist = Math.hypot(dx, dz);
-        const min = pillar.r + bot.radius;
-        if (dist >= min || dist < 1e-4) continue;
-        const nx = dx / dist;
-        const nz = dz / dist;
-        bot.x = pillar.x + nx * min;
-        bot.z = pillar.z + nz * min;
-        const into = bot.vx * nx + bot.vz * nz;
-        if (into < 0) {
-          bot.vx -= nx * into * 1.3;
-          bot.vz -= nz * into * 1.3;
-        }
+      if (bot.alive) this.collideBotWithWorld(bot);
+    }
+  }
+
+  private collideBotWithWorld(bot: Bot): void {
+    const limit = ARENA.half - bot.radius;
+    if (bot.x > limit || bot.x < -limit) {
+      bot.x = Math.max(-limit, Math.min(limit, bot.x));
+      bot.vx *= -0.3;
+    }
+    if (bot.z > limit || bot.z < -limit) {
+      bot.z = Math.max(-limit, Math.min(limit, bot.z));
+      bot.vz *= -0.3;
+    }
+    for (const pillar of ARENA.pillars) {
+      const dx = bot.x - pillar.x;
+      const dz = bot.z - pillar.z;
+      const dist = Math.hypot(dx, dz);
+      const min = pillar.r + bot.radius;
+      if (dist >= min || dist < 1e-4) continue;
+      const nx = dx / dist;
+      const nz = dz / dist;
+      bot.x = pillar.x + nx * min;
+      bot.z = pillar.z + nz * min;
+      const into = bot.vx * nx + bot.vz * nz;
+      if (into < 0) {
+        bot.vx -= nx * into * 1.3;
+        bot.vz -= nz * into * 1.3;
       }
     }
+  }
+
+  /** Client-side prediction: moves one robot as the server would, ignoring other robots. */
+  predict(bot: Bot, throttle: number, steer: number, dt: number): void {
+    bot.input.throttle = throttle;
+    bot.input.steer = steer;
+    this.drive(bot, dt);
+    this.collideBotWithWorld(bot);
+  }
+
+  /** Hands a robot to the AI when its player drops, and back when they return. */
+  setAI(id: number, ai: boolean, skill = 0.6): void {
+    const bot = this.bots[id];
+    bot.isAI = ai;
+    if (ai) {
+      this.brains.set(id, new BotBrain(this, bot, skill));
+    } else {
+      this.brains.delete(id);
+      bot.input = emptyInput();
+    }
+  }
+
+  /** Clients receive events over the network instead of generating them. */
+  pushEvents(events: GameEvent[]): void {
+    this.events.push(...events);
   }
 
   private updateHazards(dt: number): void {

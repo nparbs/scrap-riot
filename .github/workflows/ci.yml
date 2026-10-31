@@ -17,3 +17,19 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  server-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t scrap-riot-server .
+      - name: Start with the same restrictions as docker-compose.yml, then check health
+        run: |
+          docker run -d --name game -p 8787:8787 --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true -e ALLOWED_ORIGINS=https://example.com scrap-riot-server
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:8787/health && exit 0
+            sleep 1
+          done
+          docker logs game
+          exit 1

@@ -53,13 +53,17 @@ The current tuning comes from AI-versus-AI data and has not had a human playtest
 
 ## v0.5: Online multiplayer
 
-The original was built around online play, so this is what most defines a faithful remake. It is also the largest and riskiest item here, because it adds a server to run and pay for.
+The original was built around online play, so this was moved to the front of the queue. The netcode and server are built; they go live once a server is hosted (see [docs/hosting.md](docs/hosting.md)).
 
-- [ ] Choose a netcode model and prove it with a two-player prototype (the sim is already deterministic and server-ready)
-- [ ] Authoritative WebSocket server running the shared sim
-- [ ] Quick-play matchmaking, with bots filling empty slots
-- [ ] Server-side accounts and progress, since browser saves can be edited
-- [ ] Anti-cheat validation, reconnects, hosting and cost plan
+- [x] Netcode: server-authoritative snapshots at 20 Hz, client prediction for your own robot, interpolation for the rest
+- [x] Authoritative WebSocket server running the shared sim
+- [x] Quick-play matchmaking, with bots filling empty slots
+- [x] Reconnects: a bot drives your robot until you return
+- [x] Input validation, rate and connection limits, Docker packaging, hosting guide
+- [ ] Host the server and test with real players over the internet
+- [ ] Server-side accounts and progress, since browser saves can be edited (until then, online matches ignore purchased stats)
+- [ ] Match history and leaderboards
+- [ ] Moderation for player names
 
 ## v1.0: Release
 

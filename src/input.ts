@@ -18,6 +18,7 @@ export class Keyboard {
   constructor() {
     window.addEventListener('keydown', (e) => {
       this.onFirstInput?.();
+      if (e.target instanceof HTMLInputElement) return;
       if (e.code === 'Escape') {
         if (!e.repeat) this.onPause?.();
         return;

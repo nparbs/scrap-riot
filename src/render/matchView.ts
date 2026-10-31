@@ -1,17 +1,13 @@
 import * as THREE from 'three';
 import { ARENA, sawPos } from '../sim/arena';
 import { TURBO_MULT } from '../sim/data';
-import { wrapAngle, type Bot, type GameEvent, type Match } from '../sim/match';
+import { lerpAngle, type Bot, type GameEvent, type Match } from '../sim/match';
 import { buildArena, type ArenaScene } from './arenaScene';
 import { ArcBolts, Particles } from './fx';
 import { buildRobot, disposeRobot, type RobotModel } from './robots';
 
 const CAM_DISTANCE = 13;
 const CAM_HEIGHT = 8.5;
-
-function lerpAngle(a: number, b: number, t: number): number {
-  return a + wrapAngle(b - a) * t;
-}
 
 interface BotVisual {
   model: RobotModel;

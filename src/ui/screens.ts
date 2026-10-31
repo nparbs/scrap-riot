@@ -1,7 +1,8 @@
 import { CATALOG, upgradeCost, type Save, type Slot } from '../game/progress';
+import { NAME_MAX } from '../net/protocol';
 import { POWERUPS, POWERUP_CAP, POWERUP_ORDER, UPGRADES, type PowerupId, type UpgradeId } from '../sim/data';
 import type { Standing } from '../sim/match';
-import { UPGRADE_ORDER } from './hud';
+import { escapeText, UPGRADE_ORDER } from './hud';
 
 export const PLAYER_COLOR = 0xff8a2a;
 const CONTROLS = `
@@ -29,14 +30,15 @@ export function menuScreen(onStart: () => void): HTMLElement {
   return el;
 }
 
-export function pauseScreen(onResume: () => void, onQuit: () => void): HTMLElement {
+export function pauseScreen(online: boolean, onResume: () => void, onQuit: () => void): HTMLElement {
   const el = document.createElement('div');
   el.className = 'screen screen-pause';
   el.innerHTML = `
     <div class="menu-card">
-      <h2>Paused</h2>
+      <h2>${online ? 'Menu' : 'Paused'}</h2>
+      ${online ? '<p class="tagline">The match keeps running. A bot takes over your robot if you leave.</p>' : ''}
       <button class="btn btn-primary" data-resume>Resume</button>
-      <button class="btn" data-quit>Forfeit match</button>
+      <button class="btn" data-quit>${online ? 'Leave match (no payout)' : 'Forfeit match'}</button>
       ${CONTROLS}
     </div>`;
   el.querySelector('[data-resume]')!.addEventListener('click', onResume);
@@ -44,11 +46,39 @@ export function pauseScreen(onResume: () => void, onQuit: () => void): HTMLEleme
   return el;
 }
 
+export function lobbyScreen(onCancel: () => void): { el: HTMLElement; update: (players: number, capacity: number, startsIn: number) => void } {
+  const el = document.createElement('div');
+  el.className = 'screen screen-pause';
+  el.innerHTML = `
+    <div class="menu-card">
+      <h2>Finding a match</h2>
+      <p class="tagline" data-status>Connecting to the server&hellip;</p>
+      <p class="tagline">Online, everyone fights with equal stats and one of each powerup. Your garage upgrades apply in practice matches. Bots fill any empty slots.</p>
+      <button class="btn" data-cancel>Cancel</button>
+    </div>`;
+  el.querySelector('[data-cancel]')!.addEventListener('click', onCancel);
+  const status = el.querySelector('[data-status]')!;
+  return {
+    el,
+    update: (players, capacity, startsIn) => {
+      status.textContent = `${players} of ${capacity} players. Starting in ${startsIn}s.`;
+    },
+  };
+}
+
 export interface GarageActions {
   onEquip: (slot: Slot, id: string) => void;
   onPowerup: (id: PowerupId) => void;
   onUpgrade: (id: UpgradeId) => void;
   onFight: () => void;
+  onOnline: () => void;
+  onName: (name: string) => void;
+}
+
+export interface GarageOptions {
+  onlineAvailable: boolean;
+  /** One-off message, such as why the last online attempt failed. */
+  notice: string;
 }
 
 const SLOT_TITLES: Record<Slot, string> = {
@@ -64,7 +94,7 @@ function statLine(slot: Slot, id: string): string {
   return `<small>${c.hp} HP · speed ${c.speed}</small>`;
 }
 
-export function garageScreen(save: Save, actions: GarageActions): HTMLElement {
+export function garageScreen(save: Save, actions: GarageActions, options: GarageOptions): HTMLElement {
   const el = document.createElement('div');
   el.className = 'screen screen-garage';
 
@@ -107,9 +137,11 @@ export function garageScreen(save: Save, actions: GarageActions): HTMLElement {
   el.innerHTML = `
     <div class="garage-top">
       <h2>Garage</h2>
+      <label class="garage-name">Name <input data-name maxlength="${NAME_MAX}" value="${escapeText(save.name)}" autocomplete="off" spellcheck="false" /></label>
       <div class="garage-record">${save.wins} wins / ${save.matches} matches</div>
       <div class="garage-money">$${save.money}</div>
     </div>
+    ${options.notice ? `<div class="garage-notice" role="alert">${escapeText(options.notice)}</div>` : ''}
     <div class="garage-panel">
       ${section('chassis')}
       ${section('melee')}
@@ -118,7 +150,14 @@ export function garageScreen(save: Save, actions: GarageActions): HTMLElement {
       <section><h3>Powerups (used up in battle)</h3><div class="cards cards-4">${powerups}</div></section>
       <section><h3>Upgrades</h3><div class="cards">${upgrades}</div></section>
     </div>
-    <button class="btn btn-primary btn-fight" data-fight>Fight!</button>`;
+    <div class="garage-actions">
+      ${options.onlineAvailable ? '<button class="btn btn-primary" data-online>Fight online</button>' : ''}
+      <button class="btn${options.onlineAvailable ? '' : ' btn-primary'}" data-fight>${options.onlineAvailable ? 'Practice vs bots' : 'Fight!'}</button>
+    </div>`;
+
+  el.querySelector<HTMLInputElement>('[data-name]')!.addEventListener('change', (e) => {
+    actions.onName((e.target as HTMLInputElement).value);
+  });
 
   el.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest<HTMLElement>('button');
@@ -128,6 +167,7 @@ export function garageScreen(save: Save, actions: GarageActions): HTMLElement {
     else if (power) actions.onPowerup(power as PowerupId);
     else if (upgrade) actions.onUpgrade(upgrade as UpgradeId);
     else if ('fight' in target.dataset) actions.onFight();
+    else if ('online' in target.dataset) actions.onOnline();
   });
   return el;
 }
@@ -139,7 +179,7 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
   const headline = mine.place === 1 ? 'Last bot rolling!' : mine.place <= 3 ? 'Still in one piece.' : 'Back to the scrapyard.';
   const rows = standings
     .map(
-      (s) => `<tr class="${s.bot.id === playerId ? 'row-me' : ''}"><td>${s.place}</td><td>${s.bot.name}</td><td>${s.bot.kills}</td><td>${s.bot.deaths}</td><td>${Math.round(s.bot.damageDealt)}</td><td>$${s.total}</td></tr>`,
+      (s) => `<tr class="${s.bot.id === playerId ? 'row-me' : ''}"><td>${s.place}</td><td>${escapeText(s.bot.name)}</td><td>${s.bot.kills}</td><td>${s.bot.deaths}</td><td>${Math.round(s.bot.damageDealt)}</td><td>$${s.total}</td></tr>`,
     )
     .join('');
   el.innerHTML = `

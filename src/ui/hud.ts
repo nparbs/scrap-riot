@@ -6,7 +6,8 @@ function hex(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`;
 }
 
-function escapeText(text: string): string {
+/** Online, robot names come from other players, so they must always pass through this. */
+export function escapeText(text: string): string {
   return text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 }
 
@@ -26,6 +27,9 @@ export class Hud {
   private boardTimer = 0;
   private lastMoney = -1;
   private lastCenter = '';
+  /** Takes priority over the respawn message. */
+  notice = '';
+  private readonly ping: HTMLElement;
 
   constructor(private readonly match: Match, private readonly player: Bot) {
     const { loadout } = player;
@@ -38,6 +42,7 @@ export class Hud {
         <div class="hud-effects"></div>
       </div>
       <div class="hud-timer"></div>
+      <div class="hud-ping"></div>
       <div class="hud-board"></div>
       <div class="hud-feed"></div>
       <div class="hud-center"></div>
@@ -56,6 +61,7 @@ export class Hud {
     this.hpFill = q('.hp-fill');
     this.hpText = q('.hp-text');
     this.timer = q('.hud-timer');
+    this.ping = q('.hud-ping');
     this.board = q('.hud-board');
     this.feed = q('.hud-feed');
     this.center = q('.hud-center');
@@ -124,7 +130,7 @@ export class Hud {
     const effectText = tags.join(' · ');
     if (this.effects.textContent !== effectText) this.effects.textContent = effectText;
 
-    const centerText = player.alive ? '' : `SCRAPPED — rebuilding in ${Math.ceil(player.respawnT)}`;
+    const centerText = this.notice || (player.alive ? '' : `SCRAPPED — rebuilding in ${Math.ceil(player.respawnT)}`);
     if (centerText !== this.lastCenter) {
       this.lastCenter = centerText;
       this.center.textContent = centerText;
@@ -136,6 +142,11 @@ export class Hud {
       this.drawBoard();
     }
     this.drawMap();
+  }
+
+  setPing(ms: number): void {
+    const text = ms > 0 ? `${ms} ms` : '';
+    if (this.ping.textContent !== text) this.ping.textContent = text;
   }
 
   private setCooldown(id: 'melee' | 'turret' | 'defense', fraction: number): void {

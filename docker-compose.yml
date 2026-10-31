@@ -1,0 +1,48 @@
+# See docs/hosting.md. Choose how players reach the server with COMPOSE_PROFILES in .env.
+services:
+  server:
+    build: .
+    restart: unless-stopped
+    environment:
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?set ALLOWED_ORIGINS in .env}
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-}
+    # No published ports: only the proxy below can reach it, so its client IP header can be trusted.
+    expose:
+      - "8787"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 128
+
+  # Option 1: Cloudflare Tunnel. Needs no open router ports and hides your home IP.
+  tunnel:
+    profiles: [tunnel]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      - server
+
+  # Option 2: Caddy with automatic HTTPS. Needs ports 80 and 443 forwarded to this VM.
+  caddy:
+    profiles: [caddy]
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      GAME_DOMAIN: ${GAME_DOMAIN:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - server
+
+volumes:
+  caddy_data:

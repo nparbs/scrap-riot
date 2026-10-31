@@ -21,6 +21,7 @@ const SAVE_KEY = 'scrap-riot.save.v1';
 export type Slot = 'chassis' | 'melee' | 'turret' | 'defense';
 
 export interface Save {
+  name: string;
   money: number;
   matches: number;
   wins: number;
@@ -37,6 +38,7 @@ export const CATALOG = { chassis: CHASSIS, melee: MELEE, turret: TURRETS, defens
 
 export function newSave(): Save {
   return {
+    name: 'Pilot',
     money: 250,
     matches: 0,
     wins: 0,
@@ -55,7 +57,7 @@ export function newSave(): Save {
 export function loadSave(storage: Pick<Storage, 'getItem'> | null): Save {
   try {
     const raw = storage?.getItem(SAVE_KEY);
-    if (raw) return JSON.parse(raw) as Save;
+    if (raw) return { ...newSave(), ...(JSON.parse(raw) as Partial<Save>) };
   } catch {
     // Blocked storage or a corrupt save both just start a new game.
   }
