@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Sfx } from './audio';
-import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, randomArena, writeSave, type Save, type Slot } from './game/progress';
+import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, sellPart, setArmour, writeSave, type Save, type Slot } from './game/progress';
 import { awardMedal, careerResult, fightSetups, loadCareer, writeCareer, type Fight } from './game/career';
 import { activeLevel, AutoQuality, DEFAULT_BINDINGS, loadSettings, QUALITY, rebind, writeSettings, type Action } from './game/settings';
 import { Tutorial } from './game/tutorial';
@@ -15,16 +15,19 @@ import { DEFAULT_PAINT } from './sim/data';
 import { emptyInput, Match, STEP, type Bot, type BotSetup, type GameEvent } from './sim/match';
 import { renderGoogleButton } from './ui/google';
 import { Hud } from './ui/hud';
-import { garageScreen, lobbyScreen, menuScreen, pauseScreen, resultsScreen, settingsScreen, type GarageTab } from './ui/screens';
+import { garageScreen, lobbyScreen, menuScreen, pauseScreen, resultsScreen, settingsScreen, type BuyCategory, type GarageTab, type SideTab } from './ui/screens';
 
 type Mode = 'menu' | 'garage' | 'lobby' | 'match' | 'paused' | 'results';
 
 /** Without a configured server, the build simply offers no online mode. */
 const SERVER_URL: string = import.meta.env.VITE_SERVER_URL || (import.meta.env.DEV ? 'ws://localhost:8787' : '');
 
+/** Shows between the workshop's panels. */
+const WORKSHOP_METAL = 0x4d696b;
+
 const FAILURE_TEXT: Record<NetFailure, string> = {
-  unreachable: "Couldn't reach the game server. It may be offline, so try a practice match for now.",
-  lost: 'Lost the connection to the game server. That match has no payout.',
+  unreachable: "Couldn't reach the game server. It may be offline, so try Training for now.",
+  lost: 'Lost the connection to the game server.',
   expired: 'That match is no longer available.',
   full: 'The game server is full right now. Please try again shortly.',
   outdated: 'This page is out of date. Refresh to get the latest version.',
@@ -72,7 +75,10 @@ class Game {
   private net: NetClient | null = null;
   private notice = '';
   private softwareWarning = '';
-  private garageTab: GarageTab = 'chassis';
+  private garageTab: GarageTab = 'workshop';
+  private sideTab: SideTab = 'preview';
+  private buyCategory: BuyCategory = 'chassis';
+  private shelf: Slot | null = null;
   private tutorial: Tutorial | null = null;
   private readonly tutorialInput = emptyInput();
   private readonly fpsEl = document.createElement('div');
@@ -233,7 +239,6 @@ class Game {
     const h = window.innerHeight;
     this.renderer.setSize(w, h);
     this.view.resize(w, h);
-    this.garage.resize(w, h);
   }
 
   private setScreen(el: HTMLElement | null): void {
@@ -255,7 +260,7 @@ class Game {
   /** The title screen runs a real AI-only match in the background. */
   private startDemo(): void {
     const seed = Math.floor(Math.random() * 1e9);
-    this.match = new Match(makeRivals(null, 6, seed), { seed, arena: randomArena(Math.random) });
+    this.match = new Match(makeRivals(null, 4, seed), { seed, arena: 'skyscraper' });
     this.player = null;
     this.view.setMatch(this.match, 0);
   }
@@ -300,7 +305,7 @@ class Game {
     if (!this.api || !this.profile) return;
     try {
       [this.history, this.leaderboard] = await Promise.all([this.api.history(), this.api.leaderboard()]);
-      if (this.mode === 'garage' && this.garageTab === 'profile') this.refreshGarage();
+      if (this.mode === 'garage' && (this.garageTab === 'garage' || this.sideTab === 'highscore')) this.refreshGarage();
     } catch {
       // The tab still shows the player's own stats without these.
     }
@@ -325,9 +330,9 @@ class Game {
 
   private refreshGarage(): void {
     const { loadout } = this.save;
-    const { chassis, melee, turret, defense, paint = DEFAULT_PAINT, rearMelee } = loadout;
-    this.garage.setBuild({ chassis, melee, turret, defense, paint, rearMelee, color: paint.primary });
-    const panel = this.ui.querySelector('.garage-panel');
+    const { chassis, melee, turret, defense, paint = DEFAULT_PAINT, rearMelee, tower, wheels } = loadout;
+    this.garage.setBuild({ chassis, melee, turret, defense, paint, rearMelee, tower, wheels, color: paint.primary });
+    const panel = this.ui.querySelector('.ws-panel');
     const scroll = panel ? panel.scrollTop : 0;
     const buy = (ok: boolean) => {
       if (ok) {
@@ -360,6 +365,30 @@ class Game {
         this.save,
         {
           onEquip: (slot: Slot, id: string) => change({ type: 'equip', slot, id }, () => buyOrEquip(this.save, slot, id)),
+          onSell: (slot, id) => change({ type: 'sell', slot, id }, () => sellPart(this.save, slot, id)),
+          onArmour: (armour) => change({ type: 'armour', armour }, () => setArmour(this.save, armour)),
+          onShelf: (shelf) => {
+            this.shelf = shelf;
+            this.sfx.click();
+            this.refreshGarage();
+          },
+          onSide: (side) => {
+            this.sideTab = side;
+            this.sfx.click();
+            this.refreshGarage();
+            if (side === 'highscore') void this.loadProfileTab();
+          },
+          onBuyCategory: (category) => {
+            this.buyCategory = category;
+            this.sfx.click();
+            this.refreshGarage();
+            this.ui.querySelector('.ws-panel')!.scrollTop = 0;
+          },
+          onZoom: (step) => this.garage.zoom(step),
+          onQuit: () => {
+            this.sfx.click();
+            this.showMenu();
+          },
           onPowerup: (id) => change({ type: 'powerup', id }, () => buyPowerup(this.save, id)),
           onUpgrade: (id) => change({ type: 'upgrade', id }, () => buyUpgrade(this.save, id)),
           onFight: () => this.startMatch(),
@@ -369,8 +398,8 @@ class Game {
             this.garageTab = tab;
             this.sfx.click();
             this.refreshGarage();
-            this.ui.querySelector('.garage-panel')!.scrollTop = 0;
-            if (tab === 'profile') void this.loadProfileTab();
+            this.ui.querySelector('.ws-panel')!.scrollTop = 0;
+            if (tab === 'garage') void this.loadProfileTab();
           },
           onPaint: (paint) =>
             change({ type: 'paint', paint }, () => {
@@ -409,6 +438,9 @@ class Game {
           notice,
           keys: this.settings.bindings,
           tab: this.garageTab,
+          side: this.sideTab,
+          buyCategory: this.buyCategory,
+          shelf: this.shelf,
           career: this.career,
           account: this.profile && {
             profile: this.profile,
@@ -420,7 +452,7 @@ class Game {
         },
       ),
     );
-    const next = this.ui.querySelector('.garage-panel');
+    const next = this.ui.querySelector('.ws-panel');
     if (next) next.scrollTop = scroll;
     this.mountGoogleButton();
   }
@@ -443,9 +475,9 @@ class Game {
     this.careerFight = fight;
     this.match = fight
       ? new Match([me, ...fightSetups(fight, seed)], { seed, arena: fight.arena, mode: fight.mode, killTarget: fight.killTarget })
-      : new Match([me, ...makeRivals(this.save, 5, seed)], { seed, arena: practice.arena, mode: practice.mode });
+      : new Match([me, ...makeRivals(this.save, practice.mode === 'duel' ? 1 : 5, seed)], { seed, arena: practice.arena, mode: practice.mode });
     this.player = this.match.bots[0];
-    this.hud = new Hud(this.match, this.player, this.settings.bindings);
+    this.hud = this.makeHud(this.match, this.player);
     this.beginTutorial();
     this.view.setMatch(this.match, this.player.id);
     this.setScreen(this.hud.root);
@@ -453,6 +485,24 @@ class Game {
     this.accumulator = 0;
     this.mode = 'match';
     this.sfx.click();
+  }
+
+  /** Online these go to the server. In training there's only a bot to surrender to. */
+  private makeHud(match: Match, player: Bot): Hud {
+    return new Hud(match, player, this.settings.bindings, {
+      onChat: (id) => {
+        if (this.net) this.net.chat(id);
+        else this.hud?.showChat(player.id, id);
+      },
+      onSurrender: () => {
+        if (this.net) this.net.surrender();
+        else match.forfeit(player.id);
+      },
+      onDraw: () => {
+        if (this.net) this.net.offerDraw();
+        else this.hud?.message(`${match.bots.find((bot) => bot !== player)?.name ?? 'Your rival'} refuses a draw.`);
+      },
+    });
   }
 
   private startOnline(): void {
@@ -466,7 +516,7 @@ class Game {
       onStart: (match, player) => {
         this.match = match;
         this.player = player;
-        this.hud = new Hud(match, player, this.settings.bindings);
+        this.hud = this.makeHud(match, player);
         this.beginTutorial();
         this.view.setMatch(match, player.id);
         this.setScreen(this.hud.root);
@@ -474,6 +524,8 @@ class Game {
         this.mode = 'match';
       },
       onOver: () => this.finishMatch(),
+      onChat: (bot, id) => this.hud?.showChat(bot, id),
+      onDrawOffer: (bot) => this.hud?.drawOffered(bot),
       onFail: (reason) => {
         this.net = null;
         this.notice = FAILURE_TEXT[reason];
@@ -534,13 +586,13 @@ class Game {
       // The server already banked an online match. A practice match runs in this browser, so
       // nothing it reports can be trusted with real money.
       if (online) this.api?.me().then((profile) => this.setProfile(profile)).catch(() => {});
-      else note = 'Practice match, so no payout. Fight online to earn money and rating.';
+      else note = 'Training, so no payout. Fight in the Lobby to earn money and rating.';
     } else {
       // Online robots get free powerups, so the ones in the garage are left untouched.
       applyResult(this.save, mine.total, mine.place, online ? this.save.loadout.powerups : player.powerups);
       writeSave(this.storage, this.save);
     }
-    this.setScreen(resultsScreen(standings, player.id, () => this.showGarage(), note));
+    this.setScreen(resultsScreen(standings, player.id, () => this.showGarage(), note, match.drawn));
   }
 
   private onMatchEvent(event: GameEvent): void {
@@ -598,7 +650,7 @@ class Game {
       case 'garage':
       case 'lobby':
         this.garage.update(dt);
-        this.renderer.render(this.garage.scene, this.garage.camera);
+        this.renderPreview();
         return;
       case 'menu':
         this.tickDemo(dt);
@@ -619,6 +671,23 @@ class Game {
     this.view.update(dt, this.accumulator / STEP);
     if (this.mode === 'menu') this.view.orbitCamera(this.clock);
     this.renderer.render(this.view.arena.scene, this.view.camera);
+  }
+
+  /** Draws the robot only in the workshop's preview window. The page's panels cover everything else. */
+  private renderPreview(): void {
+    const r = this.renderer;
+    r.setClearColor(WORKSHOP_METAL);
+    r.clear();
+    const box = this.ui.querySelector('[data-preview]')?.getBoundingClientRect();
+    if (!box || box.width < 1 || box.height < 1) return;
+    const bottom = window.innerHeight - box.bottom;
+    this.garage.setAspect(box.width / box.height);
+    r.setViewport(box.left, bottom, box.width, box.height);
+    r.setScissor(box.left, bottom, box.width, box.height);
+    r.setScissorTest(true);
+    r.render(this.garage.scene, this.garage.camera);
+    r.setScissorTest(false);
+    r.setViewport(0, 0, window.innerWidth, window.innerHeight);
   }
 
   private updateFps(dt: number): void {

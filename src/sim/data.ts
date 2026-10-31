@@ -8,6 +8,10 @@ export type TurretId =
 export type DefenseId =
   | 'shield' | 'mines' | 'oil' | 'glue' | 'nails' | 'steelram' | 'plow' | 'blades' | 'cutter'
   | 'teleport' | 'flash' | 'regen' | 'cloak' | 'emp' | 'minibot' | 'remote' | 'kamikaze';
+export type TowerId = 'small' | 'medium' | 'large';
+export type WheelsId = 'small4' | 'large4' | 'six' | 'tracks';
+export type EngineId = 'small' | 'medium' | 'large' | 'turbo';
+export type PowerId = 'alkaline' | 'lithium' | 'fuelcell' | 'reactor';
 export type PowerupId = 'rage' | 'megashield' | 'cloaking' | 'xray' | 'repair' | 'turbo';
 export type UpgradeId = 'armor' | 'engine' | 'weapons';
 
@@ -21,15 +25,113 @@ export interface ChassisDef {
   turn: number;
   mass: number;
   radius: number;
+  /** How much the parts bolted to this chassis can take up. */
+  space: number;
 }
 
 export const CHASSIS: Record<ChassisId, ChassisDef> = {
-  scout: { name: 'Whippet', blurb: 'Fast and twitchy. Folds if you stop moving.', price: 700, hp: 140, speed: 16, accel: 26, turn: 3.2, mass: 0.75, radius: 1.25 },
-  ghost: { name: 'Wraith', blurb: 'Quick, with more armor than it looks.', price: 950, hp: 155, speed: 14.5, accel: 22, turn: 2.9, mass: 0.9, radius: 1.3 },
-  brawler: { name: 'Bruiser', blurb: 'The honest all-rounder.', price: 0, hp: 175, speed: 12.5, accel: 18, turn: 2.6, mass: 1, radius: 1.45 },
-  rhino: { name: 'Rhino', blurb: 'Heavy nose, big shove. Hard to knock off a ledge.', price: 1200, hp: 205, speed: 11, accel: 14, turn: 2.2, mass: 1.3, radius: 1.6 },
-  juggernaut: { name: 'Anvil', blurb: 'A slow wall that hits like a truck.', price: 1500, hp: 235, speed: 9.5, accel: 11, turn: 1.9, mass: 1.6, radius: 1.75 },
+  scout: { name: 'Whippet', blurb: 'Fast and twitchy. Folds if you stop moving.', price: 700, hp: 140, speed: 16, accel: 26, turn: 3.2, mass: 0.75, radius: 1.25, space: 70 },
+  ghost: { name: 'Wraith', blurb: 'Quick, with more armor than it looks.', price: 950, hp: 155, speed: 14.5, accel: 22, turn: 2.9, mass: 0.9, radius: 1.3, space: 80 },
+  brawler: { name: 'Bruiser', blurb: 'The honest all-rounder.', price: 0, hp: 175, speed: 12.5, accel: 18, turn: 2.6, mass: 1, radius: 1.45, space: 100 },
+  rhino: { name: 'Rhino', blurb: 'Heavy nose, big shove. Hard to knock off a ledge.', price: 1200, hp: 205, speed: 11, accel: 14, turn: 2.2, mass: 1.3, radius: 1.6, space: 115 },
+  juggernaut: { name: 'Anvil', blurb: 'A slow wall that hits like a truck.', price: 1500, hp: 235, speed: 9.5, accel: 11, turn: 1.9, mass: 1.6, radius: 1.75, space: 130 },
 };
+
+/** A part changes a stat by multiplying it, so anything left out stays as it was. */
+export interface PartDef {
+  name: string;
+  blurb: string;
+  price: number;
+  space: number;
+  speed?: number;
+  accel?: number;
+  turn?: number;
+  mass?: number;
+  /** How fast the turret swings round. */
+  track?: number;
+  /** How fast the battery recharges. */
+  regen?: number;
+}
+
+export const TOWERS: Record<TowerId, PartDef> = {
+  small: { name: 'Small Tower', blurb: 'Light, but the turret swings round slowly.', price: 100, space: 5, track: 0.8 },
+  medium: { name: 'Medium Tower', blurb: 'Does the job.', price: 0, space: 8 },
+  large: { name: 'Large Tower', blurb: 'Keeps the turret on a target that is circling you.', price: 400, space: 12, track: 1.35 },
+};
+
+export const WHEELS: Record<WheelsId, PartDef> = {
+  small4: { name: '4 Small Wheels', blurb: 'Turns on a coin, gives up some top speed.', price: 150, space: 5, speed: 0.92, accel: 1.05, turn: 1.15 },
+  large4: { name: '4 Large Wheels', blurb: 'The sensible choice.', price: 0, space: 8 },
+  six: { name: '6 Wheels', blurb: 'Better pull off the line and harder to shove.', price: 350, space: 11, speed: 0.97, accel: 1.12, mass: 1.1 },
+  tracks: { name: 'Tank Tracks', blurb: 'Slow, and very hard to knock off a roof.', price: 600, space: 14, speed: 0.85, turn: 0.9, mass: 1.35 },
+};
+
+export const ENGINES: Record<EngineId, PartDef> = {
+  small: { name: 'Small Engine', blurb: 'Saves room for weapons.', price: 100, space: 6, speed: 0.9, accel: 0.9 },
+  medium: { name: 'Medium Engine', blurb: 'Reliable.', price: 0, space: 10 },
+  large: { name: 'Large Engine', blurb: 'More speed, more bulk.', price: 500, space: 16, speed: 1.12, accel: 1.12 },
+  turbo: { name: 'Turbo V8', blurb: 'Enormous, and enormously quick.', price: 1000, space: 22, speed: 1.22, accel: 1.3 },
+};
+
+export const POWER_SOURCES: Record<PowerId, PartDef> = {
+  alkaline: { name: 'Alkaline Battery', blurb: 'Recharges your turret slowly.', price: 0, space: 4 },
+  lithium: { name: 'Lithium Pack', blurb: 'Recharges 40% faster.', price: 300, space: 7, regen: 1.4 },
+  fuelcell: { name: 'Fuel Cell', blurb: 'Recharges 90% faster.', price: 650, space: 10, regen: 1.9 },
+  reactor: { name: 'Micro Reactor', blurb: 'Keeps almost any turret firing.', price: 1200, space: 15, regen: 2.5 },
+};
+
+/** Armour is dialled up or down in the workshop. More of it is tougher, heavier and slower. */
+export const ARMOUR = { min: 25, max: 150, step: 25, default: 75, spacePerPoint: 0.16, hpPerPoint: 0.006, speedPerPoint: 0.0008, massPerPoint: 0.002 };
+
+/** Everything that decides a robot's stats. Parts left out are the ones every robot starts with. */
+export interface PartsChoice {
+  chassis: ChassisId;
+  melee: MeleeId;
+  turret: TurretId;
+  defense: DefenseId;
+  tower?: TowerId;
+  wheels?: WheelsId;
+  engine?: EngineId;
+  power?: PowerId;
+  armour?: number;
+}
+
+export function installedParts(l: PartsChoice): { tower: TowerId; wheels: WheelsId; engine: EngineId; power: PowerId; armour: number } {
+  return { tower: l.tower ?? 'medium', wheels: l.wheels ?? 'large4', engine: l.engine ?? 'medium', power: l.power ?? 'alkaline', armour: l.armour ?? ARMOUR.default };
+}
+
+/** The better a weapon, the more room it takes. */
+export function weaponSpace(price: number): number {
+  return Math.round(6 + price / 75);
+}
+
+export function spaceUsed(l: PartsChoice): number {
+  const p = installedParts(l);
+  const parts = TOWERS[p.tower].space + WHEELS[p.wheels].space + ENGINES[p.engine].space + POWER_SOURCES[p.power].space;
+  const weapons = weaponSpace(MELEE[l.melee].price) + weaponSpace(TURRETS[l.turret].price) + weaponSpace(DEFENSES[l.defense].price);
+  return Math.round(parts + weapons + p.armour * ARMOUR.spacePerPoint);
+}
+
+export function spaceCapacity(l: PartsChoice): number {
+  return CHASSIS[l.chassis].space;
+}
+
+export function buildStats(l: PartsChoice): { hp: number; speed: number; accel: number; turn: number; mass: number; track: number; regen: number } {
+  const c = CHASSIS[l.chassis];
+  const p = installedParts(l);
+  const wheels = WHEELS[p.wheels];
+  const engine = ENGINES[p.engine];
+  const extra = p.armour - ARMOUR.default;
+  return {
+    hp: c.hp * (1 + extra * ARMOUR.hpPerPoint),
+    speed: c.speed * (wheels.speed ?? 1) * (engine.speed ?? 1) * (1 - extra * ARMOUR.speedPerPoint),
+    accel: c.accel * (wheels.accel ?? 1) * (engine.accel ?? 1),
+    turn: c.turn * (wheels.turn ?? 1),
+    mass: c.mass * (wheels.mass ?? 1) * (1 + extra * ARMOUR.massPerPoint),
+    track: TOWERS[p.tower].track ?? 1,
+    regen: POWER_SOURCES[p.power].regen ?? 1,
+  };
+}
 
 export type MeleeKind = 'held' | 'strike' | 'ram' | 'claw' | 'magnet';
 
@@ -198,17 +300,23 @@ export const REWARD = {
   repairPickup: 0.3,
   hillPerSecond: 3,
   placement: [300, 180, 100, 50, 25, 10],
+  duel: [300, 50],
 };
 
-export type ModeId = 'ffa' | 'lms' | 'koth';
+export type ModeId = 'duel' | 'ffa' | 'lms' | 'koth';
 
 export const MODES: Record<ModeId, { name: string; blurb: string; duration: number }> = {
+  duel: { name: 'Duel', blurb: 'One on one, one life. Wreck them or knock them off the roof.', duration: 180 },
   ffa: { name: 'Free-for-All', blurb: 'First to 12 kills, or the most when time runs out.', duration: 150 },
   lms: { name: 'Last Robot Standing', blurb: 'One life each. Outlast everyone.', duration: 180 },
   koth: { name: 'King of the Hill', blurb: 'Hold the zone alone to score. First to 45 seconds wins.', duration: 180 },
 };
 
 export const HILL_TARGET = 45;
+/** Long enough to watch the loser fall before the results appear. */
+export const DUEL_OUTRO = 1.5;
+/** Shorter duels pay no bonus, so two accounts can't farm money by surrendering to each other. */
+export const DUEL_MIN_PAID_TIME = 30;
 
 export const MATCH = {
   duration: MODES.ffa.duration,

@@ -1,11 +1,13 @@
 import { sawPos } from '../sim/arena';
 import { keyLabel, type Action, type Bindings } from '../game/settings';
+import { QUICK_CHAT } from '../net/protocol';
 import { DEFENSES, MELEE, MODES, POWERUPS, POWERUP_ORDER, TURRETS, UPGRADES } from '../sim/data';
 import { relativeBearing, type Bot, type GameEvent, type Match } from '../sim/match';
 
 const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
 const DAMAGE_MARK_TIME = 1;
 const MAP_INTERVAL = 1 / 20;
+const q = (root: HTMLElement, selector: string) => root.querySelector<HTMLElement>(selector)!;
 
 function hex(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`;
@@ -15,6 +17,15 @@ function hex(color: number): string {
 export function escapeText(text: string): string {
   return text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 }
+
+export interface HudActions {
+  onChat: (id: number) => void;
+  onSurrender: () => void;
+  onDraw: () => void;
+}
+
+const SURRENDER_CONFIRM_MS = 3000;
+const DRAW_OFFER_MS = 15000;
 
 export class Hud {
   readonly root = document.createElement('div');
@@ -38,42 +49,73 @@ export class Hud {
   notice = '';
   private readonly ping: HTMLElement;
   private readonly blind: HTMLElement;
-  private readonly ammo: HTMLElement;
+  private readonly battery: HTMLElement;
+  private readonly rivalName: HTMLElement;
+  private readonly rivalFill: HTMLElement;
+  private readonly rivalWeapon: HTMLElement;
+  private readonly rivalBattery: HTMLElement;
+  private readonly arrow: HTMLElement;
+  private readonly chatMenu: HTMLElement;
+  private readonly surrenderBtn: HTMLButtonElement;
+  private readonly drawBtn: HTMLButtonElement;
+  private readonly duel: boolean;
+  private rival: Bot;
 
   private readonly tutorial: HTMLElement;
   private readonly damageLayer: HTMLElement;
   /** One indicator per attacker, refreshed while they keep hitting. */
   private readonly damageMarks = new Map<number, { el: HTMLElement; time: number }>();
 
-  constructor(private readonly match: Match, private readonly player: Bot, keys: Bindings) {
+  constructor(private readonly match: Match, private readonly player: Bot, keys: Bindings, actions: HudActions) {
     const { loadout } = player;
-    this.root.className = 'hud';
+    this.duel = match.mode === 'duel';
+    this.rival = match.bots.find((bot) => bot !== player) ?? player;
+    this.root.className = `hud${this.duel ? ' hud-duel' : ''}`;
     this.root.innerHTML = `
       <div class="hud-status">
-        <div class="hud-name" style="color:${hex(player.color)}">${escapeText(player.name)}</div>
-        <div class="hp-bar"><div class="hp-fill"></div><span class="hp-text"></span></div>
         <div class="hud-money"></div>
         <div class="hud-effects"></div>
       </div>
       <div class="hud-timer"></div>
       <div class="hud-ping"></div>
       <div class="hud-mode">${escapeText(match.arena.name)} · ${MODES[match.mode].name}</div>
+      <div class="hud-arrow"></div>
       <div class="hud-board"></div>
       <div class="hud-feed"></div>
       <div class="hud-blind"></div>
       <div class="hud-damage"></div>
       <div class="hud-center"></div>
       <div class="hud-tutorial" role="status"></div>
-      <div class="hud-slots">
-        ${this.slot(keyLabel(keys.melee), MELEE[loadout.melee].name, 'melee')}
-        ${this.slot(keyLabel(keys.turret), TURRETS[loadout.turret].name, 'turret', '<div class="slot-ammo"><i data-ammo></i></div>')}
-        ${this.slot(keyLabel(keys.defense), DEFENSES[loadout.defense].name, 'defense')}
-        <div class="slot-gap"></div>
+      <canvas class="hud-map" width="180" height="180"></canvas>
+      <div class="hud-powers">
         ${POWERUP_ORDER.map(
           (id, i) => `<div class="slot slot-power"><kbd>${keyLabel(keys[POWER_ACTIONS[i]])}</kbd><span>${POWERUPS[id].name}</span><b data-power="${i}"></b></div>`,
         ).join('')}
       </div>
-      <canvas class="hud-map" width="180" height="180"></canvas>
+      <div class="hud-dock">
+        <div class="dock-card">
+          <div class="dock-field"><label>Name:</label><div class="dock-name" style="color:${hex(player.color)}">${escapeText(player.name)}</div></div>
+          <div class="dock-field"><label>Armour:</label><div class="hp-bar"><div class="hp-fill"></div><span class="hp-text"></span></div></div>
+          <div class="dock-slots">
+            ${this.slot(keyLabel(keys.melee), MELEE[loadout.melee].name, 'melee')}
+            ${this.slot(keyLabel(keys.turret), TURRETS[loadout.turret].name, 'turret')}
+            ${this.slot(keyLabel(keys.defense), DEFENSES[loadout.defense].name, 'defense')}
+          </div>
+          <div class="dock-battery"><div class="battery"><i data-battery></i></div><label>Battery:</label></div>
+        </div>
+        <div class="dock-mid">
+          <div class="chat-menu" hidden>${QUICK_CHAT.map((text, i) => `<button tabindex="-1" data-chat-id="${i}">${text}</button>`).join('')}</div>
+          <button class="dock-btn" tabindex="-1" data-chat>Chat</button>
+          <button class="dock-btn" tabindex="-1" data-surrender>Surrender</button>
+          <button class="dock-btn" tabindex="-1" data-draw>Offer draw</button>
+        </div>
+        <div class="dock-card">
+          <div class="dock-field"><label>Name:</label><div class="dock-name" data-rival-name></div></div>
+          <div class="dock-field"><label>Armour:</label><div class="hp-bar"><div class="hp-fill" data-rival-fill></div></div></div>
+          <div class="dock-weapon" data-rival-weapon></div>
+          <div class="dock-battery"><div class="battery"><i data-rival-battery></i></div><label>Battery:</label></div>
+        </div>
+      </div>
     `;
     const q = (selector: string) => this.root.querySelector<HTMLElement>(selector)!;
     this.hpFill = q('.hp-fill');
@@ -81,7 +123,15 @@ export class Hud {
     this.timer = q('.hud-timer');
     this.ping = q('.hud-ping');
     this.blind = q('.hud-blind');
-    this.ammo = q('[data-ammo]');
+    this.battery = q('[data-battery]');
+    this.rivalName = q('[data-rival-name]');
+    this.rivalFill = q('[data-rival-fill]');
+    this.rivalWeapon = q('[data-rival-weapon]');
+    this.rivalBattery = q('[data-rival-battery]');
+    this.arrow = q('.hud-arrow');
+    this.chatMenu = q('.chat-menu');
+    this.surrenderBtn = q('[data-surrender]') as HTMLButtonElement;
+    this.drawBtn = q('[data-draw]') as HTMLButtonElement;
     this.tutorial = q('.hud-tutorial');
     this.damageLayer = q('.hud-damage');
     this.board = q('.hud-board');
@@ -92,10 +142,79 @@ export class Hud {
     this.cooldowns = { melee: q('[data-cd="melee"]'), turret: q('[data-cd="turret"]'), defense: q('[data-cd="defense"]') };
     POWERUP_ORDER.forEach((_, i) => this.powerCounts.push(q(`[data-power="${i}"]`)));
     this.minimap = this.root.querySelector<HTMLCanvasElement>('.hud-map')!.getContext('2d')!;
+    if (!this.duel) {
+      this.surrenderBtn.disabled = true;
+      this.drawBtn.disabled = true;
+    }
+    this.bindDock(actions);
   }
 
-  private slot(key: string, name: string, id: string, extra = ''): string {
-    return `<div class="slot"><div class="slot-cd" data-cd="${id}"></div><kbd>${key}</kbd><span>${name}</span>${extra}</div>`;
+  private bindDock(actions: HudActions): void {
+    let confirmTimer = 0;
+    q(this.root, '.hud-dock').addEventListener('click', (e) => {
+      const button = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
+      if (!button) return;
+      // A button left focused would catch the spacebar, which fires the main weapon.
+      button.blur();
+      const { chatId } = button.dataset;
+      if (chatId !== undefined) {
+        this.chatMenu.hidden = true;
+        actions.onChat(Number(chatId));
+      } else if ('chat' in button.dataset) {
+        this.chatMenu.hidden = !this.chatMenu.hidden;
+      } else if ('surrender' in button.dataset) {
+        if (confirmTimer) {
+          actions.onSurrender();
+          return;
+        }
+        button.textContent = 'Are you sure?';
+        confirmTimer = window.setTimeout(() => {
+          confirmTimer = 0;
+          button.textContent = 'Surrender';
+        }, SURRENDER_CONFIRM_MS);
+      } else if ('draw' in button.dataset) {
+        actions.onDraw();
+      }
+    });
+  }
+
+  /** A quick-chat line from a pilot. */
+  showChat(bot: number, id: number): void {
+    const sender = this.match.bots[bot];
+    if (!sender || !QUICK_CHAT[id]) return;
+    this.addFeed(`<b style="color:${hex(sender.color)}">${escapeText(sender.name)}:</b> ${QUICK_CHAT[id]}`);
+  }
+
+  message(text: string): void {
+    this.addFeed(escapeText(text));
+  }
+
+  /** Lights up the button so the other pilot's offer can be accepted, for as long as it stands. */
+  drawOffered(bot: number): void {
+    if (bot === this.player.id) {
+      this.addFeed('You offered a draw.');
+      return;
+    }
+    this.addFeed(`<b style="color:${hex(this.match.bots[bot].color)}">${escapeText(this.match.bots[bot].name)}</b> offers a draw.`);
+    this.drawBtn.textContent = 'Accept draw';
+    this.drawBtn.classList.add('dock-btn-hot');
+    window.setTimeout(() => {
+      this.drawBtn.textContent = 'Offer draw';
+      this.drawBtn.classList.remove('dock-btn-hot');
+    }, DRAW_OFFER_MS);
+  }
+
+  private addFeed(html: string, mine = false): void {
+    const row = document.createElement('div');
+    row.className = mine ? 'feed-row feed-mine' : 'feed-row';
+    row.innerHTML = html;
+    this.feed.prepend(row);
+    window.setTimeout(() => row.remove(), 5000);
+    while (this.feed.children.length > 5) this.feed.lastElementChild?.remove();
+  }
+
+  private slot(key: string, name: string, id: string): string {
+    return `<div class="slot"><div class="slot-cd" data-cd="${id}"></div><kbd>${key}</kbd><span>${name}</span></div>`;
   }
 
   private markDamage(source: number): void {
@@ -142,14 +261,9 @@ export class Hud {
     const { bots } = this.match;
     const victim = bots[event.victim];
     const killer = event.killer >= 0 ? bots[event.killer] : null;
-    const row = document.createElement('div');
-    row.className = killer === this.player ? 'feed-row feed-mine' : 'feed-row';
     const name = (bot: Bot) => `<b style="color:${hex(bot.color)}">${escapeText(bot.name)}</b>`;
-    if (killer) row.innerHTML = `${name(killer)} ${event.fell ? 'sent' : 'scrapped'} ${name(victim)}${event.fell ? ' over the edge' : ''}`;
-    else row.innerHTML = `${name(victim)} ${event.fell ? 'took the long way down' : 'lost to the arena'}`;
-    this.feed.prepend(row);
-    window.setTimeout(() => row.remove(), 5000);
-    while (this.feed.children.length > 5) this.feed.lastElementChild?.remove();
+    if (killer) this.addFeed(`${name(killer)} ${event.fell ? 'sent' : 'scrapped'} ${name(victim)}${event.fell ? ' over the edge' : ''}`, killer === this.player);
+    else this.addFeed(`${name(victim)} ${event.fell ? 'took the long way down' : 'lost to the arena'}`);
   }
 
   update(dt: number): void {
@@ -157,8 +271,8 @@ export class Hud {
     this.updateDamageMarks(dt);
     const health = player.hp / player.maxHp;
     this.hpFill.style.width = `${health * 100}%`;
-    this.hpFill.style.background = health > 0.5 ? '#5be36a' : health > 0.25 ? '#f2c037' : '#e84a3a';
-    this.setText(this.hpText, `${Math.ceil(player.hp)} / ${Math.round(player.maxHp)}`);
+    this.hpFill.style.background = health > 0.5 ? '#d8d84a' : health > 0.25 ? '#f2a037' : '#e84a3a';
+    this.setText(this.hpText, `${Math.min(Math.ceil(player.hp), Math.round(player.maxHp))} / ${Math.round(player.maxHp)}`);
 
     const left = Math.ceil(match.timeLeft);
     this.setText(this.timer, `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`);
@@ -175,8 +289,9 @@ export class Hud {
     this.setCooldown('melee', fraction(player.meleeCd, MELEE[loadout.melee].cooldown));
     this.setCooldown('turret', fraction(player.turretCd, TURRETS[loadout.turret].cooldown));
     this.setCooldown('defense', fraction(player.defenseCd, DEFENSES[loadout.defense].cooldown));
-    this.ammo.style.width = `${Math.max(0, player.ammo) * 100}%`;
-    this.ammo.style.background = player.ammo < TURRETS[loadout.turret].ammo ? '#e84a3a' : '#f2c037';
+    this.battery.style.height = `${Math.max(0, player.ammo) * 100}%`;
+    this.battery.style.background = player.ammo < TURRETS[loadout.turret].ammo ? '#e84a3a' : '#d8d84a';
+    this.updateRival();
     this.blind.style.opacity = String(Math.min(1, player.blindT * 1.2));
     POWERUP_ORDER.forEach((id, i) => {
       const n = player.powerups[id];
@@ -204,8 +319,9 @@ export class Hud {
     const effectText = tags.join(' · ');
     if (this.effects.textContent !== effectText) this.effects.textContent = effectText;
 
-    const dead = player.out ? 'ELIMINATED — spectating' : `SCRAPPED — rebuilding in ${Math.ceil(player.respawnT)}`;
-    const centerText = this.notice || (player.alive ? '' : dead);
+    const dead = this.duel ? 'SCRAPPED' : player.out ? 'ELIMINATED — spectating' : `SCRAPPED — rebuilding in ${Math.ceil(player.respawnT)}`;
+    const won = this.duel && player.alive && this.rival.out ? 'VICTORY!' : '';
+    const centerText = this.notice || (player.alive ? won : dead);
     if (centerText !== this.lastCenter) {
       this.lastCenter = centerText;
       this.center.textContent = centerText;
@@ -214,10 +330,10 @@ export class Hud {
     this.boardTimer -= dt;
     if (this.boardTimer <= 0) {
       this.boardTimer = 0.25;
-      this.drawBoard();
+      if (!this.duel) this.drawBoard();
     }
     this.mapTimer -= dt;
-    if (this.mapTimer <= 0) {
+    if (!this.duel && this.mapTimer <= 0) {
       this.mapTimer = MAP_INTERVAL;
       this.drawMap();
     }
@@ -226,6 +342,24 @@ export class Hud {
   /** Writing text makes the browser lay the page out again, even when the text is the same. */
   private setText(el: HTMLElement, text: string): void {
     if (el.textContent !== text) el.textContent = text;
+  }
+
+  /** The right-hand card shows the opponent, or whoever is winning when there are several. */
+  private updateRival(): void {
+    const { match, player } = this;
+    if (!this.duel && this.boardTimer <= 0) this.rival = match.ranked().find((bot) => bot !== player) ?? player;
+    const rival = this.rival;
+    this.setText(this.rivalName, rival.name);
+    this.rivalName.style.color = hex(rival.color);
+    this.setText(this.rivalWeapon, MELEE[rival.loadout.melee].name);
+    const health = rival.hp / rival.maxHp;
+    this.rivalFill.style.width = `${health * 100}%`;
+    this.rivalFill.style.background = health > 0.5 ? '#d8d84a' : health > 0.25 ? '#f2a037' : '#e84a3a';
+    this.rivalBattery.style.height = `${Math.max(0, rival.ammo) * 100}%`;
+    // Without a map, this is how to find them on the roof.
+    const seen = this.duel && rival.alive && player.alive && match.canSee(player, rival);
+    this.arrow.hidden = !seen;
+    if (seen) this.arrow.style.transform = `rotate(${-relativeBearing(player.x, player.z, player.heading, rival.x, rival.z)}rad)`;
   }
 
   setPing(ms: number): void {
@@ -277,6 +411,10 @@ export class Hud {
     circles(arena.firePits, '#a8481a');
     circles(arena.shockers, '#2b6a8a');
     circles(arena.pillars, '#4a4e52');
+    for (const block of arena.blocks) {
+      g.fillStyle = block.kind === 'fence' ? '#8a8a78' : '#4a4e52';
+      g.fillRect(toX(block.x) - (block.w * scale) / 2, toY(block.z) - (block.d * scale) / 2, block.w * scale, block.d * scale);
+    }
     if (this.match.mode === 'koth') {
       g.strokeStyle = '#ffd23a';
       g.lineWidth = 2;

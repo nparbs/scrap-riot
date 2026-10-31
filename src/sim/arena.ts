@@ -4,6 +4,22 @@ export interface Circle {
   r: number;
 }
 
+/** A round obstacle. Its look is just a prop, so it plays like any other pillar. */
+export interface Pillar extends Circle {
+  prop?: 'barrel' | 'pole';
+}
+
+/** A rectangular obstacle. Shots fly through fences, and everything else stops them. */
+export interface Block {
+  x: number;
+  z: number;
+  /** Size along x. */
+  w: number;
+  /** Size along z. */
+  d: number;
+  kind: 'fence' | 'bunker' | 'skylight' | 'shed';
+}
+
 export interface Saw {
   /** Which axis the saw slides along. */
   axis: 'x' | 'z';
@@ -50,7 +66,7 @@ export interface ArenaTheme {
   light: number;
   sunIntensity: number;
   /** Scenery past the arena edge. */
-  backdrop: 'stands' | 'city' | 'canyon' | 'foundry' | 'ice';
+  backdrop: 'stands' | 'city' | 'canyon' | 'foundry' | 'ice' | 'night';
 }
 
 export interface ArenaDef {
@@ -63,7 +79,8 @@ export interface ArenaDef {
   /** Below 1, robots slide around. */
   grip: number;
   wallHeight: number;
-  pillars: Circle[];
+  pillars: Pillar[];
+  blocks: Block[];
   saws: Saw[];
   /** Holes that destroy any robot falling in. */
   pits: Circle[];
@@ -78,7 +95,7 @@ export interface ArenaDef {
   theme: ArenaTheme;
 }
 
-export type ArenaId = 'pit' | 'rooftop' | 'furnace' | 'canyon' | 'foundry' | 'glacier';
+export type ArenaId = 'skyscraper' | 'pit' | 'rooftop' | 'furnace' | 'canyon' | 'foundry' | 'glacier';
 
 export const SAW_RADIUS = 1.7;
 export const SAW_DPS = 30;
@@ -103,7 +120,40 @@ const cross = (d: number): Point[] => [
   { x: 0, z: 0 }, { x: d, z: 0 }, { x: -d, z: 0 }, { x: 0, z: d }, { x: 0, z: -d },
 ];
 
+const EDGE = 30;
+const FENCE = 0.4;
+
 export const ARENAS: Record<ArenaId, ArenaDef> = {
+  skyscraper: {
+    id: 'skyscraper',
+    name: 'The Skyscraper',
+    blurb: 'The roof of a tower in a dark city. The edges are open, and it is a long way down.',
+    half: EDGE, walled: false, grip: 1, wallHeight: 0,
+    pillars: [
+      { x: -11, z: 24, r: 0.9, prop: 'barrel' }, { x: -9, z: 25.5, r: 0.9, prop: 'barrel' },
+      { x: 19, z: -9, r: 0.9, prop: 'barrel' },
+      { x: -16, z: 26, r: 0.3, prop: 'pole' }, { x: -5, z: 27, r: 0.3, prop: 'pole' },
+      { x: -22, z: 23, r: 0.3, prop: 'pole' }, { x: 1, z: 25, r: 0.3, prop: 'pole' },
+    ],
+    saws: [],
+    pits: [],
+    firePits: [], shockers: [], pistons: [], sentries: [],
+    blocks: [
+      { x: -3, z: 0, w: 13, d: 6, kind: 'skylight' },
+      { x: 8, z: 7, w: 7, d: 5, kind: 'bunker' },
+      { x: 17, z: 20, w: 20, d: 9, kind: 'shed' },
+      // Fence along the back corner only. Everywhere else is a clear drop.
+      { x: -13, z: EDGE - FENCE / 2, w: 34, d: FENCE, kind: 'fence' },
+      { x: -EDGE + FENCE / 2, z: 16, w: FENCE, d: 28, kind: 'fence' },
+    ],
+    spawns: [
+      { x: 14, z: -20 }, { x: -16, z: 14 }, { x: -24, z: -8 }, { x: 24, z: 6 },
+      { x: -4, z: 20 }, { x: -20, z: -24 }, { x: 4, z: -24 }, { x: 24, z: -22 },
+    ],
+    repairSpots: [{ x: -3, z: -13 }, { x: 20, z: 3 }, { x: -22, z: -3 }, { x: -6, z: 12 }],
+    hill: { x: -3, z: -13, r: 7 },
+    theme: { floor: 0xa2a28c, wall: 0x45433a, sky: 0x1c1a2c, fogNear: 90, fogFar: 420, light: 0xc4c8ff, sunIntensity: 1.1, backdrop: 'night' },
+  },
   pit: {
     id: 'pit',
     name: 'The Scrap Pit',
@@ -119,6 +169,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
       { axis: 'x', fixed: -22, amplitude: 18, speed: 0.55, phase: -Math.PI / 2 },
     ],
     pits: [], firePits: [], shockers: [], pistons: [], sentries: [],
+    blocks: [],
     spawns: ring(26),
     repairSpots: cross(16),
     hill: { x: 0, z: 0, r: 7 },
@@ -135,6 +186,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     saws: [],
     pits: [{ x: 0, z: 0, r: 4 }],
     firePits: [], shockers: [], pistons: [], sentries: [],
+    blocks: [],
     spawns: ring(20),
     repairSpots: [{ x: 16, z: 0 }, { x: -16, z: 0 }, { x: 0, z: 16 }, { x: 0, z: -16 }],
     hill: { x: 15, z: 15, r: 6 },
@@ -156,6 +208,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     sentries: [
       { x: 28, z: 28, range: 10 }, { x: -28, z: 28, range: 10 }, { x: 28, z: -28, range: 10 }, { x: -28, z: -28, range: 10 },
     ],
+    blocks: [],
     spawns: [
       { x: 0, z: 25 }, { x: 0, z: -25 }, { x: 25, z: 8 }, { x: -25, z: 8 }, { x: 25, z: -8 }, { x: -25, z: -8 },
       { x: 9, z: 25 }, { x: -9, z: -25 },
@@ -175,6 +228,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
       { x: 13, z: -9, r: 5.5 }, { x: 13, z: 1, r: 4.5 }, { x: -13, z: 9, r: 5.5 }, { x: -13, z: -1, r: 4.5 },
     ],
     firePits: [], shockers: [], pistons: [], sentries: [],
+    blocks: [],
     spawns: [
       { x: 22, z: -20 }, { x: -22, z: 20 }, { x: 24, z: 9 }, { x: -24, z: -9 },
       { x: 0, z: 22 }, { x: 0, z: -22 }, { x: 6, z: 12 }, { x: -6, z: -12 },
@@ -202,6 +256,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
       { x: -12, z: 30, dirX: 0, dirZ: -1, period: 5, phase: 3.5 },
     ],
     sentries: [],
+    blocks: [],
     spawns: ring(24),
     repairSpots: [{ x: 16, z: -14 }, { x: -16, z: 14 }, { x: 0, z: 18 }, { x: 0, z: -18 }],
     hill: { x: 0, z: 10, r: 6 },
@@ -218,6 +273,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     saws: [],
     pits: [{ x: 19, z: 19, r: 4.5 }, { x: -19, z: -19, r: 4.5 }],
     firePits: [], shockers: [], pistons: [], sentries: [],
+    blocks: [],
     spawns: [
       { x: 20, z: -14 }, { x: -20, z: 14 }, { x: 6, z: 22 }, { x: -6, z: -22 },
       { x: 22, z: 4 }, { x: -22, z: -4 }, { x: -14, z: 22 }, { x: 14, z: -22 },
@@ -228,7 +284,36 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
   },
 };
 
-export const ARENA_ORDER: ArenaId[] = ['pit', 'rooftop', 'furnace', 'canyon', 'foundry', 'glacier'];
+export const ARENA_ORDER: ArenaId[] = ['skyscraper', 'pit', 'rooftop', 'furnace', 'canyon', 'foundry', 'glacier'];
+
+/** The closest point on a block to the given point. It is the point itself when inside. */
+export function closestOnBlock(b: Block, x: number, z: number): Point {
+  return {
+    x: Math.max(b.x - b.w / 2, Math.min(b.x + b.w / 2, x)),
+    z: Math.max(b.z - b.d / 2, Math.min(b.z + b.d / 2, z)),
+  };
+}
+
+export function insideBlock(b: Block, x: number, z: number): boolean {
+  return Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2;
+}
+
+/** Distance along a ray to a block, or null if it misses. */
+export function rayBlock(b: Block, x: number, z: number, dirX: number, dirZ: number): number | null {
+  let near = 0;
+  let far = Infinity;
+  for (const [origin, dir, center, half] of [[x, dirX, b.x, b.w / 2], [z, dirZ, b.z, b.d / 2]]) {
+    if (Math.abs(dir) < 1e-9) {
+      if (Math.abs(origin - center) > half) return null;
+      continue;
+    }
+    const t1 = (center - half - origin) / dir;
+    const t2 = (center + half - origin) / dir;
+    near = Math.max(near, Math.min(t1, t2));
+    far = Math.min(far, Math.max(t1, t2));
+  }
+  return near <= far ? near : null;
+}
 
 export function sawPos(saw: Saw, t: number): Point {
   const slide = Math.sin(t * saw.speed + saw.phase) * saw.amplitude;

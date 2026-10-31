@@ -1,18 +1,25 @@
 import { ACHIEVEMENTS, CAREER, isUnlocked, type AchievementStats, type CareerProgress, type Fight, type Medal } from '../game/career';
-import { CATALOG, upgradeCost, type Save, type Slot } from '../game/progress';
+import { canSell, CATALOG, partFits, sellPrice, upgradeCost, type Save, type Slot } from '../game/progress';
 import { ACTIONS, activeLevel, keyLabel, LEVELS, QUALITY, type Action, type Bindings, type Quality, type Settings } from '../game/settings';
 import { NAME_MAX, type HistoryEntry, type LeaderboardEntry, type Profile } from '../net/protocol';
 import { ARENA_ORDER, ARENAS, type ArenaId } from '../sim/arena';
 import {
+  ARMOUR,
+  buildStats,
   DEFAULT_PAINT,
+  DUEL_MIN_PAID_TIME,
+  installedParts,
   MODES,
   PAINT_COLORS,
   PATTERNS,
   POWERUPS,
   POWERUP_CAP,
   POWERUP_ORDER,
+  spaceCapacity,
+  spaceUsed,
   TOPPERS,
   UPGRADES,
+  weaponSpace,
   type ModeId,
   type Paint,
   type PowerupId,
@@ -22,12 +29,30 @@ import type { Standing } from '../sim/match';
 import { escapeText, UPGRADE_ORDER } from './hud';
 
 const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
+
+function cogPath(teeth: number, outer: number, inner: number): string {
+  const points: string[] = [];
+  for (let i = 0; i < teeth; i++) {
+    const step = (Math.PI * 2) / teeth;
+    for (const [fraction, r] of [[0, inner], [0.2, outer], [0.5, outer], [0.7, inner]] as const) {
+      const a = (i + fraction) * step;
+      points.push(`${(60 + Math.cos(a) * r).toFixed(1)} ${(60 + Math.sin(a) * r).toFixed(1)}`);
+    }
+  }
+  return `M${points.join(' L')} Z`;
+}
+
+const COG_PATH = cogPath(12, 58, 46);
+
+function logoHtml(): string {
+  return `<div class="logo"><svg viewBox="0 0 120 120" aria-hidden="true"><path class="logo-cog" d="${COG_PATH}"/></svg><span>SCRAP</span><span>RIOT</span></div>`;
+}
 function controlsTable(keys: Bindings): string {
   const key = (action: Action) => `<kbd>${keyLabel(keys[action])}</kbd>`;
   return `
   <table class="controls">
     <tr><td>${key('forward')}${key('back')}${key('left')}${key('right')}</td><td>Drive</td></tr>
-    <tr><td>${key('melee')}</td><td>Front weapon</td></tr>
+    <tr><td>${key('melee')}</td><td>Main weapon</td></tr>
     <tr><td>${key('turret')}</td><td>Turret (aims itself)</td></tr>
     <tr><td>${key('defense')}</td><td>Defense</td></tr>
     <tr><td>${key('power1')}${key('power2')}${key('power3')}${key('power4')}${key('power5')}${key('power6')}</td><td>Powerups</td></tr>
@@ -41,9 +66,9 @@ export function menuScreen(onStart: () => void, onSettings: () => void, keys: Bi
   el.className = 'screen screen-menu';
   el.innerHTML = `
     <div class="menu-card">
-      <h1>SCRAP<span>RIOT</span></h1>
-      <p class="tagline">Bolt on a chainsaw. Enter the pit. Sell whatever is left.</p>
-      <button class="btn btn-primary" data-start>Enter the garage</button>
+      ${logoHtml()}
+      <p class="tagline">Build a robot. Climb to the roof. Knock the other one off.</p>
+      <button class="btn btn-primary" data-start>Enter the workshop</button>
       <button class="btn" data-settings>Settings</button>
       ${controlsTable(keys)}
     </div>`;
@@ -58,9 +83,9 @@ export function pauseScreen(online: boolean, onResume: () => void, onQuit: () =>
   el.innerHTML = `
     <div class="menu-card">
       <h2>${online ? 'Menu' : 'Paused'}</h2>
-      ${online ? '<p class="tagline">The match keeps running. A bot takes over your robot if you leave.</p>' : ''}
+      ${online ? '<p class="tagline">The match keeps running. Leaving a duel counts as a loss.</p>' : ''}
       <button class="btn btn-primary" data-resume>Resume</button>
-      <button class="btn" data-quit>${online ? 'Leave match (no payout)' : 'Forfeit match'}</button>
+      <button class="btn" data-quit>${online ? 'Leave match' : 'Forfeit match'}</button>
       ${controlsTable(keys)}
     </div>`;
   el.querySelector('[data-resume]')!.addEventListener('click', onResume);
@@ -70,26 +95,32 @@ export function pauseScreen(online: boolean, onResume: () => void, onQuit: () =>
 
 export function lobbyScreen(onCancel: () => void, hasAccount: boolean): { el: HTMLElement; update: (players: number, capacity: number, startsIn: number, arena: ArenaId, mode: ModeId) => void } {
   const el = document.createElement('div');
-  el.className = 'screen screen-pause';
+  el.className = 'screen screen-lobby';
   el.innerHTML = `
     <div class="menu-card">
-      <h2>Finding a match</h2>
-      <p class="tagline" data-status>Connecting to the server&hellip;</p>
-      <p class="tagline">${hasAccount ? 'Your gear and upgrades count here, and you keep what you earn. Bots fill any empty slots and match your level.' : 'Online, everyone fights with equal stats and one of each powerup. Your garage upgrades apply in practice matches. Bots fill any empty slots.'}</p>
+      <h2>Lobby</h2>
+      <p class="lobby-status" data-status>Connecting to the server&hellip;</p>
+      <p class="tagline" data-where></p>
+      <p class="tagline">${hasAccount ? 'A duel starts as soon as another pilot joins. Win to earn money and rating.' : 'A duel starts as soon as another pilot joins. Online, everyone fights with equal stats.'}</p>
       <button class="btn" data-cancel>Cancel</button>
     </div>`;
   el.querySelector('[data-cancel]')!.addEventListener('click', onCancel);
   const status = el.querySelector('[data-status]')!;
+  const where = el.querySelector('[data-where]')!;
   return {
     el,
-    update: (players, capacity, startsIn, arena, mode) => {
-      status.textContent = `${ARENAS[arena].name}, ${MODES[mode].name}. ${players} of ${capacity} players. Starting in ${startsIn}s.`;
+    update: (_players, _capacity, startsIn, arena, mode) => {
+      where.textContent = `${MODES[mode].name} on ${ARENAS[arena].name}`;
+      status.textContent = startsIn < 0 ? 'Waiting for another pilot to join…' : `Opponent found! Starting in ${startsIn}…`;
     },
   };
 }
 
 export interface GarageActions {
   onEquip: (slot: Slot, id: string) => void;
+  onSell: (slot: Slot, id: string) => void;
+  onArmour: (armour: number) => void;
+  onShelf: (slot: Slot | null) => void;
   onPowerup: (id: PowerupId) => void;
   onUpgrade: (id: UpgradeId) => void;
   onFight: () => void;
@@ -97,6 +128,10 @@ export interface GarageActions {
   onName: (name: string) => void;
   onSettings: () => void;
   onTab: (tab: GarageTab) => void;
+  onSide: (side: SideTab) => void;
+  onBuyCategory: (category: BuyCategory) => void;
+  onZoom: (step: number) => void;
+  onQuit: () => void;
   onPaint: (change: Partial<Paint>) => void;
   onPractice: (change: { arena?: ArenaId; mode?: ModeId }) => void;
   onSignOut: () => void;
@@ -105,12 +140,19 @@ export interface GarageActions {
   onRear: (rear: boolean) => void;
 }
 
-export type GarageTab = 'chassis' | 'melee' | 'turret' | 'defense' | 'powerups' | 'upgrades' | 'paint' | 'maps' | 'career' | 'profile';
+export type GarageTab = 'workshop' | 'paintshop' | 'buy' | 'sell' | 'training' | 'garage' | 'help';
+export type SideTab = 'preview' | 'stats' | 'highscore';
+export type BuyCategory = Slot | 'powerups' | 'upgrades';
 
-const TAB_LABELS: Record<GarageTab, string> = {
-  chassis: 'Chassis', melee: 'Front', turret: 'Turret', defense: 'Defense',
-  powerups: 'Powerups', upgrades: 'Upgrades', paint: 'Paint', maps: 'Maps', career: 'Career', profile: 'Profile',
+const TOP_TABS: [GarageTab, string][] = [['workshop', 'Workshop'], ['paintshop', 'Paintshop'], ['buy', 'Buy Parts'], ['sell', 'Sell Parts']];
+const SIDE_TABS: [SideTab, string][] = [['preview', 'Preview'], ['stats', 'Stats'], ['highscore', 'Highscore']];
+const SLOT_LABELS: Record<Slot, string> = {
+  chassis: 'Chassis', tower: 'Tower', wheels: 'Wheels', engine: 'Engine', power: 'Power source',
+  melee: 'Main weapon', turret: 'Turret', defense: 'Defense',
 };
+const SLOTS = Object.keys(SLOT_LABELS) as Slot[];
+const BUY_CATEGORIES: [BuyCategory, string][] = [...SLOTS.map((slot): [BuyCategory, string] => [slot, SLOT_LABELS[slot]]), ['powerups', 'Powerups'], ['upgrades', 'Upgrades']];
+const STAT_MAX = { speed: 24, hp: 400 };
 
 export interface GarageOptions {
   onlineAvailable: boolean;
@@ -118,6 +160,10 @@ export interface GarageOptions {
   notice: string;
   keys: Bindings;
   tab: GarageTab;
+  side: SideTab;
+  buyCategory: BuyCategory;
+  /** Which part type the shelf is showing, or null for everything. */
+  shelf: Slot | null;
   career: CareerProgress;
   /** Absent when progress is only saved on this device. */
   account: {
@@ -159,7 +205,7 @@ function profilePanel(account: GarageOptions['account'], career: CareerProgress)
   if (!account) {
     return `<section><h3>Profile</h3><p class="settings-hint">Your progress is saved on this device. Connect to a game server to keep a profile, match history and rating.</p></section>${achievementsPanel({ matches: 0, wins: 0, kills: 0, rating: 0, career })}`;
   }
-  const { profile, history, leaderboard, googleAvailable, confirmDelete } = account;
+  const { profile, history, googleAvailable, confirmDelete } = account;
   const { save, rating, kills, deaths, signedIn } = profile;
   const signIn = signedIn
     ? '<p class="settings-hint">Signed in with Google. Your progress follows you to any browser.</p><button class="mini-btn" data-signout>Sign out</button>'
@@ -170,12 +216,9 @@ function profilePanel(account: GarageOptions['account'], career: CareerProgress)
       return `<tr><td>${new Date(h.endedAt).toLocaleDateString()}</td><td>${escapeText(ARENAS[h.arena]?.name ?? h.arena)}</td><td>${escapeText(MODES[h.mode]?.name ?? h.mode)}</td><td>${ordinal(h.place)}</td><td>${h.kills}/${h.deaths}</td><td>$${h.payout}</td><td>${change}</td></tr>`;
     })
     .join('');
-  const boardRows = leaderboard
-    .map((row, i) => `<tr><td>${i + 1}</td><td>${escapeText(row.name)}</td><td>${row.rating}</td><td>${row.wins}</td><td>${row.matches}</td><td>${row.kills}</td></tr>`)
-    .join('');
   return `
     <section><h3>Account</h3>${signIn}</section>
-    <section><h3>Career</h3>
+    <section><h3>Record</h3>
       <div class="stat-row">
         <div><b>${rating}</b><span>Rating</span></div>
         <div><b>${save.matches}</b><span>Matches</span></div>
@@ -190,72 +233,172 @@ function profilePanel(account: GarageOptions['account'], career: CareerProgress)
         ? `<table class="results"><thead><tr><th>Date</th><th>Map</th><th>Mode</th><th>Place</th><th>K/D</th><th>Payout</th><th>Rating</th></tr></thead><tbody>${historyRows}</tbody></table>`
         : '<p class="settings-hint">No online matches yet.</p>'
     }</section>
-    <section><h3>Leaderboard</h3>${
-      boardRows
-        ? `<table class="results board-table"><thead><tr><th>#</th><th>Pilot</th><th>Rating</th><th>Wins</th><th>Matches</th><th>Kills</th></tr></thead><tbody>${boardRows}</tbody></table>`
-        : '<p class="settings-hint">Nobody has played an online match yet.</p>'
-    }</section>
     <section><h3>Your data</h3>
       <p class="settings-hint">We store your chosen name, progress and match history. If you sign in with Google, we also store an ID from Google, but not your email or real name. Other players can see your name, paint, rating and stats.</p>
       <button class="mini-btn${confirmDelete ? ' mini-danger' : ''}" data-delete>${confirmDelete ? 'Click again to permanently delete' : 'Delete my account'}</button>
     </section>`;
 }
 
-function slotTitle(slot: Slot, keys: Bindings): string {
-  if (slot === 'chassis') return 'Chassis';
-  if (slot === 'melee') return `Front weapon [${keyLabel(keys.melee)}]`;
-  if (slot === 'turret') return `Turret [${keyLabel(keys.turret)}]`;
-  return `Defense [${keyLabel(keys.defense)}]`;
+/** Small line drawings of each part type, for the workshop shelf. */
+const PART_ICONS: Record<Slot, string> = {
+  chassis: '<path d="M6 30 L12 18 H36 L42 30 Z"/><circle cx="14" cy="33" r="5"/><circle cx="34" cy="33" r="5"/>',
+  tower: '<rect x="14" y="22" width="20" height="14"/><path d="M14 22 A10 10 0 0 1 34 22"/><path d="M24 14 V6"/>',
+  wheels: '<circle cx="24" cy="24" r="16"/><circle cx="24" cy="24" r="6"/><path d="M24 8 V18 M24 30 V40 M8 24 H18 M30 24 H40"/>',
+  engine: '<rect x="10" y="16" width="26" height="20"/><path d="M36 22 H42 V30 H36 M16 16 V10 H30 V16 M6 22 V30"/>',
+  power: '<rect x="14" y="12" width="20" height="28"/><rect x="20" y="7" width="8" height="5"/><path d="M26 17 L20 27 H28 L22 36"/>',
+  melee: '<path d="M8 40 L36 8 L40 12 L14 42 Z"/><path d="M6 32 L16 42"/>',
+  turret: '<rect x="8" y="20" width="24" height="12"/><path d="M32 23 H44 M32 29 H44"/><path d="M14 32 V40 H26 V32"/>',
+  defense: '<path d="M24 6 L40 12 V24 C40 34 32 40 24 43 C16 40 8 34 8 24 V12 Z"/>',
+};
+
+function partIcon(slot: Slot): string {
+  return `<svg class="part-icon" viewBox="0 0 48 48" aria-hidden="true">${PART_ICONS[slot]}</svg>`;
 }
 
-function statLine(slot: Slot, id: string): string {
-  if (slot === 'melee' && CATALOG.melee[id as keyof typeof CATALOG.melee].passive) return '<small>Always active</small>';
-  if (slot === 'defense' && CATALOG.defense[id as keyof typeof CATALOG.defense].passive) return '<small>Always active</small>';
-  if (slot !== 'chassis') return '';
-  const c = CATALOG.chassis[id as keyof typeof CATALOG.chassis];
-  return `<small>${c.hp} HP · speed ${c.speed}</small>`;
+function partName(slot: Slot, id: string): string {
+  return (CATALOG[slot] as Record<string, { name: string }>)[id].name;
 }
 
-export function garageScreen(save: Save, actions: GarageActions, options: GarageOptions): HTMLElement {
-  const el = document.createElement('div');
-  el.className = 'screen screen-garage';
+/** Weapons take room according to their price. The chassis provides room rather than using it. */
+function partSpaceLabel(slot: Slot, id: string): string {
+  const def = (CATALOG[slot] as Record<string, { price: number; space?: number }>)[id];
+  if (slot === 'chassis') return `Room for ${def.space}`;
+  return `Takes ${slot === 'melee' || slot === 'turret' || slot === 'defense' ? weaponSpace(def.price) : def.space} room`;
+}
 
-  const section = (slot: Slot) => {
-    const items = CATALOG[slot] as Record<string, { name: string; blurb: string; price: number }>;
-    const equipped = (save.loadout as unknown as Record<Slot, string>)[slot];
+function bar(label: string, fraction: number, over = false): string {
+  return `<div class="stat-bar${over ? ' stat-bar-over' : ''}"><label>${label}</label><div><i style="width:${Math.min(100, Math.round(fraction * 100))}%"></i></div></div>`;
+}
+
+function workshopPanel(save: Save, options: GarageOptions): string {
+  const { loadout } = save;
+  const parts = installedParts(loadout);
+  const stats = buildStats(loadout);
+  const used = spaceUsed(loadout);
+  const capacity = spaceCapacity(loadout);
+
+  const row = (slot: Slot, id: string, extra = '') =>
+    `<h4>${SLOT_LABELS[slot]}</h4><div class="part-row"><span class="part-name">${partName(slot, id)}</span>${extra}<button class="plate-btn" data-shelf="${slot}">Change</button></div>`;
+  const armourFits = spaceUsed({ ...loadout, armour: parts.armour + ARMOUR.step }) <= capacity;
+  const armour = `<span class="part-armour">Armour:
+    <button class="step-btn" data-armour="${parts.armour - ARMOUR.step}" ${parts.armour <= ARMOUR.min ? 'disabled' : ''} aria-label="Less armour">◀</button>
+    <b>${parts.armour}</b>
+    <button class="step-btn" data-armour="${parts.armour + ARMOUR.step}" ${parts.armour >= ARMOUR.max || !armourFits ? 'disabled' : ''} aria-label="More armour">▶</button></span>`;
+  const weapon = (slot: 'melee' | 'turret' | 'defense', placement: string) =>
+    `<div class="part-row part-weapon"><span class="part-name">${partName(slot, loadout[slot])}</span>
+      <span class="part-key">Key: <kbd>${keyLabel(options.keys[slot])}</kbd></span>
+      <span class="part-place">Placement: ${placement}</span>
+      <button class="plate-btn" data-shelf="${slot}">Change</button></div>`;
+  const rear = loadout.rearMelee === true;
+  const placement = `<select data-placement aria-label="Main weapon placement"><option value="0"${rear ? '' : ' selected'}>Front</option><option value="1"${rear ? ' selected' : ''}>Back</option></select>`;
+
+  const filter = options.shelf;
+  const shelfItems = (filter ? [filter] : SLOTS).flatMap((slot) =>
+    (save.owned[slot] as string[])
+      .filter((id) => (loadout as unknown as Record<Slot, string>)[slot] !== id)
+      .map((id) => {
+        const fits = partFits(save, slot, id);
+        return `<div class="shelf-item${fits ? '' : ' shelf-full'}" title="${SLOT_LABELS[slot]}: ${partName(slot, id)}">
+          ${partIcon(slot)}<small>${partName(slot, id)}</small>
+          <button class="plate-btn" data-slot="${slot}" data-id="${id}" ${fits ? '' : 'disabled'}>${fits ? 'Use this part' : 'No room'}</button></div>`;
+      }),
+  );
+  const shelfEmpty = `<p class="shelf-empty">${filter ? `No other ${SLOT_LABELS[filter].toLowerCase()} on the shelf.` : 'Nothing on the shelf.'} Parts you buy but don't fit are kept here.</p>`;
+  return `
+    <div class="shelf">
+      <div class="shelf-head">${filter ? `<button class="plate-btn" data-shelf="">Show all</button>` : ''}</div>
+      <div class="shelf-items">${shelfItems.join('') || shelfEmpty}</div>
+    </div>
+    <div class="workshop-sheet">
+      <div class="stat-bars">
+        ${bar(`Used space (${used}/${capacity})`, used / capacity, used > capacity)}
+        ${bar('Max speed', stats.speed / STAT_MAX.speed)}
+        ${bar('Armour', stats.hp / STAT_MAX.hp)}
+      </div>
+      ${row('chassis', loadout.chassis, armour)}
+      ${row('tower', parts.tower)}
+      ${row('wheels', parts.wheels)}
+      ${row('engine', parts.engine)}
+      ${row('power', parts.power)}
+      <h4>Weapons</h4>
+      ${weapon('melee', placement)}
+      ${weapon('turret', '<b>Top</b>')}
+      ${weapon('defense', '<b>Top</b>')}
+    </div>`;
+}
+
+function statsPanel(save: Save): string {
+  const stats = buildStats(save.loadout);
+  const rows: [string, string][] = [
+    ['Armour', `${Math.round(stats.hp)} HP`],
+    ['Top speed', stats.speed.toFixed(1)],
+    ['Acceleration', stats.accel.toFixed(1)],
+    ['Turning', stats.turn.toFixed(2)],
+    ['Weight', `${stats.mass.toFixed(2)} t`],
+    ['Turret swing', `${Math.round(stats.track * 100)}%`],
+    ['Battery recharge', `${Math.round(stats.regen * 100)}%`],
+    ['Wins', `${save.wins} of ${save.matches}`],
+  ];
+  return `<table class="side-table">${rows.map(([label, value]) => `<tr><td>${label}</td><td>${value}</td></tr>`).join('')}</table>`;
+}
+
+function highscorePanel(account: GarageOptions['account']): string {
+  if (!account) return '<p class="settings-hint">Connect to a game server to see the highscores.</p>';
+  const rows = account.leaderboard.map((row, i) => `<tr><td>${i + 1}. ${escapeText(row.name)}</td><td>${row.rating}</td></tr>`).join('');
+  return rows ? `<table class="side-table">${rows}</table>` : '<p class="settings-hint">Nobody has played an online match yet.</p>';
+}
+
+/** A lit plate for each part in the chosen category, or the powerup and upgrade cards. */
+function buyPanel(save: Save, options: GarageOptions): string {
+  const category = options.buyCategory;
+  const tabs = BUY_CATEGORIES.map(([id, label]) => `<button class="mini-btn${category === id ? ' mini-on' : ''}" data-buy="${id}">${label}</button>`).join('');
+  let cards = '';
+  if (category === 'powerups') {
+    cards = POWERUP_ORDER.map((id, i) => {
+      const def = POWERUPS[id];
+      const n = save.loadout.powerups[id];
+      const full = n >= POWERUP_CAP;
+      const broke = !full && save.money < def.price;
+      return `<button class="card${broke ? ' card-broke' : ''}" data-power="${id}"><strong>[${keyLabel(options.keys[POWER_ACTIONS[i]])}] ${def.name}</strong><span>${def.blurb}</span><small>Carrying ${n}/${POWERUP_CAP}</small><em>${full ? 'Full' : `$${def.price}`}</em></button>`;
+    }).join('');
+  } else if (category === 'upgrades') {
+    cards = UPGRADE_ORDER.map((id) => {
+      const def = UPGRADES[id];
+      const level = save.loadout.upgrades[id];
+      const cost = upgradeCost(save, id);
+      const broke = cost !== null && save.money < cost;
+      const pips = def.costs.map((_, i) => `<i class="${i < level ? 'pip pip-on' : 'pip'}"></i>`).join('');
+      return `<button class="card${broke ? ' card-broke' : ''}" data-upgrade="${id}"><strong>${def.name}</strong><span>${def.blurb}</span><div class="pips">${pips}</div><em>${cost === null ? 'Maxed' : `$${cost}`}</em></button>`;
+    }).join('');
+  } else {
+    const slot = category;
+    const equipped = (save.loadout as unknown as Record<Slot, string>)[slot] ?? installedParts(save.loadout)[slot as 'tower'];
     const owned = save.owned[slot] as string[];
-    const cards = Object.entries(items)
+    cards = Object.entries(CATALOG[slot] as Record<string, { name: string; blurb: string; price: number }>)
       .map(([id, item]) => {
         const has = owned.includes(id);
         const on = equipped === id;
-        const label = on ? 'Equipped' : has ? 'Equip' : `$${item.price}`;
+        const label = on ? 'Fitted' : has ? 'Fit' : `$${item.price}`;
         const broke = !has && save.money < item.price;
-        return `<button class="card${on ? ' card-on' : ''}${broke ? ' card-broke' : ''}" data-slot="${slot}" data-id="${id}">
-          <strong>${item.name}</strong><span>${item.blurb}</span>${statLine(slot, id)}<em>${label}</em></button>`;
+        return `<button class="card${on ? ' card-on' : ''}${broke ? ' card-broke' : ''}" data-slot="${slot}" data-id="${id}"><strong>${item.name}</strong><span>${item.blurb}</span><small>${partSpaceLabel(slot, id)}</small><em>${label}</em></button>`;
       })
       .join('');
-    return `<section><h3>${slotTitle(slot, options.keys)}</h3><div class="cards">${cards}</div></section>`;
-  };
+  }
+  return `<div class="choices buy-tabs">${tabs}</div><div class="cards">${cards}</div>`;
+}
 
-  const powerups = POWERUP_ORDER.map((id, i) => {
-    const def = POWERUPS[id];
-    const n = save.loadout.powerups[id];
-    const full = n >= POWERUP_CAP;
-    const broke = !full && save.money < def.price;
-    return `<button class="card${broke ? ' card-broke' : ''}" data-power="${id}">
-      <strong>[${keyLabel(options.keys[POWER_ACTIONS[i]])}] ${def.name}</strong><span>${def.blurb}</span><small>Carrying ${n}/${POWERUP_CAP}</small><em>${full ? 'Full' : `$${def.price}`}</em></button>`;
-  }).join('');
+function sellPanel(save: Save): string {
+  const cards = SLOTS.flatMap((slot) =>
+    (save.owned[slot] as string[])
+      .filter((id) => canSell(save, slot, id))
+      .map((id) => `<button class="card" data-sell-slot="${slot}" data-sell-id="${id}"><strong>${partName(slot, id)}</strong><span>${SLOT_LABELS[slot]}</span><em>Sell for $${sellPrice(slot, id)}</em></button>`),
+  );
+  return cards.length
+    ? `<p class="settings-hint">Parts sell for half what they cost. Take a part off your robot before selling it.</p><div class="cards">${cards.join('')}</div>`
+    : '<p class="settings-hint">Nothing to sell. Only parts you bought and aren\'t using can be sold.</p>';
+}
 
-  const upgrades = UPGRADE_ORDER.map((id) => {
-    const def = UPGRADES[id];
-    const level = save.loadout.upgrades[id];
-    const cost = upgradeCost(save, id);
-    const broke = cost !== null && save.money < cost;
-    const pips = def.costs.map((_, i) => `<i class="${i < level ? 'pip pip-on' : 'pip'}"></i>`).join('');
-    return `<button class="card${broke ? ' card-broke' : ''}" data-upgrade="${id}">
-      <strong>${def.name}</strong><span>${def.blurb}</span><div class="pips">${pips}</div><em>${cost === null ? 'Maxed' : `$${cost}`}</em></button>`;
-  }).join('');
-
+function paintPanel(save: Save): string {
   const paint = save.loadout.paint ?? DEFAULT_PAINT;
   const swatches = (part: 'primary' | 'secondary' | 'eye') =>
     PAINT_COLORS.map(
@@ -266,18 +409,20 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     Object.entries(table)
       .map(([id, label]) => `<button class="mini-btn${paint[part] === id ? ' mini-on' : ''}" data-paint="${part}" data-value="${id}">${label}</button>`)
       .join('');
-  const paintShop = `
+  return `
     <section><h3>Main color</h3><div class="swatches">${swatches('primary')}</div></section>
     <section><h3>Trim color</h3><div class="swatches">${swatches('secondary')}</div></section>
     <section><h3>Eye color</h3><div class="swatches">${swatches('eye')}</div></section>
     <section><h3>Pattern</h3><div class="choices">${choice('pattern', PATTERNS)}</div></section>
     <section><h3>Topper</h3><div class="choices">${choice('topper', TOPPERS)}</div></section>
     <p class="settings-hint">Paint is free, and other players see it online.</p>`;
+}
 
+function trainingPanel(save: Save, options: GarageOptions): string {
   const maps = ARENA_ORDER.map((id) => {
     const def = ARENAS[id];
     const on = save.practice.arena === id;
-    return `<button class="card${on ? ' card-on' : ''}" data-arena="${id}"><strong>${def.name}</strong><span>${def.blurb}</span><small>${def.walled ? 'Walled' : 'Open edges'}${def.grip < 0.5 ? ' · Icy' : ''}</small><em>${on ? 'Selected' : 'Select'}</em></button>`;
+    return `<button class="card${on ? ' card-on' : ''}" data-arena="${id}"><strong>${def.name}</strong><span>${def.blurb}</span><em>${on ? 'Selected' : 'Select'}</em></button>`;
   }).join('');
   const modes = (Object.keys(MODES) as ModeId[])
     .map((id) => {
@@ -285,62 +430,101 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
       return `<button class="card${on ? ' card-on' : ''}" data-mode="${id}"><strong>${MODES[id].name}</strong><span>${MODES[id].blurb}</span><em>${on ? 'Selected' : 'Select'}</em></button>`;
     })
     .join('');
+  return `<button class="btn btn-primary" data-fight>Start training</button>
+    <section><h3>Mode</h3><div class="cards">${modes}</div></section>
+    <section><h3>Map</h3><div class="cards">${maps}</div></section>
+    ${careerPanel(options.career, options.account === null)}`;
+}
+
+function garagePanel(save: Save, options: GarageOptions): string {
+  return `<section><h3>Pilot</h3>
+      <label class="garage-name">Name <input data-name maxlength="${NAME_MAX}" value="${escapeText(save.name)}" autocomplete="off" spellcheck="false" /></label>
+      <p class="settings-hint">${save.wins} wins from ${save.matches} matches.</p></section>
+    ${profilePanel(options.account, options.career)}`;
+}
+
+function helpPanel(keys: Bindings): string {
+  return `<section><h3>How to play</h3>
+      <p class="settings-hint">Build a robot in the Workshop, then fight another pilot on the roof. A duel ends when one robot is wrecked or knocked over the edge. If time runs out, the most armour left wins. Every part takes up room, so a bigger chassis fits more.</p></section>
+    <section><h3>Controls</h3>${controlsTable(keys)}</section>
+    <button class="btn" data-settings>Settings</button>`;
+}
+
+export function garageScreen(save: Save, actions: GarageActions, options: GarageOptions): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'screen screen-garage';
 
   const body = () => {
     switch (options.tab) {
-      case 'powerups':
-        return `<section><h3>Powerups (used up in battle)</h3><div class="cards">${powerups}</div></section>`;
-      case 'upgrades':
-        return `<section><h3>Upgrades</h3><div class="cards">${upgrades}</div></section>`;
-      case 'paint':
-        return paintShop;
-      case 'maps':
-        return `<section><h3>Practice map</h3><div class="cards">${maps}</div></section><section><h3>Practice mode</h3><div class="cards">${modes}</div></section><p class="settings-hint">Online matches pick their own map and mode.</p>`;
-      case 'profile':
-        return profilePanel(options.account, options.career);
-      case 'career':
-        return careerPanel(options.career, options.account === null);
-      case 'melee': {
-        const rear = save.loadout.rearMelee === true;
-        return `<section><h3>Mounting</h3><div class="choices"><button class="mini-btn${rear ? '' : ' mini-on'}" data-rear="0">Front</button><button class="mini-btn${rear ? ' mini-on' : ''}" data-rear="1">Rear</button></div><p class="settings-hint">A rear mount lets you hit while reversing away. Free to change.</p></section>${section('melee')}`;
-      }
+      case 'paintshop':
+        return paintPanel(save);
+      case 'buy':
+        return buyPanel(save, options);
+      case 'sell':
+        return sellPanel(save);
+      case 'training':
+        return trainingPanel(save, options);
+      case 'garage':
+        return garagePanel(save, options);
+      case 'help':
+        return helpPanel(options.keys);
       default:
-        return section(options.tab);
+        return workshopPanel(save, options);
     }
   };
-  const tabs = (Object.keys(TAB_LABELS) as GarageTab[])
-    .map((id) => `<button class="tab${options.tab === id ? ' tab-on' : ''}" role="tab" aria-selected="${options.tab === id}" data-tab="${id}">${TAB_LABELS[id]}</button>`)
-    .join('');
+  const side = () => {
+    if (options.side === 'stats') return `<div class="side-view">${statsPanel(save)}</div>`;
+    if (options.side === 'highscore') return `<div class="side-view">${highscorePanel(options.account)}</div>`;
+    return '<div class="preview-window" data-preview></div>';
+  };
+  const topTabs = TOP_TABS.map(([id, label]) => `<button class="top-tab${options.tab === id ? ' top-tab-on' : ''}" data-tab="${id}">${label}</button>`).join('');
+  const sideTabs = SIDE_TABS.map(([id, label]) => `<button class="side-tab${options.side === id ? ' side-tab-on' : ''}" data-side="${id}">${label}</button>`).join('');
+  const navButton = (label: string, attr: string) => `<button class="nav-btn" ${attr}>${label}</button>`;
 
   el.innerHTML = `
-    <div class="garage-top">
-      <h2>Garage</h2>
-      <label class="garage-name">Name <input data-name maxlength="${NAME_MAX}" value="${escapeText(save.name)}" autocomplete="off" spellcheck="false" /></label>
-      <div class="garage-record">${save.wins} wins / ${save.matches} matches</div>
-      <div class="garage-money">$${save.money}</div>
-    </div>
-    ${options.notice ? `<div class="garage-notice" role="alert">${escapeText(options.notice)}</div>` : ''}
-    <div class="garage-tabs" role="tablist">${tabs}</div>
-    <div class="garage-panel">
-      ${body()}
-    </div>
-    <div class="garage-actions">
-      ${options.onlineAvailable ? '<button class="btn btn-primary" data-online>Fight online</button>' : ''}
-      <button class="btn${options.onlineAvailable ? '' : ' btn-primary'}" data-fight>${options.onlineAvailable ? 'Practice vs bots' : 'Fight!'}</button>
-      <button class="btn btn-settings" data-settings>Settings</button>
+    <div class="ws">
+      <div class="ws-left">
+        <nav class="top-tabs">${topTabs}</nav>
+        ${options.notice ? `<div class="garage-notice" role="alert">${escapeText(options.notice)}</div>` : ''}
+        <div class="ws-panel">${body()}</div>
+      </div>
+      <div class="ws-right">
+        <div class="ws-logo">
+          ${logoHtml()}
+          <div class="garage-money">$${save.money}</div>
+        </div>
+        <nav class="side-tabs">${sideTabs}</nav>
+        ${side()}
+        <div class="zoom-row">${options.side === 'preview' ? '<button class="step-btn" data-zoom="0.15" aria-label="Zoom out">−</button><span>Zoom</span><button class="step-btn" data-zoom="-0.15" aria-label="Zoom in">+</button>' : ''}</div>
+        <div class="nav-btns">
+          ${navButton('Lobby', options.onlineAvailable ? 'data-online' : 'disabled title="No game server is connected"')}
+          ${navButton('Training', 'data-tab="training"')}
+          ${navButton('Garage', 'data-tab="garage"')}
+          ${navButton('Help', 'data-tab="help"')}
+          ${navButton('Quit', 'data-quit')}
+        </div>
+      </div>
     </div>`;
 
-  el.querySelector<HTMLInputElement>('[data-name]')!.addEventListener('change', (e) => {
+  el.querySelector<HTMLInputElement>('[data-name]')?.addEventListener('change', (e) => {
     actions.onName((e.target as HTMLInputElement).value);
+  });
+  el.querySelector<HTMLSelectElement>('[data-placement]')?.addEventListener('change', (e) => {
+    actions.onRear((e.target as HTMLSelectElement).value === '1');
   });
 
   el.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest<HTMLElement>('button');
     if (!target) return;
-    const { slot, id, power, upgrade, tab, paint: part, value, arena, mode, fightId, rear } = target.dataset;
+    const { slot, id, power, upgrade, tab, side: sideTab, buy, shelf, armour, zoom, sellSlot, sellId, paint: part, value, arena, mode, fightId } = target.dataset;
     if (tab) actions.onTab(tab as GarageTab);
+    else if (sideTab) actions.onSide(sideTab as SideTab);
+    else if (buy) actions.onBuyCategory(buy as BuyCategory);
+    else if (shelf !== undefined) actions.onShelf((shelf || null) as Slot | null);
+    else if (armour) actions.onArmour(Number(armour));
+    else if (zoom) actions.onZoom(Number(zoom));
+    else if (sellSlot && sellId) actions.onSell(sellSlot as Slot, sellId);
     else if (fightId) actions.onCareer(CAREER.find((f) => f.id === fightId)!);
-    else if (rear) actions.onRear(rear === '1');
     else if (part && value) actions.onPaint({ [part]: part === 'pattern' || part === 'topper' ? value : Number(value) } as Partial<Paint>);
     else if (arena) actions.onPractice({ arena: arena as ArenaId });
     else if (mode) actions.onPractice({ mode: mode as ModeId });
@@ -349,6 +533,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     else if (upgrade) actions.onUpgrade(upgrade as UpgradeId);
     else if ('fight' in target.dataset) actions.onFight();
     else if ('online' in target.dataset) actions.onOnline();
+    else if ('quit' in target.dataset) actions.onQuit();
     else if ('settings' in target.dataset) actions.onSettings();
     else if ('signout' in target.dataset) actions.onSignOut();
     else if ('delete' in target.dataset) actions.onDelete();
@@ -356,11 +541,12 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
   return el;
 }
 
-export function resultsScreen(standings: Standing[], playerId: number, onContinue: () => void, note = ''): HTMLElement {
+export function resultsScreen(standings: Standing[], playerId: number, onContinue: () => void, note = '', drawn = false): HTMLElement {
   const mine = standings.find((s) => s.bot.id === playerId)!;
   const el = document.createElement('div');
   el.className = 'screen screen-results';
-  const headline = mine.place === 1 ? 'Last bot rolling!' : mine.place <= 3 ? 'Still in one piece.' : 'Back to the scrapyard.';
+  const duel = standings.length === 2;
+  const headline = drawn ? 'A draw.' : mine.place === 1 ? 'Last bot rolling!' : duel ? 'Scrapped.' : mine.place <= 3 ? 'Still in one piece.' : 'Back to the scrapyard.';
   const rows = standings
     .map(
       (s) => `<tr class="${s.bot.id === playerId ? 'row-me' : ''}"><td>${s.place}</td><td>${escapeText(s.bot.name)}</td><td>${s.bot.kills}</td><td>${s.bot.deaths}</td><td>${Math.round(s.bot.damageDealt)}</td><td>$${s.total}</td></tr>`,
@@ -369,12 +555,12 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
   el.innerHTML = `
     <div class="menu-card results-card">
       <h2>${headline}</h2>
-      ${note ? `<p class="payout"><small>${escapeText(note)}</small></p>` : `<p class="payout">You earned <b>$${mine.total}</b> <small>($${Math.round(mine.bot.earned)} in battle + $${mine.bonus} for place ${mine.place})</small></p>`}
+      ${note ? `<p class="payout"><small>${escapeText(note)}</small></p>` : `<p class="payout">You earned <b>$${mine.total}</b> <small>($${Math.round(mine.bot.earned)} in battle + $${mine.bonus} bonus)${duel && mine.bonus === 0 && !drawn ? `. Duels under ${DUEL_MIN_PAID_TIME} seconds pay no bonus.` : ''}</small></p>`}
       <table class="results">
         <thead><tr><th>#</th><th>Robot</th><th>Kills</th><th>Deaths</th><th>Damage</th><th>Payout</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-      <button class="btn btn-primary" data-continue>Back to the garage</button>
+      <button class="btn btn-primary" data-continue>Back to the workshop</button>
     </div>`;
   el.querySelector('[data-continue]')!.addEventListener('click', onContinue);
   return el;
@@ -414,7 +600,7 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
       ${bindings}
       <p class="settings-hint">Esc cancels a rebind. Using a key that's taken swaps the two actions. Esc and M stay reserved for pause and mute, and Ctrl for browser shortcuts.</p>
       <h3>Gamepad</h3>
-      <p class="settings-hint">Right and left triggers drive, the left stick steers. A: front weapon, RB: turret, B: defense, D-pad: first four powerups, LB: Repair Kit, X: Turbo, Y: look behind, Start: menu.</p>
+      <p class="settings-hint">Right and left triggers drive, the left stick steers. A: main weapon, RB: turret, B: defense, D-pad: first four powerups, LB: Repair Kit, X: Turbo, Y: look behind, Start: menu.</p>
       <button class="btn" data-reset>Reset keys</button>
       <button class="btn btn-primary" data-back>Done</button>
     </div>`;

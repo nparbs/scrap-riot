@@ -30,7 +30,8 @@ export class Keyboard {
         done(e.code === 'Escape' ? null : e.code);
         return;
       }
-      if (e.target instanceof HTMLInputElement) return;
+      // Typing and form controls keep their keys, such as Space pressing a focused button.
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLButtonElement) return;
       // Ctrl+R and friends belong to the browser, even when the letter is also a game key.
       if (e.ctrlKey || e.metaKey) return;
       if (e.code === 'Escape') {

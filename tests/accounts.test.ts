@@ -228,7 +228,7 @@ describe('over the network', () => {
       accounts,
       googleClientId: CLIENT_ID,
       allowedOrigins,
-      room: { lobbyMs: 60, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', ...room },
+      room: { lobbyMs: 60, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', minPlayers: 1, capacity: 6, ...room },
     });
     servers.push(s);
     return s;

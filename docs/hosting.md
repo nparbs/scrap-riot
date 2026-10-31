@@ -100,6 +100,6 @@ Check now and then that a backup restores. Dumps contain player data, so keep th
 ## Other notes
 
 - **Start on boot:** enable "Start at boot" on the VM in Proxmox. Docker restarts the containers.
-- **Your upload speed matters:** each player receives 20 updates per second, measured at about 18.5 KB/s. A full match of six humans needs roughly 110 KB/s, or about 0.9 Mbit/s, of upload. Busy fights use more, so check `docker stats` under real load.
+- **Your upload speed matters:** each player receives 20 updates per second, measured at about 18.5 KB/s. A duel of two pilots needs roughly 40 KB/s, or about 0.3 Mbit/s, of upload. Busy fights use more, so check `docker stats` under real load.
 - **What it stores:** see [privacy.md](privacy.md). If children may play, or you expect players from the EU or UK, check what rules apply to you. That document describes the software and is not legal advice.
 - **Connections from one household:** the limit is 8 per IP address.

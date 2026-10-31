@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { buyOrEquip, buyPowerup, buyUpgrade, newSave, type Save, type Slot } from '../src/game/progress';
+import { buyOrEquip, buyPowerup, buyUpgrade, CATALOG, newSave, sellPart, setArmour, type Save, type Slot } from '../src/game/progress';
 import { sanitizeName, sanitizePaint, type GarageAction, type HistoryEntry, type LeaderboardEntry, type Profile } from '../src/net/protocol';
 import { isArenaId } from '../src/sim/arena';
-import { CHASSIS, DEFAULT_PAINT, DEFENSES, MELEE, MODES, POWERUPS, TURRETS, UPGRADES, type ModeId, type PowerupId, type UpgradeId } from '../src/sim/data';
+import { DEFAULT_PAINT, MODES, POWERUPS, UPGRADES, type ModeId, type PowerupId, type UpgradeId } from '../src/sim/data';
 import { SCHEMA, type Db, type Queryable } from './db';
 import type { GoogleVerifier } from './google';
 
@@ -11,7 +11,7 @@ const SESSION_DAYS = 90;
 const GUEST_RETENTION_DAYS = 60;
 /** A guest that never played a match is cleaned up much sooner. */
 const UNPLAYED_GUEST_DAYS = 7;
-const RATING_BY_PLACE = [25, 15, 5, -5, -10, -15];
+const RATING_BY_PLACE = [25, -15];
 
 interface PlayerRow {
   id: string;
@@ -31,6 +31,7 @@ export interface MatchResult {
   arena: string;
   mode: string;
   duration: number;
+  drawn?: boolean;
   players: {
     accountId: string;
     place: number;
@@ -49,14 +50,15 @@ function hashToken(token: string): string {
 }
 
 function toSave(row: PlayerRow): Save {
-  return { name: row.name, money: row.money, matches: row.matches, wins: row.wins, ...row.state };
+  // Rows from before a part type existed simply start with the free one.
+  const state = { ...row.state, owned: { ...newSave().owned, ...row.state.owned } };
+  return { name: row.name, money: row.money, matches: row.matches, wins: row.wins, ...state };
 }
 
 function toProfile(row: PlayerRow): Profile {
   return { save: toSave(row), rating: row.rating, kills: row.kills, deaths: row.deaths, signedIn: row.google_sub !== null };
 }
 
-const CATALOGS: Record<Slot, object> = { chassis: CHASSIS, melee: MELEE, turret: TURRETS, defense: DEFENSES };
 const has = (table: object, key: unknown): key is string => typeof key === 'string' && Object.prototype.hasOwnProperty.call(table, key);
 
 /** Everything about a player's account. All money changes happen inside a locked transaction. */
@@ -176,7 +178,11 @@ export class Accounts {
     if (typeof action !== 'object' || action === null) return false;
     switch (action.type) {
       case 'equip':
-        return has(CATALOGS, action.slot) && has(CATALOGS[action.slot as Slot], action.id) && buyOrEquip(save, action.slot as Slot, action.id);
+        return has(CATALOG, action.slot) && has(CATALOG[action.slot as Slot], action.id) && buyOrEquip(save, action.slot as Slot, action.id);
+      case 'sell':
+        return has(CATALOG, action.slot) && has(CATALOG[action.slot as Slot], action.id) && sellPart(save, action.slot as Slot, action.id);
+      case 'armour':
+        return typeof action.armour === 'number' && setArmour(save, action.armour);
       case 'powerup':
         return has(POWERUPS, action.id) && buyPowerup(save, action.id as PowerupId);
       case 'upgrade':
@@ -208,12 +214,12 @@ export class Accounts {
         const [row] = await q.query<PlayerRow>('SELECT * FROM players WHERE id = $1 FOR UPDATE', [p.accountId]);
         // The account may have been deleted during the match.
         if (!row) continue;
-        const change = RATING_BY_PLACE[p.place - 1] ?? RATING_BY_PLACE[RATING_BY_PLACE.length - 1];
+        const change = result.drawn ? 0 : RATING_BY_PLACE[p.place - 1] ?? RATING_BY_PLACE[RATING_BY_PLACE.length - 1];
         const state = { ...row.state, loadout: { ...row.state.loadout, powerups: p.powerupsLeft } };
         await q.query(
           `UPDATE players SET money = money + $1, rating = GREATEST(0, rating + $2), matches = matches + 1,
              wins = wins + $3, kills = kills + $4, deaths = deaths + $5, state = $6, last_seen = now() WHERE id = $7`,
-          [p.payout, change, p.place === 1 ? 1 : 0, p.kills, p.deaths, JSON.stringify(state), p.accountId],
+          [p.payout, change, p.place === 1 && !result.drawn ? 1 : 0, p.kills, p.deaths, JSON.stringify(state), p.accountId],
         );
         await q.query('INSERT INTO ledger (player_id, amount, reason, match_id) VALUES ($1, $2, $3, $4)', [p.accountId, p.payout, 'match payout', result.id]);
         await q.query(

@@ -1,5 +1,5 @@
-const SETTINGS_KEY = 'scrap-riot.settings.v1';
-const SETTINGS_VERSION = 2;
+// Bumped when the default keys change. Old settings are not carried over.
+const SETTINGS_KEY = 'scrap-riot.settings.v3';
 
 export type Action =
   | 'forward' | 'back' | 'left' | 'right'
@@ -16,7 +16,7 @@ export const ACTIONS: { id: Action; label: string }[] = [
   { id: 'back', label: 'Reverse' },
   { id: 'left', label: 'Turn left' },
   { id: 'right', label: 'Turn right' },
-  { id: 'melee', label: 'Front weapon' },
+  { id: 'melee', label: 'Main weapon' },
   { id: 'turret', label: 'Turret' },
   { id: 'defense', label: 'Defense' },
   { id: 'power1', label: 'Rage' },
@@ -33,7 +33,7 @@ export const DEFAULT_BINDINGS: Bindings = {
   back: 'KeyS',
   left: 'KeyA',
   right: 'KeyD',
-  melee: 'KeyE',
+  melee: 'Space',
   turret: 'KeyQ',
   defense: 'KeyR',
   power1: 'Digit1',
@@ -42,20 +42,7 @@ export const DEFAULT_BINDINGS: Bindings = {
   power4: 'Digit4',
   power5: 'Digit5',
   power6: 'Digit6',
-  rear: 'Space',
-};
-
-/** The defaults before version 2. Nobody chose these, so they move to the new defaults. */
-const OLD_DEFAULT_BINDINGS: Bindings = {
-  ...DEFAULT_BINDINGS,
-  forward: 'ArrowUp',
-  back: 'ArrowDown',
-  left: 'ArrowLeft',
-  right: 'ArrowRight',
-  melee: 'KeyX',
-  turret: 'KeyC',
-  defense: 'KeyV',
-  rear: 'ControlLeft',
+  rear: 'KeyE',
 };
 
 /**
@@ -117,15 +104,12 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null): Settings
   try {
     const raw = storage?.getItem(SETTINGS_KEY);
     if (!raw) return settings;
-    const saved = JSON.parse(raw) as Partial<Settings> & { version?: number };
-    const old = saved.version !== SETTINGS_VERSION;
-    const untouched = old && ACTIONS.every(({ id }) => saved.bindings?.[id] === OLD_DEFAULT_BINDINGS[id]);
+    const saved = JSON.parse(raw) as Partial<Settings>;
     for (const { id } of ACTIONS) {
       const code = saved.bindings?.[id];
-      if (!untouched && typeof code === 'string' && code && !RESERVED_KEYS.has(code)) settings.bindings[id] = code;
+      if (typeof code === 'string' && code && !RESERVED_KEYS.has(code)) settings.bindings[id] = code;
     }
-    // High used to be the default, so an old save with it may never have been a choice.
-    if (saved.quality === 'auto' || (saved.quality && saved.quality in QUALITY && !(old && saved.quality === 'high'))) settings.quality = saved.quality;
+    if (saved.quality === 'auto' || (saved.quality && saved.quality in QUALITY)) settings.quality = saved.quality;
     if (saved.autoLevel && saved.autoLevel in QUALITY) settings.autoLevel = saved.autoLevel;
     settings.showFps = saved.showFps === true;
     settings.tutorialDone = saved.tutorialDone === true;
@@ -137,7 +121,7 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null): Settings
 
 export function writeSettings(storage: Pick<Storage, 'setItem'> | null, settings: Settings): void {
   try {
-    storage?.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, version: SETTINGS_VERSION }));
+    storage?.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch {
     // Settings still apply for this session.
   }

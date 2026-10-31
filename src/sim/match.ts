@@ -1,12 +1,15 @@
 import {
   ARENAS,
+  closestOnBlock,
   FIRE_DPS,
+  insideBlock,
   PISTON_ACTIVE,
   PISTON_DAMAGE,
   PISTON_FORCE,
   PISTON_RADIUS,
   PISTON_REACH,
   pistonExtension,
+  rayBlock,
   SAW_DPS,
   SAW_KNOCK,
   SAW_RADIUS,
@@ -23,9 +26,12 @@ import {
   AMMO_REGEN,
   BURN_DPS,
   BURN_TIME,
+  buildStats,
   CHASSIS,
   CLOAK_TIME,
   DEFENSES,
+  DUEL_MIN_PAID_TIME,
+  DUEL_OUTRO,
   HILL_TARGET,
   MATCH,
   MEGA_ABSORB,
@@ -44,12 +50,16 @@ import {
   type ChassisDef,
   type ChassisId,
   type DefenseId,
+  type EngineId,
   type MeleeId,
   type ModeId,
   type Paint,
+  type PowerId,
   type PowerupId,
+  type TowerId,
   type TurretId,
   type UpgradeId,
+  type WheelsId,
 } from './data';
 import { makeRng, type Rng } from './rng';
 
@@ -65,6 +75,11 @@ export interface Loadout {
   paint?: Paint;
   /** The front weapon faces backward, for fighting while reversing away. */
   rearMelee?: boolean;
+  tower?: TowerId;
+  wheels?: WheelsId;
+  engine?: EngineId;
+  power?: PowerId;
+  armour?: number;
 }
 
 export interface BotInput {
@@ -105,6 +120,10 @@ export interface Bot {
   maxHp: number;
   speedMult: number;
   damageMult: number;
+  /** From the tower. */
+  trackMult: number;
+  /** From the power source. */
+  batteryRegen: number;
   radius: number;
   mass: number;
   alive: boolean;
@@ -305,6 +324,9 @@ export class Match {
   readonly hillTarget: number;
   time = 0;
   over = false;
+  /** Both pilots agreed to call it off. */
+  drawn = false;
+  private decidedAt: number | null = null;
   private events: GameEvent[] = [];
   private brains = new Map<number, BotBrain>();
   private nextId = 1;
@@ -329,10 +351,12 @@ export class Match {
   }
 
   private createBot(id: number, setup: BotSetup): Bot {
-    const chassis = CHASSIS[setup.loadout.chassis];
+    const stats = buildStats(setup.loadout);
+    // Each robot gets its own copy, tuned by the parts bolted onto it.
+    const chassis = { ...CHASSIS[setup.loadout.chassis], speed: stats.speed, accel: stats.accel, turn: stats.turn, mass: stats.mass };
     const up = setup.loadout.upgrades;
     const size = setup.boss?.size ?? 1;
-    const maxHp = chassis.hp * (1 + UPGRADES.armor.perLevel * up.armor) * (setup.boss?.hpMult ?? 1);
+    const maxHp = stats.hp * (1 + UPGRADES.armor.perLevel * up.armor) * (setup.boss?.hpMult ?? 1);
     return {
       id,
       name: setup.name,
@@ -348,6 +372,8 @@ export class Match {
       maxHp,
       speedMult: 1 + UPGRADES.engine.perLevel * up.engine,
       damageMult: 1 + UPGRADES.weapons.perLevel * up.weapons,
+      trackMult: stats.track,
+      batteryRegen: stats.regen,
       radius: chassis.radius * size,
       mass: chassis.mass * size,
       alive: true, out: false, eliminatedAt: 0, respawnT: 0,
@@ -396,6 +422,22 @@ export class Match {
 
   get timeLeft(): number {
     return Math.max(0, this.duration - this.time);
+  }
+
+  /** One life each, in the modes where being destroyed puts a robot out. */
+  private get oneLife(): boolean {
+    return this.mode === 'lms' || this.mode === 'duel';
+  }
+
+  /** A robot gives up. The match then ends the same way as if it had been destroyed. */
+  forfeit(id: number): void {
+    const bot = this.bots[id];
+    if (bot.out) return;
+    bot.out = true;
+    bot.alive = false;
+    bot.hp = 0;
+    bot.eliminatedAt = this.time;
+    this.events.push({ type: 'explosion', x: bot.x, z: bot.z, big: true });
   }
 
   /** The number shown on the scoreboard for this mode. */
@@ -448,6 +490,10 @@ export class Match {
     if (this.mode === 'ffa' && this.bots.some((b) => b.kills >= this.killTarget)) this.over = true;
     if (this.mode === 'koth' && this.bots.some((b) => b.hillScore >= this.hillTarget)) this.over = true;
     if (this.mode === 'lms' && this.bots.filter((b) => !b.out).length <= 1) this.over = true;
+    if (this.mode === 'duel' && this.bots.filter((b) => !b.out).length <= 1) {
+      this.decidedAt ??= this.time;
+      if (this.time - this.decidedAt >= DUEL_OUTRO) this.over = true;
+    }
   }
 
   private updateHill(dt: number): void {
@@ -480,7 +526,7 @@ export class Match {
     bot.xrayT = down(bot.xrayT);
     bot.bladesT = down(bot.bladesT);
     bot.meleeSwing += dt;
-    bot.ammo = Math.min(1, bot.ammo + AMMO_REGEN * dt);
+    bot.ammo = Math.min(1, bot.ammo + AMMO_REGEN * bot.batteryRegen * dt);
 
     if (bot.burnT > 0) {
       bot.burnT = down(bot.burnT);
@@ -719,7 +765,7 @@ export class Match {
       desired = bearing(bot.x, bot.z, target.x + target.vx * flight, target.z + target.vz * flight);
     }
     const diff = wrapAngle(desired - bot.turretAngle);
-    const turn = def.trackRate * dt;
+    const turn = def.trackRate * bot.trackMult * dt;
     bot.turretAngle = wrapAngle(bot.turretAngle + Math.max(-turn, Math.min(turn, diff)));
     bot.turretError = Math.abs(wrapAngle(desired - bot.turretAngle));
 
@@ -832,6 +878,11 @@ export class Match {
     let best = range;
     for (const pillar of this.arena.pillars) {
       const t = rayCircle(x, z, dirX, dirZ, pillar.x, pillar.z, pillar.r);
+      if (t !== null && t < best) best = t;
+    }
+    for (const block of this.arena.blocks) {
+      if (block.kind === 'fence') continue;
+      const t = rayBlock(block, x, z, dirX, dirZ);
       if (t !== null && t < best) best = t;
     }
     let victim: Bot | null = null;
@@ -972,6 +1023,10 @@ export class Match {
     const limit = arena.half - radius - 0.5;
     if (Math.abs(x) > limit || Math.abs(z) > limit) return false;
     if (arena.pits.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + radius)) return false;
+    if (arena.blocks.some((b) => {
+      const near = closestOnBlock(b, x, z);
+      return Math.hypot(near.x - x, near.z - z) < radius;
+    })) return false;
     return !arena.pillars.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + radius);
   }
 
@@ -1026,7 +1081,7 @@ export class Match {
     bot.clawTarget = -1;
     bot.kamikazeT = 0;
     bot.burnT = 0;
-    if (this.mode === 'lms') {
+    if (this.oneLife) {
       bot.out = true;
       bot.eliminatedAt = this.time;
     }
@@ -1160,6 +1215,39 @@ export class Match {
         bot.vz -= nz * into * 1.3;
       }
     }
+    for (const block of arena.blocks) this.collideBotWithBlock(bot, block);
+  }
+
+  private collideBotWithBlock(bot: Bot, block: ArenaDef['blocks'][number]): void {
+    const near = closestOnBlock(block, bot.x, bot.z);
+    let nx = bot.x - near.x;
+    let nz = bot.z - near.z;
+    const dist = Math.hypot(nx, nz);
+    if (dist >= bot.radius) return;
+    if (dist > 1e-4) {
+      nx /= dist;
+      nz /= dist;
+      bot.x = near.x + nx * bot.radius;
+      bot.z = near.z + nz * bot.radius;
+    } else {
+      // The center got inside, so leave by the nearest side.
+      const overX = block.w / 2 - Math.abs(bot.x - block.x);
+      const overZ = block.d / 2 - Math.abs(bot.z - block.z);
+      if (overX < overZ) {
+        nx = Math.sign(bot.x - block.x) || 1;
+        nz = 0;
+        bot.x = block.x + nx * (block.w / 2 + bot.radius);
+      } else {
+        nx = 0;
+        nz = Math.sign(bot.z - block.z) || 1;
+        bot.z = block.z + nz * (block.d / 2 + bot.radius);
+      }
+    }
+    const into = bot.vx * nx + bot.vz * nz;
+    if (into < 0) {
+      bot.vx -= nx * into * 1.3;
+      bot.vz -= nz * into * 1.3;
+    }
   }
 
   private updateHazards(dt: number): void {
@@ -1252,6 +1340,7 @@ export class Match {
         } else if (!hit) {
           hit = Math.abs(p.x) > bound || Math.abs(p.z) > bound;
           if (!hit) hit = arena.pillars.some((c) => Math.hypot(p.x - c.x, p.z - c.z) < c.r);
+          if (!hit) hit = arena.blocks.some((b) => b.kind !== 'fence' && insideBlock(b, p.x, p.z));
         }
         if (!hit) hit = this.projectileHitsBot(p);
       }
@@ -1287,6 +1376,18 @@ export class Match {
       p.vz -= 2 * into * nz;
       p.x = c.x + nx * c.r;
       p.z = c.z + nz * c.r;
+      bounced = true;
+    }
+    for (const b of this.arena.blocks) {
+      if (b.kind === 'fence' || !insideBlock(b, p.x, p.z)) continue;
+      // Bounce off whichever side it is closest to.
+      if (b.w / 2 - Math.abs(p.x - b.x) < b.d / 2 - Math.abs(p.z - b.z)) {
+        p.x = b.x + Math.sign(p.x - b.x) * b.w / 2;
+        p.vx = -p.vx;
+      } else {
+        p.z = b.z + Math.sign(p.z - b.z) * b.d / 2;
+        p.vz = -p.vz;
+      }
       bounced = true;
     }
     if (!bounced) return;
@@ -1439,11 +1540,13 @@ export class Match {
   }
 
   private rank(a: Bot, b: Bot): number {
-    if (this.mode === 'lms') {
+    if (this.oneLife) {
       if (a.out !== b.out) return a.out ? 1 : -1;
       if (a.eliminatedAt !== b.eliminatedAt) return b.eliminatedAt - a.eliminatedAt;
     }
     if (this.mode === 'koth' && a.hillScore !== b.hillScore) return b.hillScore - a.hillScore;
+    // A duel that runs out of time goes to whoever has more armour left.
+    if (this.mode === 'duel' && a.hp / a.maxHp !== b.hp / b.maxHp) return b.hp / b.maxHp - a.hp / a.maxHp;
     return b.kills - a.kills || b.damageDealt - a.damageDealt || a.id - b.id;
   }
 
@@ -1452,10 +1555,16 @@ export class Match {
     return [...this.bots].sort((a, b) => this.rank(a, b));
   }
 
+  private bonusFor(index: number): number {
+    if (this.mode !== 'duel') return REWARD.placement[index] ?? 0;
+    if (this.drawn || this.time < DUEL_MIN_PAID_TIME) return 0;
+    return REWARD.duel[index] ?? 0;
+  }
+
   standings(): Standing[] {
     return this.ranked().map((bot, index) => {
-      const bonus = REWARD.placement[index] ?? 0;
-      return { bot, place: index + 1, bonus, total: Math.round(bot.earned + bonus) };
+      const bonus = this.bonusFor(index);
+      return { bot, place: this.drawn ? 1 : index + 1, bonus, total: Math.round(bot.earned + bonus) };
     });
   }
 }
