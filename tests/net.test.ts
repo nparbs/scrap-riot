@@ -246,9 +246,11 @@ describe('online match', () => {
   it('starts early when full, and overflows into a new room', async () => {
     const s = await server({ lobbyMs: 5000 });
     const players = Array.from({ length: 7 }, (_, i) => client(s.port, `P${i}`));
-    await until(() => players.slice(0, 6).every((p) => p.state.started));
-    expect(players[6].state.started).toBe(false);
-    expect(s.stats().rooms).toBe(2);
+    // They connect simultaneously, so any six may get in. Exactly one must overflow.
+    const started = () => players.filter((p) => p.state.started).length;
+    await until(() => started() === 6 && s.stats().rooms === 2);
+    await sleep(100);
+    expect(started()).toBe(6);
   });
 
   it('limits connections per address and message rate', async () => {
