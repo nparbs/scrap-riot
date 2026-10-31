@@ -6,8 +6,10 @@ import { buildArena, type ArenaScene } from './arenaScene';
 import { ArcBolts, Particles } from './fx';
 import { buildRobot, disposeRobot, type RobotModel } from './robots';
 
-const CAM_DISTANCE = 13;
-const CAM_HEIGHT = 8.5;
+const CAM_DISTANCE = 9;
+const CAM_HEIGHT = 4.6;
+/** Matches the height of the HUD dock, so the action is centered in what's left of the screen. */
+const DOCK_HEIGHT = 136;
 const MAX_WRECKS = 12;
 const WRECK_LIFE = 12;
 const FALL_TIME = 1;
@@ -163,8 +165,8 @@ export class MatchView {
   }
 
   private addBot(bot: Bot): void {
-    const { chassis, melee, turret, defense, paint, rearMelee } = bot.loadout;
-    const model = buildRobot({ chassis, melee, turret, defense, paint, rearMelee, color: bot.color });
+    const { chassis, melee, turret, defense, paint, rearMelee, tower, wheels } = bot.loadout;
+    const model = buildRobot({ chassis, melee, turret, defense, paint, rearMelee, tower, wheels, color: bot.color });
     model.root.scale.setScalar(bot.size);
     const barBack = new THREE.Mesh(this.barGeo, this.barBackMat);
     const barFront = new THREE.Mesh(
@@ -250,6 +252,7 @@ export class MatchView {
 
   resize(width: number, height: number): void {
     this.camera.aspect = width / height;
+    this.camera.setViewOffset(width, height, 0, DOCK_HEIGHT / 2, width, height);
     this.camera.updateProjectionMatrix();
   }
 
@@ -486,7 +489,8 @@ export class MatchView {
     const shade = 0.4 + 0.6 * health;
     model.materials.forEach((material, i) => material.color.copy(model.baseColors[i]).multiplyScalar(shade));
 
-    const lost = Math.floor((1 - health) * 1.4 * model.plates.length);
+    // Health can round to just above full on its way over the network.
+    const lost = Math.floor(Math.max(0, 1 - health) * 1.4 * model.plates.length);
     const target = Math.min(lost, model.plates.length);
     if (target < v.platesLost) {
       // Healing bolts the armor back on.
@@ -785,7 +789,7 @@ export class MatchView {
     const fz = Math.cos(this.camHeading);
     const target = new THREE.Vector3(x - fx * CAM_DISTANCE, CAM_HEIGHT, z - fz * CAM_DISTANCE);
     this.camPos.lerp(target, Math.min(1, dt * 9));
-    this.camLook.lerp(new THREE.Vector3(x + fx * 4, 1, z + fz * 4), Math.min(1, dt * 12));
+    this.camLook.lerp(new THREE.Vector3(x + fx * 5, 1.6, z + fz * 5), Math.min(1, dt * 12));
 
     this.shake = Math.max(0, this.shake - dt * 2.4);
     const kick = this.shake * this.shake * 0.8;

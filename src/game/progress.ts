@@ -2,33 +2,44 @@ import { ARENA_ORDER, type ArenaId } from '../sim/arena';
 import {
   CHASSIS,
   DEFAULT_PAINT,
+  ARMOUR,
   DEFENSES,
+  ENGINES,
   MELEE,
   PAINT_COLORS,
   PATTERNS,
+  POWER_SOURCES,
   POWERUPS,
   POWERUP_CAP,
+  spaceCapacity,
+  spaceUsed,
   TOPPERS,
+  TOWERS,
   TURRETS,
   UPGRADES,
+  WHEELS,
   type ChassisId,
   type DefenseId,
+  type EngineId,
   type MeleeId,
   type ModeId,
   type Paint,
   type PatternId,
+  type PowerId,
   type PowerupId,
   type TopperId,
+  type TowerId,
   type TurretId,
   type UpgradeId,
+  type WheelsId,
 } from '../sim/data';
 import type { BotSetup, Loadout } from '../sim/match';
 import { makeRng } from '../sim/rng';
 
-// Bumped for the new arsenal. Old saves are not carried over, so everyone starts fresh.
-const SAVE_KEY = 'scrap-riot.save.v2';
+// Bumped when the shape of a save changes. Old saves are not carried over, so everyone starts fresh.
+const SAVE_KEY = 'scrap-riot.save.v3';
 
-export type Slot = 'chassis' | 'melee' | 'turret' | 'defense';
+export type Slot = 'chassis' | 'tower' | 'wheels' | 'engine' | 'power' | 'melee' | 'turret' | 'defense';
 
 export interface Save {
   name: string;
@@ -37,6 +48,10 @@ export interface Save {
   wins: number;
   owned: {
     chassis: ChassisId[];
+    tower: TowerId[];
+    wheels: WheelsId[];
+    engine: EngineId[];
+    power: PowerId[];
     melee: MeleeId[];
     turret: TurretId[];
     defense: DefenseId[];
@@ -45,7 +60,9 @@ export interface Save {
   practice: { arena: ArenaId; mode: ModeId };
 }
 
-export const CATALOG = { chassis: CHASSIS, melee: MELEE, turret: TURRETS, defense: DEFENSES };
+export const CATALOG = { chassis: CHASSIS, tower: TOWERS, wheels: WHEELS, engine: ENGINES, power: POWER_SOURCES, melee: MELEE, turret: TURRETS, defense: DEFENSES };
+
+const SELL_RATE = 0.5;
 
 export function newSave(): Save {
   return {
@@ -53,9 +70,14 @@ export function newSave(): Save {
     money: 250,
     matches: 0,
     wins: 0,
-    owned: { chassis: ['brawler'], melee: ['chainsaw'], turret: ['minigun'], defense: ['shield'] },
+    owned: { chassis: ['brawler'], tower: ['medium'], wheels: ['large4'], engine: ['medium'], power: ['alkaline'], melee: ['chainsaw'], turret: ['minigun'], defense: ['shield'] },
     loadout: {
       chassis: 'brawler',
+      tower: 'medium',
+      wheels: 'large4',
+      engine: 'medium',
+      power: 'alkaline',
+      armour: ARMOUR.default,
       melee: 'chainsaw',
       turret: 'minigun',
       defense: 'shield',
@@ -63,7 +85,7 @@ export function newSave(): Save {
       upgrades: { armor: 0, engine: 0, weapons: 0 },
       paint: { ...DEFAULT_PAINT },
     },
-    practice: { arena: 'pit', mode: 'ffa' },
+    practice: { arena: 'skyscraper', mode: 'duel' },
   };
 }
 
@@ -85,15 +107,50 @@ export function writeSave(storage: Pick<Storage, 'setItem'> | null, save: Save):
   }
 }
 
+const priceOf = (slot: Slot, id: string) => (CATALOG[slot] as Record<string, { price: number }>)[id].price;
+
+/** Would the robot still have room with this one part changed? */
+export function partFits(save: Save, slot: Slot, id: string): boolean {
+  const next = { ...save.loadout, [slot]: id };
+  return spaceUsed(next) <= spaceCapacity(next);
+}
+
+/** Buys the part if needed, then fits it. A part with no room goes on the shelf until there is. */
 export function buyOrEquip(save: Save, slot: Slot, id: string): boolean {
   const owned = save.owned[slot] as string[];
-  if (!owned.includes(id)) {
-    const price = (CATALOG[slot] as Record<string, { price: number }>)[id].price;
+  const buying = !owned.includes(id);
+  if (buying) {
+    const price = priceOf(slot, id);
     if (save.money < price) return false;
     save.money -= price;
     owned.push(id);
   }
+  if (!partFits(save, slot, id)) return buying;
   (save.loadout as unknown as Record<Slot, string>)[slot] = id;
+  return true;
+}
+
+export function sellPrice(slot: Slot, id: string): number {
+  return Math.floor(priceOf(slot, id) * SELL_RATE);
+}
+
+/** Parts in use and the free ones every robot starts with can't be sold. */
+export function canSell(save: Save, slot: Slot, id: string): boolean {
+  return (save.owned[slot] as string[]).includes(id) && (save.loadout as unknown as Record<Slot, string>)[slot] !== id && priceOf(slot, id) > 0;
+}
+
+export function sellPart(save: Save, slot: Slot, id: string): boolean {
+  if (!canSell(save, slot, id)) return false;
+  save.money += sellPrice(slot, id);
+  (save.owned[slot] as string[]).splice((save.owned[slot] as string[]).indexOf(id), 1);
+  return true;
+}
+
+export function setArmour(save: Save, armour: number): boolean {
+  if (!Number.isFinite(armour) || armour < ARMOUR.min || armour > ARMOUR.max || armour % ARMOUR.step !== 0) return false;
+  const next = { ...save.loadout, armour };
+  if (spaceUsed(next) > spaceCapacity(next)) return false;
+  save.loadout.armour = armour;
   return true;
 }
 

@@ -1,15 +1,20 @@
 // Everything both the browser client and the game server need to agree on.
 import type { ArenaId } from '../sim/arena';
 import {
+  ARMOUR,
   CHASSIS,
   DEFAULT_PAINT,
   DEFENSES,
+  ENGINES,
   MELEE,
   PAINT_COLORS,
   PATTERNS,
+  POWER_SOURCES,
   POWERUP_ORDER,
   TOPPERS,
+  TOWERS,
   TURRETS,
+  WHEELS,
   type ModeId,
   type Paint,
   type PowerupId,
@@ -17,8 +22,7 @@ import {
 import type { BotSetup, GameEvent, Loadout } from '../sim/match';
 import type { Save } from '../game/progress';
 
-export const PROTOCOL_VERSION = 3;
-export const MAX_PLAYERS = 6;
+export const PROTOCOL_VERSION = 4;
 export const NAME_MAX = 16;
 export const DEFAULT_NAME = 'Pilot';
 /** Clients send input at this rate; each message covers INPUT_STEPS sim steps. */
@@ -26,6 +30,8 @@ export const INPUT_RATE = 30;
 export const INPUT_STEPS = 2;
 /** The server sends a snapshot every this many sim steps (20 Hz). */
 export const SNAPSHOT_STEPS = 3;
+/** Chat is picked from this list, so strangers can't send each other anything worse. */
+export const QUICK_CHAT = ['Good luck!', 'Nice hit!', 'Come here!', 'Oops!', 'Good game.', 'Rematch?'];
 
 const FLAG_MELEE = 1;
 const FLAG_TURRET = 2;
@@ -36,6 +42,9 @@ export type ClientMessage =
   | { t: 'resume'; v: number; token: string }
   | { t: 'input'; s: number; th: number; st: number; f: number; p: number }
   | { t: 'ping'; c: number }
+  | { t: 'surrender' }
+  | { t: 'draw' }
+  | { t: 'chat'; id: number }
   | { t: 'leave' };
 
 export interface StartMessage {
@@ -70,10 +79,13 @@ export interface SnapshotMessage {
 export type ErrorCode = 'outdated' | 'expired' | 'full' | 'bad-request' | 'sign-in' | 'in-match';
 
 export type ServerMessage =
+  /** `startsIn` is -1 while still waiting for enough players. */
   | { t: 'queue'; players: number; capacity: number; startsIn: number; arena: ArenaId; mode: ModeId }
   | StartMessage
   | SnapshotMessage
-  | { t: 'over' }
+  | { t: 'over'; drawn?: boolean }
+  | { t: 'chat'; bot: number; id: number }
+  | { t: 'draw-offer'; bot: number }
   | { t: 'error'; code: ErrorCode }
   | { t: 'pong'; c: number };
 
@@ -132,6 +144,11 @@ export function onlineLoadout(raw: unknown): Loadout {
     upgrades: { armor: 0, engine: 0, weapons: 0 },
     paint: sanitizePaint(r.paint),
     rearMelee: r.rearMelee === true,
+    tower: pickKey(TOWERS, r.tower, 'medium'),
+    wheels: pickKey(WHEELS, r.wheels, 'large4'),
+    engine: pickKey(ENGINES, r.engine, 'medium'),
+    power: pickKey(POWER_SOURCES, r.power, 'alkaline'),
+    armour: typeof r.armour === 'number' && r.armour >= ARMOUR.min && r.armour <= ARMOUR.max ? r.armour : ARMOUR.default,
   };
 }
 
@@ -147,6 +164,8 @@ export interface Profile {
 
 export type GarageAction =
   | { type: 'equip'; slot: string; id: string }
+  | { type: 'sell'; slot: string; id: string }
+  | { type: 'armour'; armour: number }
   | { type: 'powerup'; id: string }
   | { type: 'upgrade'; id: string }
   | { type: 'paint'; paint: Partial<Paint> }

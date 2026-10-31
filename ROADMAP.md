@@ -4,14 +4,16 @@ Each milestone below has a matching GitHub milestone, and its open items are tra
 
 ## How close is this to the original?
 
-*Robot Rage* is no longer easy to play, and public documentation is thin. These facts come from public listings and a wiki summary:
+*Robot Rage* is no longer easy to play, and public documentation is thin. These facts come from public listings, a wiki summary and screenshots of *Robot Rage: Rearmed*:
 
-- Robot tanks fighting in a free-for-all arena, played online against other users
-- Drive with WASD, E for melee, Q for turret, R for defense, 1 to 6 for powerups, Space for rear view
+- Robots fighting one on one, online against other users, on the roof of a skyscraper in a dark city
+- A workshop of chassis, tower, wheels, engine, power source and weapons, limited by used space, with an armour setting and a front or back placement for weapons
+- Tabs for the workshop, paintshop, buying and selling parts, with a preview, stats and highscores
+- A match screen showing each pilot's name, armour, weapon and battery, with chat, surrender and offer draw
 - Destroying other tanks earns money, which buys upgrades
 - Weapons included a chainsaw and a sledgehammer, and the chainsaw could outreach the hammer
 
-Everything else is an original design decision: robot names, the other weapons, the arena layout, all numbers. Anything that contradicts how you remember the original is a bug worth filing, and footage of the original would help most. Scrap Riot will keep its own name, art and sound regardless.
+Scrap Riot's look and layout now follow those screenshots, rebuilt from scratch with its own name and logo. Everything else is an original design decision: robot names, the other weapons, all numbers. The default keys are also our choice: WASD to drive, Space for the main weapon, Q for the turret, R for defense, 1 to 6 for powerups, and E to look behind. Anything that contradicts how you remember the original is a bug worth filing, and footage of the original would help most. Scrap Riot will keep its own name, art and sound regardless.
 
 ## v0.1: Playable slice (done)
 

@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { makeRivals, randomArena, type Save } from '../src/game/progress';
-import { INPUT_STEPS, MAX_PLAYERS, onlineLoadout, sanitizeName, SNAPSHOT_STEPS, unpackFlags, type ServerMessage, type StartMessage } from '../src/net/protocol';
+import { makeRivals, type Save } from '../src/game/progress';
+import { INPUT_STEPS, onlineLoadout, QUICK_CHAT, sanitizeName, SNAPSHOT_STEPS, unpackFlags, type ServerMessage, type StartMessage } from '../src/net/protocol';
 import { encodeSnapshot } from '../src/net/snapshot';
 import type { ArenaId } from '../src/sim/arena';
 import { MODES, POWERUP_ORDER, type ModeId, type UpgradeId } from '../src/sim/data';
 import { Match, STEP, type BotSetup, type Loadout } from '../src/sim/match';
-import { makeRng } from '../src/sim/rng';
 
 import type { MatchResult } from './accounts';
 
@@ -20,21 +19,28 @@ export interface RoomOptions {
   lobbyMs: number;
   /** Countdown once the room fills, so nobody is thrown in the instant the last player joins. */
   fullLobbyMs: number;
-  /** How long a match with no connected humans survives waiting for a reconnect. */
+  /** How long a dropped player has to come back before forfeiting, and how long a match with nobody connected survives. */
   graceMs: number;
+  /** The match won't start with fewer humans than this, however long that takes. */
+  minPlayers: number;
+  /** Seats in the match. Any left over go to bots. */
+  capacity: number;
   /** Fixes the match length. By default each mode uses its own. */
   duration?: number;
   killTarget: number;
-  /** Fixes the map and mode, otherwise each room rolls its own. */
-  arena?: ArenaId;
-  mode?: ModeId;
+  arena: ArenaId;
+  mode: ModeId;
 }
 
 export const DEFAULT_ROOM_OPTIONS: RoomOptions = {
-  lobbyMs: 10_000,
-  fullLobbyMs: 2_000,
+  lobbyMs: 3_000,
+  fullLobbyMs: 3_000,
   graceMs: 20_000,
+  minPlayers: 2,
+  capacity: 2,
   killTarget: 12,
+  arena: 'skyscraper',
+  mode: 'duel',
 };
 
 const HUMAN_COLORS = [0xff8a2a, 0x35d0e6, 0xf25fd0, 0x9be03a, 0xf4f1e8, 0xffd23a];
@@ -43,6 +49,8 @@ const MAX_CATCH_UP = 0.25;
 /** Past this many queued inputs the player has lagged, so old ones go rather than delaying their weapons. */
 const MAX_QUEUED_INPUTS = 4;
 const QUEUED_AFTER_DROP = 2;
+const DRAW_OFFER_MS = 15_000;
+const CHAT_GAP_MS = 1_000;
 /** Steps a late client may repay, which limits how much a stall can skip afterwards. */
 const MAX_DEBT = 12;
 
@@ -71,6 +79,9 @@ export interface Player {
   stepsLeft: number;
   /** Steps run on the old input because the next one was late, taken off the next ones when they arrive. */
   debt: number;
+  /** When the connection dropped, while it is still gone. */
+  droppedAt: number | null;
+  lastChat: number;
 }
 
 export class Room {
@@ -89,19 +100,17 @@ export class Room {
   private steps = 0;
   private queueSentAt = 0;
   private emptySince: number | null = null;
+  private drawOffer: { token: string; at: number } | null = null;
 
   constructor(private readonly options: RoomOptions, now: number, private readonly onResults?: (result: MatchResult) => Promise<void>) {
-    this.startAt = now + options.lobbyMs;
-    const rng = makeRng(this.seed);
-    this.arena = options.arena ?? randomArena(rng);
-    // Mostly free-for-all, with the other two modes mixed in for variety.
-    const roll = rng();
-    this.mode = options.mode ?? (roll < 0.6 ? 'ffa' : roll < 0.8 ? 'lms' : 'koth');
+    this.startAt = options.minPlayers <= 1 ? now + options.lobbyMs : Infinity;
+    this.arena = options.arena;
+    this.mode = options.mode;
     this.duration = options.duration ?? MODES[this.mode].duration;
   }
 
   get open(): boolean {
-    return !this.match && !this.finished && this.players.size < MAX_PLAYERS;
+    return !this.match && !this.finished && this.players.size < this.options.capacity;
   }
 
   get connected(): number {
@@ -125,9 +134,12 @@ export class Room {
       queue: [],
       stepsLeft: 0,
       debt: 0,
+      droppedAt: null,
+      lastChat: 0,
     };
     this.players.set(player.token, player);
-    if (this.players.size >= MAX_PLAYERS) this.startAt = Math.min(this.startAt, now + this.options.fullLobbyMs);
+    if (this.players.size >= this.options.minPlayers && this.startAt === Infinity) this.startAt = now + this.options.lobbyMs;
+    if (this.players.size >= this.options.capacity) this.startAt = Math.min(this.startAt, now + this.options.fullLobbyMs);
     this.broadcastQueue(now);
     return player;
   }
@@ -137,10 +149,16 @@ export class Room {
     player.conn = null;
     if (!this.match) {
       this.players.delete(player.token);
-      if (this.players.size === 0) this.finished = true;
-      else this.broadcastQueue(now);
+      if (this.players.size === 0) {
+        this.finished = true;
+        return;
+      }
+      // Someone left the countdown, so it's back to waiting.
+      if (this.players.size < this.options.minPlayers) this.startAt = Infinity;
+      this.broadcastQueue(now);
       return;
     }
+    player.droppedAt = now;
     this.match.setAI(player.botId, true);
   }
 
@@ -148,11 +166,37 @@ export class Room {
   leave(player: Player, now: number): void {
     player.left = true;
     this.disconnect(player, now);
+    // Walking out of a duel loses it, rather than leaving a bot to fight on.
+    if (this.match && this.mode === 'duel') this.match.forfeit(player.botId);
+  }
+
+  surrender(player: Player): void {
+    if (this.match && !this.match.over && this.mode === 'duel') this.match.forfeit(player.botId);
+  }
+
+  /** Offering when the other pilot has an offer open accepts it. */
+  offerDraw(player: Player, now: number): void {
+    if (!this.match || this.match.over || this.mode !== 'duel') return;
+    const open = this.drawOffer && now - this.drawOffer.at < DRAW_OFFER_MS ? this.drawOffer : null;
+    if (open && open.token !== player.token) {
+      this.match.drawn = true;
+      this.match.over = true;
+      return;
+    }
+    this.drawOffer = { token: player.token, at: now };
+    this.broadcast({ t: 'draw-offer', bot: player.botId });
+  }
+
+  chat(player: Player, id: number, now: number): void {
+    if (!this.match || !QUICK_CHAT[id] || now - player.lastChat < CHAT_GAP_MS) return;
+    player.lastChat = now;
+    this.broadcast({ t: 'chat', bot: player.botId, id });
   }
 
   resume(player: Player, conn: Conn): void {
     player.conn?.close();
     player.conn = conn;
+    player.droppedAt = null;
     this.match?.setAI(player.botId, false);
     player.ack = player.received = player.stepsLeft = player.debt = 0;
     player.queue = [];
@@ -220,6 +264,12 @@ export class Room {
       this.emptySince = null;
     }
 
+    if (this.mode === 'duel') {
+      for (const player of this.players.values()) {
+        if (player.droppedAt !== null && now - player.droppedAt > this.options.graceMs) this.match.forfeit(player.botId);
+      }
+    }
+
     this.accumulator += Math.min(MAX_CATCH_UP, (now - this.last) / 1000);
     this.last = now;
     while (this.accumulator >= STEP && !this.match.over) {
@@ -233,14 +283,20 @@ export class Room {
 
   private begin(now: number): void {
     const humans = [...this.players.values()];
+    // Two pilots in the same paint can't tell which robot is which, so a clash is settled for this match only.
+    const taken = new Set<number>();
     const humanSetups: BotSetup[] = humans.map((player, i) => {
       player.botId = i;
-      return { name: player.name, color: player.loadout.paint?.primary ?? HUMAN_COLORS[i], loadout: player.loadout, isAI: false };
+      const wanted = player.loadout.paint?.primary ?? HUMAN_COLORS[i];
+      const color = taken.has(wanted) ? HUMAN_COLORS.find((c) => !taken.has(c)) ?? wanted : wanted;
+      taken.add(color);
+      const paint = player.loadout.paint && { ...player.loadout.paint, primary: color };
+      return { name: player.name, color, loadout: { ...player.loadout, paint }, isAI: false };
     });
     // Bots match the average human, so upgrades don't make a match trivial.
     const average = (key: UpgradeId) => Math.round(humans.reduce((sum, p) => sum + p.loadout.upgrades[key], 0) / Math.max(1, humans.length));
     const progress = { wins: 0, loadout: { upgrades: { armor: average('armor'), engine: average('engine'), weapons: average('weapons') } } };
-    const rivals = makeRivals(progress, MAX_PLAYERS - humans.length, this.seed).map((rival) => ({
+    const rivals = makeRivals(progress, this.options.capacity - humans.length, this.seed).map((rival) => ({
       ...rival,
       name: `${rival.name} [bot]`,
     }));
@@ -283,8 +339,8 @@ export class Room {
     this.broadcast({
       t: 'queue',
       players: this.players.size,
-      capacity: MAX_PLAYERS,
-      startsIn: Math.max(0, Math.ceil((this.startAt - now) / 1000)),
+      capacity: this.options.capacity,
+      startsIn: this.startAt === Infinity ? -1 : Math.max(0, Math.ceil((this.startAt - now) / 1000)),
       arena: this.arena,
       mode: this.mode,
     });
@@ -305,7 +361,7 @@ export class Room {
     this.broadcastSnapshot();
     this.finished = true;
     // "Over" waits for the database, so a client fetching its balance next sees the payout.
-    const announce = () => this.broadcast({ t: 'over' });
+    const announce = () => this.broadcast({ t: 'over', drawn: this.match!.drawn });
     if (!this.onResults) return announce();
     this.onResults(this.results()).catch((error: Error) => console.error('Could not record match:', error.message)).finally(announce);
   }
@@ -315,7 +371,8 @@ export class Room {
     const match = this.match!;
     const standings = match.standings();
     const players = [...this.players.values()]
-      .filter((p) => p.accountId && !p.left)
+      // Leaving a duel still counts as losing it, so nobody can quit to protect their rating.
+      .filter((p) => p.accountId && (!p.left || this.mode === 'duel'))
       .map((p) => {
         const row = standings.find((s) => s.bot.id === p.botId)!;
         return {
@@ -328,6 +385,6 @@ export class Room {
           powerupsLeft: row.bot.powerups,
         };
       });
-    return { id: this.id, arena: this.arena, mode: this.mode, duration: match.time, players };
+    return { id: this.id, arena: this.arena, mode: this.mode, duration: match.time, drawn: match.drawn, players };
   }
 }

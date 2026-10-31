@@ -32,6 +32,8 @@ export interface NetClientEvents {
   onQueue?: (players: number, capacity: number, startsIn: number, arena: ArenaId, mode: ModeId) => void;
   onStart?: (match: Match, player: Bot) => void;
   onOver?: () => void;
+  onChat?: (bot: number, id: number) => void;
+  onDrawOffer?: (bot: number) => void;
   onFail?: (reason: NetFailure) => void;
   onReconnecting?: (active: boolean) => void;
 }
@@ -145,12 +147,21 @@ export class NetClient {
         this.handleSnapshot(message);
         break;
       case 'over':
-        if (this.match) this.match.over = true;
+        if (this.match) {
+          this.match.over = true;
+          this.match.drawn = message.drawn === true;
+        }
         this.close();
         this.events.onOver?.();
         break;
       case 'error':
         this.fail(message.code);
+        break;
+      case 'chat':
+        this.events.onChat?.(message.bot, message.id);
+        break;
+      case 'draw-offer':
+        this.events.onDrawOffer?.(message.bot);
         break;
       case 'pong':
         this.rttMs = Date.now() - message.c;
@@ -247,6 +258,19 @@ export class NetClient {
     player.vz = pred.vz;
     for (let i = 0; i < steps; i++) match.predict(player, throttle, steer, STEP);
     this.pred = { x: player.x, z: player.z, heading: player.heading, vx: player.vx, vz: player.vz };
+  }
+
+  surrender(): void {
+    this.send({ t: 'surrender' });
+  }
+
+  /** Accepts the other pilot's offer if there's one open. */
+  offerDraw(): void {
+    this.send({ t: 'draw' });
+  }
+
+  chat(id: number): void {
+    this.send({ t: 'chat', id });
   }
 
   /** Tells the server to stop driving this robot, for when the tab goes to the background. */

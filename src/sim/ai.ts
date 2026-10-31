@@ -1,4 +1,4 @@
-import { sawPos, shockerActive } from './arena';
+import { closestOnBlock, sawPos, shockerActive } from './arena';
 import { DEFENSES, MELEE, TURRETS } from './data';
 import { bearing, wrapAngle, type Bot, type Match } from './match';
 
@@ -153,6 +153,10 @@ export class BotBrain {
     // Sliding on ice means reacting to hazards from much further away.
     const caution = arena.grip < 0.5 ? 2 : 1;
     for (const pillar of arena.pillars) repel(pillar.x, pillar.z, pillar.r, 5, 1.6);
+    for (const block of arena.blocks) {
+      const near = closestOnBlock(block, bot.x, bot.z);
+      repel(near.x, near.z, 0, 4, 2);
+    }
     for (const saw of arena.saws) {
       const pos = sawPos(saw, match.time);
       repel(pos.x, pos.z, 1.7, 5, 2.2);

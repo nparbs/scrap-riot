@@ -1,16 +1,20 @@
 import * as THREE from 'three';
 import { buildRobot, disposeRobot, type RobotBuild, type RobotModel } from './robots';
 
-/** Turntable showing the current loadout behind the garage panels. */
+const MIN_ZOOM = 0.55;
+const MAX_ZOOM = 1.5;
+
+/** Turntable showing the current robot in the workshop's preview window. */
 export class GarageView {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
   private model: RobotModel | null = null;
   private readonly turntable = new THREE.Group();
   private key = '';
+  private zoomLevel = 1.15;
 
   constructor() {
-    this.scene.background = new THREE.Color(0x14161a);
+    this.scene.background = new THREE.Color(0x000000);
     this.scene.add(new THREE.HemisphereLight(0xd0dcf0, 0x2a2622, 1.3));
     const lamp = new THREE.SpotLight(0xfff0d8, 220, 30, 0.6, 0.5);
     lamp.position.set(3, 11, 4);
@@ -21,24 +25,19 @@ export class GarageView {
     rim.position.set(-6, 3, -5);
     this.scene.add(rim);
 
-    const pad = new THREE.Mesh(
-      new THREE.CylinderGeometry(4, 4.2, 0.3, 40),
-      new THREE.MeshStandardMaterial({ color: 0x34383d, metalness: 0.7, roughness: 0.5 }),
-    );
-    pad.position.y = -0.15;
-    pad.receiveShadow = true;
-    this.turntable.add(pad);
     this.scene.add(this.turntable);
 
-    const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(30, 32),
-      new THREE.MeshStandardMaterial({ color: 0x191b1f, roughness: 0.9 }),
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.3;
-    floor.receiveShadow = true;
-    this.scene.add(floor);
-    this.camera.position.set(0, 4.4, 10.5);
+    this.placeCamera();
+  }
+
+  private placeCamera(): void {
+    this.camera.position.set(0, 3.2 * this.zoomLevel, 8.2 * this.zoomLevel);
+    this.camera.lookAt(0, 0.8, 0);
+  }
+
+  zoom(step: number): void {
+    this.zoomLevel = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.zoomLevel + step));
+    this.placeCamera();
   }
 
   setBuild(build: RobotBuild): void {
@@ -53,12 +52,10 @@ export class GarageView {
     this.turntable.add(this.model.root);
   }
 
-  resize(width: number, height: number): void {
-    this.camera.aspect = width / height;
-    // Slide the robot into the empty left side on wide screens; center it on narrow ones.
-    const wide = width > 900;
-    this.camera.setViewOffset(width, height, wide ? width * 0.24 : 0, wide ? 0 : height * 0.26, width, height);
-    this.camera.lookAt(0, 0.9, 0);
+  /** Matches the camera to the window it's drawn in. */
+  setAspect(aspect: number): void {
+    if (this.camera.aspect === aspect) return;
+    this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
   }
 

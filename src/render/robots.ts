@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { DEFAULT_PAINT, type ChassisId, type DefenseId, type MeleeId, type Paint, type PatternId, type TopperId, type TurretId } from '../sim/data';
+import { DEFAULT_PAINT, type ChassisId, type DefenseId, type MeleeId, type Paint, type PatternId, type TopperId, type TowerId, type TurretId, type WheelsId } from '../sim/data';
 
 export interface RobotBuild {
   chassis: ChassisId;
@@ -8,6 +8,8 @@ export interface RobotBuild {
   defense: DefenseId;
   paint?: Paint;
   rearMelee?: boolean;
+  tower?: TowerId;
+  wheels?: WheelsId;
   /** Fallback main color when there is no paint job. */
   color: number;
 }
@@ -38,7 +40,8 @@ const copper = new THREE.MeshStandardMaterial({ color: 0xc27a3f, metalness: 0.85
 const hot = new THREE.MeshStandardMaterial({ color: 0xff7a2a, emissive: 0x662200 });
 const glowBlue = new THREE.MeshStandardMaterial({ color: 0x8fdcff, emissive: 0x2a9fe8, emissiveIntensity: 1.5 });
 const glowRed = new THREE.MeshStandardMaterial({ color: 0xff5a4a, emissive: 0xd01a10, emissiveIntensity: 1.5 });
-const shared = new Set<THREE.Material>([steel, dark, blade, copper, hot, glowBlue, glowRed]);
+const eyeWhite = new THREE.MeshBasicMaterial({ color: 0xf2f2e8 });
+const shared = new Set<THREE.Material>([steel, dark, blade, copper, hot, glowBlue, glowRed, eyeWhite]);
 
 function box(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -166,12 +169,38 @@ const HULLS: Record<ChassisId, HullSpec> = {
   juggernaut: { width: 2.0, length: 2.9, height: 1.0, trackWidth: 0.55, wheelRadius: 0.44, wheelCount: 5 },
 };
 
-function buildHull(root: THREE.Group, id: ChassisId, paint: THREE.Material, trim: THREE.Material, wheels: THREE.Mesh[]): number {
+const TOWER_SCALE: Record<TowerId, number> = { small: 0.8, medium: 1, large: 1.25 };
+/** Tyre size relative to the hull, and how many down each side. */
+const WHEEL_LOOK: Record<Exclude<WheelsId, 'tracks'>, { radius: number; count: number }> = {
+  small4: { radius: 1, count: 2 },
+  large4: { radius: 1.45, count: 2 },
+  six: { radius: 1.15, count: 3 },
+};
+
+function addTyre(root: THREE.Group, wheels: THREE.Mesh[], radius: number, width: number, x: number, z: number): void {
+  const tyre = cylinder(radius, width, dark, 12);
+  tyre.rotation.z = Math.PI / 2;
+  tyre.position.set(x, radius, z);
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.5, radius * 0.5, width + 0.04, 6), steel);
+  tyre.add(hub);
+  root.add(tyre);
+  wheels.push(tyre);
+}
+
+function buildHull(root: THREE.Group, id: ChassisId, paint: THREE.Material, trim: THREE.Material, wheels: THREE.Mesh[], look: WheelsId): number {
   const s = HULLS[id];
   const baseY = s.wheelRadius + 0.1;
 
   for (const side of [-1, 1]) {
     const x = side * (s.width / 2 + s.trackWidth / 2);
+    if (look !== 'tracks') {
+      const { radius, count } = WHEEL_LOOK[look];
+      const tyre = s.wheelRadius * radius;
+      for (let i = 0; i < count; i++) {
+        addTyre(root, wheels, tyre, s.trackWidth + 0.08, x, (i / (count - 1) - 0.5) * (s.length - tyre * 0.9));
+      }
+      continue;
+    }
     root.add(box(s.trackWidth, s.wheelRadius * 1.5, s.length, dark, x, s.wheelRadius, 0));
     for (let i = 0; i < s.wheelCount; i++) {
       const wheel = cylinder(s.wheelRadius * 0.72, s.trackWidth + 0.06, steel, 8);
@@ -181,6 +210,18 @@ function buildHull(root: THREE.Group, id: ChassisId, paint: THREE.Material, trim
       root.add(wheel);
       wheels.push(wheel);
     }
+  }
+
+  // Every robot glares at whatever it's about to run over.
+  for (const side of [-1, 1]) {
+    const white = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), eyeWhite);
+    white.scale.set(1, 0.72, 0.5);
+    white.rotation.z = side * 0.4;
+    white.position.set(side * s.width * 0.24, baseY + s.height * 0.76, s.length / 2);
+    root.add(white);
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), dark);
+    pupil.position.set(side * s.width * 0.21, baseY + s.height * 0.74, s.length / 2 + 0.09);
+    root.add(pupil);
   }
 
   root.add(box(s.width, s.height, s.length, paint, 0, baseY + s.height / 2, 0));
@@ -586,11 +627,12 @@ export function buildRobot(build: RobotBuild): RobotModel {
   const trim = new THREE.MeshStandardMaterial({ color: paint.secondary, metalness: 0.5, roughness: 0.5, flatShading: true });
   const eye = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: paint.eye, emissiveIntensity: 2.5 });
   const wheels: THREE.Mesh[] = [];
-  const deckY = buildHull(root, build.chassis, hullMaterial, trim, wheels);
+  const deckY = buildHull(root, build.chassis, hullMaterial, trim, wheels, build.wheels ?? 'large4');
   const spec = HULLS[build.chassis];
 
   const turretPivot = new THREE.Group();
   turretPivot.position.y = deckY + 0.05;
+  turretPivot.scale.setScalar(TOWER_SCALE[build.tower ?? 'medium']);
   buildTurret(turretPivot, build.turret, headMaterial, eye);
   root.add(turretPivot);
 

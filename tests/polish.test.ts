@@ -15,10 +15,10 @@ describe('key bindings', () => {
     expect(new Set(Object.values(b)).size).toBe(Object.keys(b).length);
   });
 
-  it('defaults to WASD, with E, Q and R for weapons', () => {
+  it('defaults to WASD, with Space for the main weapon', () => {
     const b = DEFAULT_BINDINGS;
     expect([b.forward, b.left, b.back, b.right]).toEqual(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
-    expect([b.melee, b.turret, b.defense]).toEqual(['KeyE', 'KeyQ', 'KeyR']);
+    expect([b.melee, b.turret, b.defense, b.rear]).toEqual(['Space', 'KeyQ', 'KeyR', 'KeyE']);
     expect(b.power6).toBe('Digit6');
     expect(new Set(Object.values(b)).size).toBe(Object.keys(b).length);
   });
@@ -26,14 +26,14 @@ describe('key bindings', () => {
   it('refuses Ctrl, since Ctrl+W would close the tab mid-match', () => {
     const b = { ...DEFAULT_BINDINGS };
     expect(rebind(b, 'rear', 'ControlLeft')).toBe(false);
-    expect(b.rear).toBe('Space');
+    expect(b.rear).toBe('KeyE');
   });
 
   it('refuses keys reserved for pause and mute', () => {
     const b = { ...DEFAULT_BINDINGS };
     expect(rebind(b, 'melee', 'Escape')).toBe(false);
     expect(rebind(b, 'melee', 'KeyM')).toBe(false);
-    expect(b.melee).toBe('KeyE');
+    expect(b.melee).toBe('Space');
   });
 
   it('labels keys readably', () => {
@@ -60,45 +60,13 @@ describe('settings storage', () => {
     store.set(key, JSON.stringify({ quality: 'ultra', bindings: { melee: 'Escape', turret: 7 }, showFps: 'yes' }));
     const odd = loadSettings(storage);
     expect(odd.quality).toBe('auto');
-    expect(odd.bindings.melee).toBe('KeyE');
+    expect(odd.bindings.melee).toBe('Space');
     expect(odd.bindings.turret).toBe('KeyQ');
     expect(odd.showFps).toBe(false);
 
     store.set(key, '{nope');
     expect(loadSettings(storage).quality).toBe('auto');
     expect(loadSettings(null).quality).toBe('auto');
-  });
-
-  const oldDefaults = {
-    forward: 'ArrowUp', back: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', melee: 'KeyX', turret: 'KeyC', defense: 'KeyV',
-    power1: 'Digit1', power2: 'Digit2', power3: 'Digit3', power4: 'Digit4', power5: 'Digit5', power6: 'Digit6', rear: 'ControlLeft',
-  };
-  const saved = (value: unknown) => ({ getItem: () => JSON.stringify(value) });
-
-  it('moves old saves that never changed anything to the new defaults', () => {
-    const settings = loadSettings(saved({ bindings: oldDefaults, quality: 'high', tutorialDone: true }));
-    expect(settings.bindings).toEqual(DEFAULT_BINDINGS);
-    expect(settings.quality).toBe('auto');
-    expect(settings.tutorialDone).toBe(true);
-  });
-
-  it('keeps keys and quality the player chose', () => {
-    const settings = loadSettings(saved({ bindings: { ...oldDefaults, melee: 'KeyZ' }, quality: 'low' }));
-    expect(settings.bindings.melee).toBe('KeyZ');
-    expect(settings.bindings.forward).toBe('ArrowUp');
-    expect(settings.bindings.rear).toBe('Space');
-    expect(settings.quality).toBe('low');
-  });
-
-  it('keeps a choice of High or arrow keys made under the new defaults', () => {
-    const store = new Map<string, string>();
-    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
-    const settings = defaultSettings();
-    settings.quality = 'high';
-    settings.bindings = { ...settings.bindings, forward: 'ArrowUp' };
-    writeSettings(storage, settings);
-    expect(loadSettings(storage).quality).toBe('high');
-    expect(loadSettings(storage).bindings.forward).toBe('ArrowUp');
   });
 });
 

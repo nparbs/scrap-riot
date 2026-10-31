@@ -175,6 +175,15 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
         }
         return;
       }
+      case 'surrender':
+        if (session.room && session.player?.conn === session.conn) session.room.surrender(session.player);
+        return;
+      case 'draw':
+        if (session.room && session.player?.conn === session.conn) session.room.offerDraw(session.player, now);
+        return;
+      case 'chat':
+        if (session.room && session.player?.conn === session.conn && typeof message.id === 'number') session.room.chat(session.player, message.id, now);
+        return;
       case 'ping':
         if (typeof message.c === 'number') sendTo(session, { t: 'pong', c: message.c });
         return;

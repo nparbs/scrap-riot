@@ -36,7 +36,7 @@ const STEPS: Step[] = [
     done: (input) => input.turret,
   },
   {
-    prompt: (b) => `Get close and press ${k(b.melee)} for your front weapon`,
+    prompt: (b) => `Get close and press ${k(b.melee)} for your main weapon`,
     hold: 0.5,
     done: (input) => input.melee,
   },

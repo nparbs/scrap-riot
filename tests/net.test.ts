@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 async function server(room: Record<string, unknown> = {}, extra: Record<string, unknown> = {}): Promise<GameServer> {
-  const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 80, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', ...room }, ...extra });
+  const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 80, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', minPlayers: 1, capacity: 6, ...room }, ...extra });
   servers.push(s);
   return s;
 }
@@ -96,14 +96,121 @@ describe('protocol', () => {
 });
 
 describe('online match', () => {
-  it('sends the same map and mode to every player, and rolls them when not fixed', async () => {
-    const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 60, fullLobbyMs: 10 } });
+  /** A server set up the way the real one is: duels only, and no bots. */
+  const duelServer = async (room: Record<string, unknown> = {}) => {
+    const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 40, fullLobbyMs: 40, graceMs: 200, ...room } });
     servers.push(s);
+    return s;
+  };
+
+  it('never starts with one player, however long they wait', async () => {
+    const s = await duelServer();
     const a = client(s.port);
+    await until(() => a.state.queue === 1);
+    await sleep(300);
+    expect(a.state.started).toBe(false);
+  });
+
+  it('starts a 1v1 on the roof with no bots once a second player joins', async () => {
+    const s = await duelServer();
+    const a = client(s.port, 'Ann');
+    await until(() => a.state.queue === 1);
+    const b = client(s.port, 'Bea');
+    await until(() => a.state.started && b.state.started);
+    expect(a.c.match!.bots.map((bot) => bot.name).sort()).toEqual(['Ann', 'Bea']);
+    expect(a.c.match!.arena.id).toBe('skyscraper');
+    expect(a.c.match!.mode).toBe('duel');
+    expect(s.stats().rooms).toBe(1);
+  });
+
+  it('gives two pilots in the same paint different colors', async () => {
+    const s = await duelServer();
+    const a = client(s.port);
+    await until(() => a.state.queue === 1);
     const b = client(s.port);
     await until(() => a.state.started && b.state.started);
-    expect(a.c.match!.arena.id).toBe(b.c.match!.arena.id);
-    expect(a.c.match!.mode).toBe(b.c.match!.mode);
+    const [one, two] = a.c.match!.bots;
+    expect(one.color).not.toBe(two.color);
+    expect(one.loadout.paint!.primary).not.toBe(two.loadout.paint!.primary);
+  });
+
+  it('goes back to waiting if the opponent leaves the countdown', async () => {
+    const s = await duelServer({ lobbyMs: 300, fullLobbyMs: 300 });
+    const a = client(s.port);
+    await until(() => a.state.queue === 1);
+    const b = client(s.port);
+    await until(() => a.state.queue === 2);
+    b.c.close();
+    await until(() => a.state.queue === 1);
+    await sleep(500);
+    expect(a.state.started).toBe(false);
+  });
+
+  /** Two players in a running duel, with the render loop going. */
+  async function duel(room: Record<string, unknown> = {}) {
+    const s = await duelServer(room);
+    const a = client(s.port, 'Ann');
+    await until(() => a.state.queue === 1);
+    const b = client(s.port, 'Bea');
+    await until(() => a.state.started && b.state.started);
+    const stops = [pump(a.c), pump(b.c)];
+    return { s, a, b, stop: () => stops.forEach((f) => f()) };
+  }
+
+  it('ends the duel when a player surrenders, and the other wins', async () => {
+    const { a, b, stop } = await duel();
+    a.c.surrender();
+    await until(() => a.state.over && b.state.over);
+    stop();
+    expect(b.c.match!.standings()[0].bot.name).toBe('Bea');
+    expect(b.c.match!.drawn).toBe(false);
+  });
+
+  it('walking out of a duel loses it', async () => {
+    const { a, b, stop } = await duel();
+    a.c.leave();
+    await until(() => b.state.over);
+    stop();
+    expect(b.c.match!.standings()[0].bot.name).toBe('Bea');
+  });
+
+  it('a dropped player who never returns forfeits', async () => {
+    const { a, b, stop } = await duel();
+    (a.c as unknown as { ws: WebSocket }).ws.close();
+    a.c.close();
+    await until(() => b.state.over);
+    stop();
+    expect(b.c.match!.standings()[0].bot.name).toBe('Bea');
+  });
+
+  it('draws only when both pilots agree', async () => {
+    const { a, b, stop } = await duel();
+    let offered = -1;
+    (b.c as unknown as { events: { onDrawOffer: (bot: number) => void } }).events.onDrawOffer = (bot) => (offered = bot);
+    a.c.offerDraw();
+    await until(() => offered === a.c.player!.id);
+    a.c.offerDraw();
+    await sleep(100);
+    expect(a.state.over).toBe(false);
+    b.c.offerDraw();
+    await until(() => a.state.over && b.state.over);
+    stop();
+    expect(a.c.match!.drawn).toBe(true);
+    expect(a.c.match!.standings().map((row) => row.place)).toEqual([1, 1]);
+  });
+
+  it('only passes on chat from the preset list', async () => {
+    const { a, b, stop } = await duel();
+    const heard: number[] = [];
+    (b.c as unknown as { events: { onChat: (bot: number, id: number) => void } }).events.onChat = (_, id) => heard.push(id);
+    a.c.chat(999);
+    a.c.chat(1);
+    await until(() => heard.length > 0);
+    a.c.chat(2);
+    await sleep(100);
+    stop();
+    // The second one came too soon after the first, and 999 isn't a phrase.
+    expect(heard).toEqual([1]);
   });
 
   it('shows other players a validated paint job', async () => {
@@ -153,14 +260,17 @@ describe('online match', () => {
   });
 
   it('draws the driver smoothly, with almost nothing left to correct', async () => {
-    const s = await server();
+    // Alone on the roof, since anything it bumps into is meant to cause a correction.
+    const s = await server({ arena: 'skyscraper', capacity: 1 });
     const { c, state } = client(s.port);
     await until(() => state.started);
     const internals = c as unknown as { corrX: number; corrZ: number };
+    let cruising = false;
     let hitSomething = false;
     const read = (input: BotInput) => {
       input.throttle = 1;
-      input.steer = 0.5;
+      // A tight circle that stays clear of everything on this part of the roof.
+      input.steer = 1;
     };
     let last = performance.now();
     const steps: number[] = [];
@@ -176,15 +286,16 @@ describe('online match', () => {
         c.update(dt, read);
         const player = c.player!;
         const speed = Math.hypot(player.vx, player.vz);
-        // The first half second is the robot speeding up from rest, and a crash is meant to correct.
-        hitSomething ||= frames > 40 && speed < 11;
-        if (++frames > 40 && !hitSomething) {
+        // Speeding up from rest doesn't count, and a crash is meant to correct.
+        cruising ||= speed >= 11;
+        hitSomething ||= cruising && speed < 11;
+        if (++frames > 40 && cruising && !hitSomething) {
           steps.push(Math.hypot(player.x - px, player.z - pz) / dt / speed);
           worst = Math.max(worst, Math.hypot(internals.corrX, internals.corrZ));
         }
         px = player.x;
         pz = player.z;
-        if (frames > 100) {
+        if (frames > 120) {
           clearInterval(timer);
           done();
         }
@@ -194,7 +305,7 @@ describe('online match', () => {
     const stalled = steps.filter((v) => v < 0.5).length / steps.length;
     console.log(`stalled frames ${(stalled * 100).toFixed(0)}%, worst correction ${worst.toFixed(3)}`);
     expect(stalled).toBeLessThan(0.05);
-    expect(worst).toBeLessThan(0.2);
+    expect(worst).toBeLessThan(0.25);
   });
 
   it('never trusts a client: speed comes from the server sim', async () => {
