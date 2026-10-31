@@ -34,7 +34,7 @@ The current tuning comes from AI-versus-AI data and has not had a human playtest
 - [ ] First-match tutorial prompts
 - [ ] Hit feedback: damage direction, wreck debris, better weapon sounds
 - [ ] Rebindable keys and gamepad support
-- [ ] Publish a public build (GitHub Pages requires the repo to be public, or a paid plan)
+- [x] Publish a public build on GitHub Pages
 
 ## v0.3: More to fight with
 
