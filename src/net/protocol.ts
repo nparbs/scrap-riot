@@ -15,8 +15,9 @@ import {
   type PowerupId,
 } from '../sim/data';
 import type { BotSetup, GameEvent, Loadout } from '../sim/match';
+import type { Save } from '../game/progress';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const MAX_PLAYERS = 6;
 export const NAME_MAX = 16;
 export const DEFAULT_NAME = 'Pilot';
@@ -31,7 +32,7 @@ const FLAG_TURRET = 2;
 const FLAG_DEFENSE = 4;
 
 export type ClientMessage =
-  | { t: 'join'; v: number; name: string; loadout: Loadout }
+  | { t: 'join'; v: number; name: string; loadout: Loadout; session?: string }
   | { t: 'resume'; v: number; token: string }
   | { t: 'input'; s: number; th: number; st: number; f: number; p: number }
   | { t: 'ping'; c: number }
@@ -64,7 +65,7 @@ export interface SnapshotMessage {
   events: GameEvent[];
 }
 
-export type ErrorCode = 'outdated' | 'expired' | 'full' | 'bad-request';
+export type ErrorCode = 'outdated' | 'expired' | 'full' | 'bad-request' | 'sign-in' | 'in-match';
 
 export type ServerMessage =
   | { t: 'queue'; players: number; capacity: number; startsIn: number; arena: ArenaId; mode: ModeId }
@@ -129,4 +130,42 @@ export function onlineLoadout(raw: unknown): Loadout {
     upgrades: { armor: 0, engine: 0, weapons: 0 },
     paint: sanitizePaint(r.paint),
   };
+}
+
+// --- Accounts ---
+
+export interface Profile {
+  save: Save;
+  rating: number;
+  kills: number;
+  deaths: number;
+  signedIn: boolean;
+}
+
+export type GarageAction =
+  | { type: 'equip'; slot: string; id: string }
+  | { type: 'powerup'; id: string }
+  | { type: 'upgrade'; id: string }
+  | { type: 'paint'; paint: Partial<Paint> }
+  | { type: 'practice'; arena?: ArenaId; mode?: ModeId }
+  | { type: 'name'; name: string };
+
+export interface HistoryEntry {
+  arena: ArenaId;
+  mode: ModeId;
+  place: number;
+  kills: number;
+  deaths: number;
+  damage: number;
+  payout: number;
+  ratingChange: number;
+  endedAt: string;
+}
+
+export interface LeaderboardEntry {
+  name: string;
+  rating: number;
+  wins: number;
+  matches: number;
+  kills: number;
 }

@@ -1,6 +1,6 @@
 import { CATALOG, upgradeCost, type Save, type Slot } from '../game/progress';
 import { ACTIONS, keyLabel, QUALITY, type Action, type Bindings, type Quality, type Settings } from '../game/settings';
-import { NAME_MAX } from '../net/protocol';
+import { NAME_MAX, type HistoryEntry, type LeaderboardEntry, type Profile } from '../net/protocol';
 import { ARENA_ORDER, ARENAS, type ArenaId } from '../sim/arena';
 import {
   DEFAULT_PAINT,
@@ -67,14 +67,14 @@ export function pauseScreen(online: boolean, onResume: () => void, onQuit: () =>
   return el;
 }
 
-export function lobbyScreen(onCancel: () => void): { el: HTMLElement; update: (players: number, capacity: number, startsIn: number, arena: ArenaId, mode: ModeId) => void } {
+export function lobbyScreen(onCancel: () => void, hasAccount: boolean): { el: HTMLElement; update: (players: number, capacity: number, startsIn: number, arena: ArenaId, mode: ModeId) => void } {
   const el = document.createElement('div');
   el.className = 'screen screen-pause';
   el.innerHTML = `
     <div class="menu-card">
       <h2>Finding a match</h2>
       <p class="tagline" data-status>Connecting to the server&hellip;</p>
-      <p class="tagline">Online, everyone fights with equal stats and one of each powerup. Your garage upgrades apply in practice matches. Bots fill any empty slots.</p>
+      <p class="tagline">${hasAccount ? 'Your gear and upgrades count here, and you keep what you earn. Bots fill any empty slots and match your level.' : 'Online, everyone fights with equal stats and one of each powerup. Your garage upgrades apply in practice matches. Bots fill any empty slots.'}</p>
       <button class="btn" data-cancel>Cancel</button>
     </div>`;
   el.querySelector('[data-cancel]')!.addEventListener('click', onCancel);
@@ -98,13 +98,15 @@ export interface GarageActions {
   onTab: (tab: GarageTab) => void;
   onPaint: (change: Partial<Paint>) => void;
   onPractice: (change: { arena?: ArenaId; mode?: ModeId }) => void;
+  onSignOut: () => void;
+  onDelete: () => void;
 }
 
-export type GarageTab = 'chassis' | 'melee' | 'turret' | 'defense' | 'powerups' | 'upgrades' | 'paint' | 'maps';
+export type GarageTab = 'chassis' | 'melee' | 'turret' | 'defense' | 'powerups' | 'upgrades' | 'paint' | 'maps' | 'profile';
 
 const TAB_LABELS: Record<GarageTab, string> = {
   chassis: 'Chassis', melee: 'Front', turret: 'Turret', defense: 'Defense',
-  powerups: 'Powerups', upgrades: 'Upgrades', paint: 'Paint', maps: 'Maps',
+  powerups: 'Powerups', upgrades: 'Upgrades', paint: 'Paint', maps: 'Maps', profile: 'Profile',
 };
 
 export interface GarageOptions {
@@ -113,6 +115,63 @@ export interface GarageOptions {
   notice: string;
   keys: Bindings;
   tab: GarageTab;
+  /** Absent when progress is only saved on this device. */
+  account: {
+    profile: Profile;
+    history: HistoryEntry[];
+    leaderboard: LeaderboardEntry[];
+    googleAvailable: boolean;
+    confirmDelete: boolean;
+  } | null;
+}
+
+function ordinal(place: number): string {
+  return ['1st', '2nd', '3rd'][place - 1] ?? `${place}th`;
+}
+
+function profilePanel(account: GarageOptions['account']): string {
+  if (!account) {
+    return `<section><h3>Profile</h3><p class="settings-hint">Your progress is saved on this device. Connect to a game server to keep a profile, match history and rating.</p></section>`;
+  }
+  const { profile, history, leaderboard, googleAvailable, confirmDelete } = account;
+  const { save, rating, kills, deaths, signedIn } = profile;
+  const signIn = signedIn
+    ? '<p class="settings-hint">Signed in with Google. Your progress follows you to any browser.</p><button class="mini-btn" data-signout>Sign out</button>'
+    : `<p class="settings-hint">Playing as a guest, so your progress lives in this browser and is removed after 60 days without play. Sign in to keep it and play anywhere.</p>${googleAvailable ? '<div class="google-slot" data-google></div>' : ''}`;
+  const historyRows = history
+    .map((h) => {
+      const change = `${h.ratingChange > 0 ? '+' : ''}${h.ratingChange}`;
+      return `<tr><td>${new Date(h.endedAt).toLocaleDateString()}</td><td>${escapeText(ARENAS[h.arena]?.name ?? h.arena)}</td><td>${escapeText(MODES[h.mode]?.name ?? h.mode)}</td><td>${ordinal(h.place)}</td><td>${h.kills}/${h.deaths}</td><td>$${h.payout}</td><td>${change}</td></tr>`;
+    })
+    .join('');
+  const boardRows = leaderboard
+    .map((row, i) => `<tr><td>${i + 1}</td><td>${escapeText(row.name)}</td><td>${row.rating}</td><td>${row.wins}</td><td>${row.matches}</td><td>${row.kills}</td></tr>`)
+    .join('');
+  return `
+    <section><h3>Account</h3>${signIn}</section>
+    <section><h3>Career</h3>
+      <div class="stat-row">
+        <div><b>${rating}</b><span>Rating</span></div>
+        <div><b>${save.matches}</b><span>Matches</span></div>
+        <div><b>${save.wins}</b><span>Wins</span></div>
+        <div><b>${kills}</b><span>Kills</span></div>
+        <div><b>${deaths}</b><span>Deaths</span></div>
+      </div>
+    </section>
+    <section><h3>Recent online matches</h3>${
+      historyRows
+        ? `<table class="results"><thead><tr><th>Date</th><th>Map</th><th>Mode</th><th>Place</th><th>K/D</th><th>Payout</th><th>Rating</th></tr></thead><tbody>${historyRows}</tbody></table>`
+        : '<p class="settings-hint">No online matches yet.</p>'
+    }</section>
+    <section><h3>Leaderboard</h3>${
+      boardRows
+        ? `<table class="results board-table"><thead><tr><th>#</th><th>Pilot</th><th>Rating</th><th>Wins</th><th>Matches</th><th>Kills</th></tr></thead><tbody>${boardRows}</tbody></table>`
+        : '<p class="settings-hint">Nobody has played an online match yet.</p>'
+    }</section>
+    <section><h3>Your data</h3>
+      <p class="settings-hint">We store your chosen name, progress and match history. If you sign in with Google, we also store an ID from Google, but not your email or real name. Other players can see your name, paint, rating and stats.</p>
+      <button class="mini-btn${confirmDelete ? ' mini-danger' : ''}" data-delete>${confirmDelete ? 'Click again to permanently delete' : 'Delete my account'}</button>
+    </section>`;
 }
 
 function slotTitle(slot: Slot, keys: Bindings): string {
@@ -210,6 +269,8 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
         return paintShop;
       case 'maps':
         return `<section><h3>Practice map</h3><div class="cards">${maps}</div></section><section><h3>Practice mode</h3><div class="cards">${modes}</div></section><p class="settings-hint">Online matches pick their own map and mode.</p>`;
+      case 'profile':
+        return profilePanel(options.account);
       default:
         return section(options.tab);
     }
@@ -254,11 +315,13 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     else if ('fight' in target.dataset) actions.onFight();
     else if ('online' in target.dataset) actions.onOnline();
     else if ('settings' in target.dataset) actions.onSettings();
+    else if ('signout' in target.dataset) actions.onSignOut();
+    else if ('delete' in target.dataset) actions.onDelete();
   });
   return el;
 }
 
-export function resultsScreen(standings: Standing[], playerId: number, onContinue: () => void): HTMLElement {
+export function resultsScreen(standings: Standing[], playerId: number, onContinue: () => void, note = ''): HTMLElement {
   const mine = standings.find((s) => s.bot.id === playerId)!;
   const el = document.createElement('div');
   el.className = 'screen screen-results';
@@ -271,7 +334,7 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
   el.innerHTML = `
     <div class="menu-card results-card">
       <h2>${headline}</h2>
-      <p class="payout">You earned <b>$${mine.total}</b> <small>($${Math.round(mine.bot.earned)} in battle + $${mine.bonus} for place ${mine.place})</small></p>
+      ${note ? `<p class="payout"><small>${escapeText(note)}</small></p>` : `<p class="payout">You earned <b>$${mine.total}</b> <small>($${Math.round(mine.bot.earned)} in battle + $${mine.bonus} for place ${mine.place})</small></p>`}
       <table class="results">
         <thead><tr><th>#</th><th>Robot</th><th>Kills</th><th>Deaths</th><th>Damage</th><th>Payout</th></tr></thead>
         <tbody>${rows}</tbody>

@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { makeRivals, randomArena } from '../src/game/progress';
+import { makeRivals, randomArena, type Save } from '../src/game/progress';
 import { MAX_PLAYERS, onlineLoadout, sanitizeName, SNAPSHOT_STEPS, unpackFlags, type ServerMessage, type StartMessage } from '../src/net/protocol';
 import { encodeSnapshot } from '../src/net/snapshot';
 import type { ArenaId } from '../src/sim/arena';
-import { MODES, POWERUP_ORDER, type ModeId } from '../src/sim/data';
-import { Match, STEP, type BotSetup } from '../src/sim/match';
+import { MODES, POWERUP_ORDER, type ModeId, type UpgradeId } from '../src/sim/data';
+import { Match, STEP, type BotSetup, type Loadout } from '../src/sim/match';
 import { makeRng } from '../src/sim/rng';
+
+import type { MatchResult } from './accounts';
 
 export interface Conn {
   send(data: string): void;
@@ -43,7 +45,9 @@ export interface Player {
   token: string;
   conn: Conn | null;
   name: string;
-  loadout: ReturnType<typeof onlineLoadout>;
+  loadout: Loadout;
+  /** Absent when the server runs without accounts. */
+  accountId?: string;
   botId: number;
   ack: number;
   left: boolean;
@@ -66,7 +70,7 @@ export class Room {
   private queueSentAt = 0;
   private emptySince: number | null = null;
 
-  constructor(private readonly options: RoomOptions, now: number) {
+  constructor(private readonly options: RoomOptions, now: number, private readonly onResults?: (result: MatchResult) => Promise<void>) {
     this.startAt = now + options.lobbyMs;
     const rng = makeRng(this.seed);
     this.arena = options.arena ?? randomArena(rng);
@@ -86,12 +90,14 @@ export class Room {
     return n;
   }
 
-  join(conn: Conn, rawName: unknown, rawLoadout: unknown, now: number): Player {
+  /** With an account the gear comes from the database, and without one nothing purchased counts. */
+  join(conn: Conn, rawName: unknown, rawLoadout: unknown, now: number, account?: { accountId: string; save: Save }): Player {
     const player: Player = {
       token: randomUUID(),
       conn,
-      name: sanitizeName(rawName),
-      loadout: onlineLoadout(rawLoadout),
+      name: account ? account.save.name : sanitizeName(rawName),
+      loadout: account ? account.save.loadout : onlineLoadout(rawLoadout),
+      accountId: account?.accountId,
       botId: -1,
       ack: 0,
       left: false,
@@ -177,7 +183,10 @@ export class Room {
       player.botId = i;
       return { name: player.name, color: player.loadout.paint?.primary ?? HUMAN_COLORS[i], loadout: player.loadout, isAI: false };
     });
-    const rivals = makeRivals(null, MAX_PLAYERS - humans.length, this.seed).map((rival) => ({
+    // Bots match the average human, so upgrades don't make a match trivial.
+    const average = (key: UpgradeId) => Math.round(humans.reduce((sum, p) => sum + p.loadout.upgrades[key], 0) / Math.max(1, humans.length));
+    const progress = { wins: 0, loadout: { upgrades: { armor: average('armor'), engine: average('engine'), weapons: average('weapons') } } };
+    const rivals = makeRivals(progress, MAX_PLAYERS - humans.length, this.seed).map((rival) => ({
       ...rival,
       name: `${rival.name} [bot]`,
     }));
@@ -240,7 +249,31 @@ export class Room {
 
   private finish(): void {
     this.broadcastSnapshot();
-    this.broadcast({ t: 'over' });
     this.finished = true;
+    // "Over" waits for the database, so a client fetching its balance next sees the payout.
+    const announce = () => this.broadcast({ t: 'over' });
+    if (!this.onResults) return announce();
+    this.onResults(this.results()).catch((error: Error) => console.error('Could not record match:', error.message)).finally(announce);
+  }
+
+  /** Payouts are worked out here from the server's own sim. Clients never report results. */
+  private results(): MatchResult {
+    const match = this.match!;
+    const standings = match.standings();
+    const players = [...this.players.values()]
+      .filter((p) => p.accountId && !p.left)
+      .map((p) => {
+        const row = standings.find((s) => s.bot.id === p.botId)!;
+        return {
+          accountId: p.accountId!,
+          place: row.place,
+          kills: row.bot.kills,
+          deaths: row.bot.deaths,
+          damage: row.bot.damageDealt,
+          payout: row.total,
+          powerupsLeft: row.bot.powerups,
+        };
+      });
+    return { id: this.id, arena: this.arena, mode: this.mode, duration: match.time, players };
   }
 }

@@ -63,10 +63,10 @@ The original was built around online play, so this was moved to the front of the
 - [x] Authoritative WebSocket server running the shared sim
 - [x] Quick-play matchmaking, with bots filling empty slots
 - [x] Reconnects: a bot drives your robot until you return
-- [x] Input validation, rate and connection limits, Docker packaging, hosting guide
+- [x] Input validation, rate and connection limits, Docker packaging, hosting guide, privacy notes
 - [ ] Host the server and test with real players over the internet
-- [ ] Server-side accounts and progress, since browser saves can be edited (until then, online matches ignore purchased stats)
-- [ ] Match history and leaderboards
+- [x] Accounts: Google sign-in or guest, with progress owned by the server
+- [x] Match history, rating and leaderboard
 - [ ] Moderation for player names
 
 ## v1.0: Release

@@ -5,12 +5,14 @@ import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, 
 import { DEFAULT_BINDINGS, loadSettings, QUALITY, rebind, writeSettings, type Action } from './game/settings';
 import { Tutorial } from './game/tutorial';
 import { Keyboard } from './input';
+import { Api, ApiError } from './net/api';
 import { NetClient, type NetFailure } from './net/client';
-import { sanitizeName } from './net/protocol';
+import { sanitizeName, type GarageAction, type HistoryEntry, type LeaderboardEntry, type Profile } from './net/protocol';
 import { GarageView } from './render/garageView';
 import { MatchView } from './render/matchView';
 import { DEFAULT_PAINT } from './sim/data';
 import { emptyInput, Match, STEP, type Bot, type BotSetup, type GameEvent } from './sim/match';
+import { renderGoogleButton } from './ui/google';
 import { Hud } from './ui/hud';
 import { garageScreen, lobbyScreen, menuScreen, pauseScreen, resultsScreen, settingsScreen, type GarageTab } from './ui/screens';
 
@@ -26,6 +28,8 @@ const FAILURE_TEXT: Record<NetFailure, string> = {
   full: 'The game server is full right now. Please try again shortly.',
   outdated: 'This page is out of date. Refresh to get the latest version.',
   'bad-request': 'The server rejected that request. Refreshing may help.',
+  'sign-in': 'Your session has expired. Refresh the page to sign back in.',
+  'in-match': 'This account is already in a match, possibly in another tab.',
 };
 
 function safeStorage(): Storage | null {
@@ -41,7 +45,15 @@ class Game {
   private readonly ui = document.getElementById('ui')!;
   private readonly renderer = new THREE.WebGLRenderer({ antialias: true });
   private readonly storage = safeStorage();
-  private readonly save: Save = loadSave(this.storage);
+  private save: Save = loadSave(this.storage);
+  /** The server's copy of this player, when connected. It then replaces the local save. */
+  private profile: Profile | null = null;
+  private readonly api: Api | null = SERVER_URL ? new Api(SERVER_URL, this.storage) : null;
+  private connecting = false;
+  private googleClientId: string | null = null;
+  private history: HistoryEntry[] = [];
+  private leaderboard: LeaderboardEntry[] = [];
+  private confirmDelete = false;
   private readonly settings = loadSettings(this.storage);
   private readonly view = new MatchView();
   private readonly garage = new GarageView();
@@ -227,6 +239,58 @@ class Game {
     this.hud = null;
     this.sfx.setLoops(-1, false);
     this.refreshGarage();
+    void this.connectAccount();
+  }
+
+  private setProfile(profile: Profile): void {
+    this.profile = profile;
+    this.save = profile.save;
+  }
+
+  /** Signs in as this browser's account, creating a guest for a new visitor. */
+  private async connectAccount(): Promise<void> {
+    if (!this.api || this.profile || this.connecting) return;
+    this.connecting = true;
+    try {
+      this.setProfile(await this.api.start());
+      this.googleClientId = await this.api.googleClientId();
+      if (this.mode === 'garage') this.refreshGarage();
+    } catch (error) {
+      // A 404 means a server without accounts. Anything else means it can't be reached right now.
+      if (!(error instanceof ApiError && error.status === 404) && this.mode === 'garage') {
+        this.notice = "Couldn't reach the game server, so your progress is being saved on this device only.";
+        this.refreshGarage();
+      }
+    } finally {
+      this.connecting = false;
+    }
+  }
+
+  private async loadProfileTab(): Promise<void> {
+    if (!this.api || !this.profile) return;
+    try {
+      [this.history, this.leaderboard] = await Promise.all([this.api.history(), this.api.leaderboard()]);
+      if (this.mode === 'garage' && this.garageTab === 'profile') this.refreshGarage();
+    } catch {
+      // The tab still shows the player's own stats without these.
+    }
+  }
+
+  /** Runs an account action, then shows the new state. */
+  private accountAction(run: () => Promise<Profile>, failure: string): void {
+    run()
+      .then((profile) => {
+        this.setProfile(profile);
+        this.history = [];
+        this.confirmDelete = false;
+        this.refreshGarage();
+        void this.loadProfileTab();
+      })
+      .catch(() => {
+        this.sfx.deny();
+        this.notice = failure;
+        this.refreshGarage();
+      });
   }
 
   private refreshGarage(): void {
@@ -244,15 +308,30 @@ class Game {
         this.sfx.deny();
       }
     };
+    /** With an account the server decides, and the browser only shows the outcome. */
+    const change = (action: GarageAction, local: () => boolean) => {
+      if (!this.api || !this.profile) {
+        buy(local());
+        return;
+      }
+      this.api
+        .garage(action)
+        .then((profile) => {
+          this.setProfile(profile);
+          this.sfx.click();
+          this.refreshGarage();
+        })
+        .catch(() => this.sfx.deny());
+    };
     const notice = this.notice;
     this.notice = '';
     this.setScreen(
       garageScreen(
         this.save,
         {
-          onEquip: (slot: Slot, id: string) => buy(buyOrEquip(this.save, slot, id)),
-          onPowerup: (id) => buy(buyPowerup(this.save, id)),
-          onUpgrade: (id) => buy(buyUpgrade(this.save, id)),
+          onEquip: (slot: Slot, id: string) => change({ type: 'equip', slot, id }, () => buyOrEquip(this.save, slot, id)),
+          onPowerup: (id) => change({ type: 'powerup', id }, () => buyPowerup(this.save, id)),
+          onUpgrade: (id) => change({ type: 'upgrade', id }, () => buyUpgrade(this.save, id)),
           onFight: () => this.startMatch(),
           onOnline: () => this.startOnline(),
           onSettings: () => this.openSettings(() => this.refreshGarage()),
@@ -261,25 +340,63 @@ class Game {
             this.sfx.click();
             this.refreshGarage();
             this.ui.querySelector('.garage-panel')!.scrollTop = 0;
+            if (tab === 'profile') void this.loadProfileTab();
           },
-          onPaint: (change) => {
-            this.save.loadout.paint = { ...(this.save.loadout.paint ?? DEFAULT_PAINT), ...change };
-            buy(true);
-          },
-          onPractice: (change) => {
-            Object.assign(this.save.practice, change);
-            buy(true);
-          },
-          onName: (name) => {
-            this.save.name = sanitizeName(name);
-            writeSave(this.storage, this.save);
+          onPaint: (paint) =>
+            change({ type: 'paint', paint }, () => {
+              this.save.loadout.paint = { ...(this.save.loadout.paint ?? DEFAULT_PAINT), ...paint };
+              return true;
+            }),
+          onPractice: (practice) =>
+            change({ type: 'practice', ...practice }, () => {
+              Object.assign(this.save.practice, practice);
+              return true;
+            }),
+          onName: (name) =>
+            change({ type: 'name', name }, () => {
+              this.save.name = sanitizeName(name);
+              return true;
+            }),
+          onSignOut: () => this.accountAction(() => this.api!.signOut(), "Couldn't sign out. Please try again."),
+          onDelete: () => {
+            if (!this.confirmDelete) {
+              this.confirmDelete = true;
+              this.sfx.deny();
+              this.refreshGarage();
+              return;
+            }
+            this.accountAction(() => this.api!.deleteAccount(), "Couldn't delete the account. Please try again.");
           },
         },
-        { onlineAvailable: SERVER_URL !== '', notice, keys: this.settings.bindings, tab: this.garageTab },
+        {
+          onlineAvailable: SERVER_URL !== '',
+          notice,
+          keys: this.settings.bindings,
+          tab: this.garageTab,
+          account: this.profile && {
+            profile: this.profile,
+            history: this.history,
+            leaderboard: this.leaderboard,
+            googleAvailable: this.googleClientId !== null,
+            confirmDelete: this.confirmDelete,
+          },
+        },
       ),
     );
     const next = this.ui.querySelector('.garage-panel');
     if (next) next.scrollTop = scroll;
+    this.mountGoogleButton();
+  }
+
+  private mountGoogleButton(): void {
+    const slot = this.ui.querySelector<HTMLElement>('[data-google]');
+    const { api, googleClientId } = this;
+    if (!slot || !api || !googleClientId) return;
+    renderGoogleButton(slot, googleClientId, (credential) => {
+      this.accountAction(() => api.signInWithGoogle(credential), 'Google sign-in failed. Please try again.');
+    }).catch(() => {
+      slot.textContent = "Couldn't load Google sign-in. A browser extension may be blocking it.";
+    });
   }
 
   private startMatch(): void {
@@ -301,10 +418,10 @@ class Game {
   private startOnline(): void {
     this.sfx.click();
     this.mode = 'lobby';
-    const lobby = lobbyScreen(() => this.showGarage());
+    const lobby = lobbyScreen(() => this.showGarage(), this.profile !== null);
     this.setScreen(lobby.el);
     const { name, loadout } = this.save;
-    this.net = new NetClient(SERVER_URL, { name, loadout }, {
+    this.net = new NetClient(SERVER_URL, { name, loadout, session: this.api?.token ?? undefined }, {
       onQueue: lobby.update,
       onStart: (match, player) => {
         this.match = match;
@@ -357,11 +474,20 @@ class Game {
     this.sfx.setLoops(-1, false);
     const standings = match.standings();
     const mine = standings.find((s) => s.bot === player)!;
-    // Online robots get free powerups, so the ones in the garage are left untouched.
-    applyResult(this.save, mine.total, mine.place, this.net ? this.save.loadout.powerups : player.powerups);
-    writeSave(this.storage, this.save);
+    const online = this.net !== null;
     this.net = null;
-    this.setScreen(resultsScreen(standings, player.id, () => this.showGarage()));
+    let note = '';
+    if (this.profile) {
+      // The server already banked an online match. A practice match runs in this browser, so
+      // nothing it reports can be trusted with real money.
+      if (online) this.api?.me().then((profile) => this.setProfile(profile)).catch(() => {});
+      else note = 'Practice match, so no payout. Fight online to earn money and rating.';
+    } else {
+      // Online robots get free powerups, so the ones in the garage are left untouched.
+      applyResult(this.save, mine.total, mine.place, online ? this.save.loadout.powerups : player.powerups);
+      writeSave(this.storage, this.save);
+    }
+    this.setScreen(resultsScreen(standings, player.id, () => this.showGarage(), note));
   }
 
   private onMatchEvent(event: GameEvent): void {

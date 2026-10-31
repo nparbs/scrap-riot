@@ -8,8 +8,8 @@ await build({
   platform: 'node',
   target: 'node22',
   format: 'esm',
-  // ws loads these optional native speedups only if present.
-  external: ['bufferutil', 'utf-8-validate'],
+  // ws and pg load these optional native speedups only if present.
+  external: ['bufferutil', 'utf-8-validate', 'pg-native'],
   // ws is CommonJS and calls require(), which ES modules do not have by default.
   banner: { js: "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);" },
 });

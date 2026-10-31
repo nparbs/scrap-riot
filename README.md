@@ -33,9 +33,11 @@ A match ends after 2:30 or when a robot reaches 12 kills. Damage, kills and scra
 
 ## Online play
 
-Choose **Fight online** in the garage to join a match of up to six players, with bots filling empty slots. Everyone fights with equal stats and one of each powerup, and only your choice of gear carries over from the garage. If your connection drops, a bot drives your robot until you reconnect.
+Choose **Fight online** in the garage to join a match of up to six players, with bots filling empty slots and matching your level. If your connection drops, a bot drives your robot until you reconnect.
 
-The server is authoritative: it runs the same simulation as the game, and clients send only their controls. To run your own server, see [docs/hosting.md](docs/hosting.md). For local development, run `npm run server` alongside `npm run dev`.
+Play as a guest or sign in with Google to keep your progress across browsers. The Profile tab shows your rating, match history and the leaderboard. See [what is stored](docs/privacy.md).
+
+The server is authoritative: it runs the same simulation as the game, and clients send only their controls. Money, purchases and match results are all decided on the server. To run your own server, see [docs/hosting.md](docs/hosting.md). For local development, run `npm run server:dev` alongside `npm run dev`, which uses an in-memory database.
 
 ## What's in the game
 
@@ -70,7 +72,7 @@ npm run balance     # plays 200 AI matches and reports pacing and win rates per 
 | `src/render/` | three.js scenes and effects. Reads the sim, never writes to it. |
 | `src/ui/` | HUD and menu screens (plain DOM). |
 | `src/net/` | Protocol and snapshot format shared with the server, plus the browser's network client. |
-| `server/` | Authoritative game server: rooms, matchmaking, validation. |
+| `server/` | Authoritative game server: rooms, matchmaking, accounts, REST API. |
 | `scripts/balance.ts` | Headless balance report. |
 
 The sim runs at a fixed 60 Hz, uses only its own seeded random number generator, and takes the same input structure from the keyboard and the AI. A seed plus inputs therefore replays a match exactly, which is what online multiplayer will build on.

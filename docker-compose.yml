@@ -6,6 +6,11 @@ services:
     environment:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?set ALLOWED_ORIGINS in .env}
       CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-}
+      DATABASE_URL: postgres://scrapriot:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/scrapriot
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    depends_on:
+      db:
+        condition: service_healthy
     # No published ports: only the proxy below can reach it, so its client IP header can be trusted.
     expose:
       - "8787"
@@ -16,6 +21,23 @@ services:
       - no-new-privileges:true
     mem_limit: 512m
     pids_limit: 128
+
+  # Player accounts. It has no published port, so only the game server can reach it.
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scrapriot
+      POSTGRES_DB: scrapriot
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scrapriot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    mem_limit: 512m
 
   # Option 1: Cloudflare Tunnel. Needs no open router ports and hides your home IP.
   tunnel:
@@ -46,3 +68,4 @@ services:
 
 volumes:
   caddy_data:
+  db_data:

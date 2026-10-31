@@ -3,6 +3,8 @@ import type { AddressInfo } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
 import { PROTOCOL_VERSION, type ClientMessage, type ErrorCode, type ServerMessage } from '../src/net/protocol';
 import { STEP } from '../src/sim/match';
+import type { Accounts } from './accounts';
+import { createApi } from './api';
 import { DEFAULT_ROOM_OPTIONS, Room, type Conn, type Player, type RoomOptions } from './room';
 
 export interface GameServerOptions {
@@ -18,6 +20,10 @@ export interface GameServerOptions {
   maxRooms?: number;
   maxConnectionsPerIp?: number;
   room?: Partial<RoomOptions>;
+  /** Turns on the API and server-owned progress. Without it, online play is anonymous. */
+  accounts?: Accounts;
+  /** Shown to the client so it can offer Google sign-in. */
+  googleClientId?: string;
 }
 
 export interface GameServer {
@@ -30,12 +36,15 @@ const MAX_MESSAGE_BYTES = 2048;
 /** Input at 30 Hz plus pings. Anything far above this is not a real client. */
 const MAX_MESSAGES_PER_SECOND = 120;
 const HEARTBEAT_MS = 15_000;
+const CLEANUP_MS = 60 * 60 * 1000;
 
 interface Session {
   socket: WebSocket;
   conn: Conn;
   room: Room | null;
   player: Player | null;
+  /** Set while the database looks up this player's account. */
+  joining: boolean;
   alive: boolean;
   windowStart: number;
   windowCount: number;
@@ -56,11 +65,22 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
   const tokens = new Map<string, { room: Room; player: Player }>();
   const perIp = new Map<string, number>();
   const sessions = new Set<Session>();
+  const { accounts } = options;
+  /** Which player each account is, so one account can't enter a match twice. */
+  const accountPlayers = new Map<string, { room: Room; player: Player }>();
+  const addressOf = (req: IncomingMessage) => clientAddress(req, options.clientIpHeader);
+  const api = accounts
+    ? createApi({ accounts, allowedOrigins: allowed, googleClientId: options.googleClientId ?? null, clientAddress: addressOf })
+    : null;
 
   const http: Server = createServer((req, res) => {
     if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, rooms: rooms.size, connections: sessions.size }));
+      return;
+    }
+    if (api && req.url?.startsWith('/api/')) {
+      api(req, res);
       return;
     }
     res.writeHead(404).end();
@@ -82,22 +102,59 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
   const openRoom = (now: number): Room | null => {
     for (const room of rooms) if (room.open) return room;
     if (rooms.size >= maxRooms) return null;
-    const room = new Room(roomOptions, now);
+    const room = new Room(roomOptions, now, accounts ? (result) => accounts.recordMatch(result) : undefined);
     rooms.add(room);
     return room;
+  };
+
+  const joinWithAccount = async (session: Session, token: unknown) => {
+    let account: Awaited<ReturnType<Accounts['forMatch']>>;
+    try {
+      account = await accounts!.forMatch(token);
+    } catch (error) {
+      console.error('Could not load account:', (error as Error).message);
+      return fail(session, 'bad-request');
+    }
+    if (!account) return fail(session, 'sign-in');
+    if (session.socket.readyState !== WebSocket.OPEN) return;
+    const now = Date.now();
+
+    const existing = accountPlayers.get(account.accountId);
+    if (existing && !existing.room.finished && !existing.player.left) {
+      // Someone who reloaded the page mid-match gets their robot back.
+      if (existing.player.conn || !existing.room.match) return fail(session, 'in-match');
+      session.room = existing.room;
+      session.player = existing.player;
+      existing.room.resume(existing.player, session.conn);
+      return;
+    }
+
+    const room = openRoom(now);
+    if (!room) return fail(session, 'full');
+    session.room = room;
+    session.player = room.join(session.conn, null, null, now, account);
+    tokens.set(session.player.token, { room, player: session.player });
+    accountPlayers.set(account.accountId, { room, player: session.player });
   };
 
   const handle = (session: Session, message: ClientMessage) => {
     const now = Date.now();
     switch (message.t) {
       case 'join': {
-        if (session.room) return;
+        if (session.room || session.joining) return;
         if (message.v !== PROTOCOL_VERSION) return fail(session, 'outdated');
-        const room = openRoom(now);
-        if (!room) return fail(session, 'full');
-        session.room = room;
-        session.player = room.join(session.conn, message.name, message.loadout, now);
-        tokens.set(session.player.token, { room, player: session.player });
+        if (!accounts) {
+          const room = openRoom(now);
+          if (!room) return fail(session, 'full');
+          session.room = room;
+          session.player = room.join(session.conn, message.name, message.loadout, now);
+          tokens.set(session.player.token, { room, player: session.player });
+          return;
+        }
+        session.joining = true;
+        void joinWithAccount(session, message.session).finally(() => {
+          session.joining = false;
+        });
         return;
       }
       case 'resume': {
@@ -124,6 +181,7 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
       case 'leave':
         if (session.room && session.player?.conn === session.conn) {
           tokens.delete(session.player.token);
+          if (session.player.accountId) accountPlayers.delete(session.player.accountId);
           session.room.leave(session.player, now);
           session.room = null;
           session.player = null;
@@ -133,7 +191,7 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
   };
 
   wss.on('connection', (socket, req) => {
-    const address = clientAddress(req, options.clientIpHeader);
+    const address = addressOf(req);
     const count = perIp.get(address) ?? 0;
     if (count >= maxPerIp) {
       socket.close(1008, 'too many connections');
@@ -148,7 +206,7 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
       backlog: () => socket.bufferedAmount,
       close: () => socket.close(),
     };
-    const session: Session = { socket, conn, room: null, player: null, alive: true, windowStart: Date.now(), windowCount: 0 };
+    const session: Session = { socket, conn, room: null, player: null, joining: false, alive: true, windowStart: Date.now(), windowCount: 0 };
     sessions.add(session);
 
     socket.on('pong', () => {
@@ -188,7 +246,10 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
       room.tick(now);
       if (!room.finished) continue;
       rooms.delete(room);
-      for (const player of room.players.values()) tokens.delete(player.token);
+      for (const player of room.players.values()) {
+        tokens.delete(player.token);
+        if (player.accountId) accountPlayers.delete(player.accountId);
+      }
     }
   }, STEP * 1000);
 
@@ -203,6 +264,11 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
     }
   }, HEARTBEAT_MS);
 
+  const cleanup = setInterval(() => {
+    api?.prune();
+    accounts?.cleanup().catch((error: Error) => console.error('Cleanup failed:', error.message));
+  }, CLEANUP_MS);
+
   return new Promise((resolve, reject) => {
     http.once('error', reject);
     http.listen(options.port, options.host, () => {
@@ -213,6 +279,7 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
           new Promise((done) => {
             clearInterval(loop);
             clearInterval(heartbeat);
+            clearInterval(cleanup);
             for (const session of sessions) session.socket.terminate();
             wss.close(() => http.close(() => done()));
           }),

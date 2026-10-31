@@ -344,6 +344,42 @@ button:focus-visible {
   background: var(--accent);
 }
 
+.stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.stat-row b {
+  display: block;
+  font: 400 26px var(--display);
+  color: var(--text);
+}
+
+.stat-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.google-slot {
+  min-height: 44px;
+  margin-top: 8px;
+}
+
+.mini-danger {
+  border-color: #e8695b;
+  color: #ff8a7a;
+}
+
+.garage-panel .results td:nth-child(2),
+.garage-panel .results th:nth-child(2) {
+  width: auto;
+}
+
+.garage-panel .results {
+  font-size: 12px;
+}
+
 .garage-tabs {
   display: flex;
   flex-wrap: wrap;

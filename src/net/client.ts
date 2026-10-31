@@ -64,7 +64,7 @@ export class NetClient {
 
   constructor(
     private readonly url: string,
-    private readonly hello: { name: string; loadout: Loadout },
+    private readonly hello: { name: string; loadout: Loadout; session?: string },
     private readonly events: NetClientEvents = {},
   ) {}
 
@@ -79,7 +79,7 @@ export class NetClient {
     this.ws = ws;
     ws.onopen = () => {
       if (this.token) this.send({ t: 'resume', v: PROTOCOL_VERSION, token: this.token });
-      else this.send({ t: 'join', v: PROTOCOL_VERSION, name: this.hello.name, loadout: this.hello.loadout });
+      else this.send({ t: 'join', v: PROTOCOL_VERSION, name: this.hello.name, loadout: this.hello.loadout, session: this.hello.session });
     };
     ws.onmessage = (e) => this.handle(JSON.parse(String(e.data)) as ServerMessage);
     // Not every runtime follows a failed connection's error event with a close event.

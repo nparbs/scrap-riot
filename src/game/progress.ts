@@ -151,7 +151,11 @@ function rivalPaint(color: number, rng: () => number): Paint {
 const keysOf = <T extends object>(table: T) => Object.keys(table) as (keyof T)[];
 
 /** Rivals scale with how far the player has upgraded, so the money never trivialises the game. */
-export function makeRivals(save: Save | null, count: number, seed: number): BotSetup[] {
+export function makeRivals(
+  save: { wins: number; loadout: { upgrades: Record<UpgradeId, number> } } | null,
+  count: number,
+  seed: number,
+): BotSetup[] {
   const rng = makeRng(seed);
   const up = save?.loadout.upgrades ?? { armor: 0, engine: 0, weapons: 0 };
   const invested = up.armor + up.engine + up.weapons;
