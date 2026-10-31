@@ -64,6 +64,6 @@ export class GarageView {
 
   update(dt: number): void {
     this.turntable.rotation.y += dt * 0.5;
-    if (this.model?.sawBlade) this.model.sawBlade.rotation.x += dt * 3;
+    if (this.model?.spinner) this.model.spinner.rotation[this.model.spinAxis] += dt * 3;
   }
 }

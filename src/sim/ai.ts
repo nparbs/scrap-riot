@@ -1,5 +1,5 @@
-import { ARENA, sawPos } from './arena';
-import { MELEE, TURRETS } from './data';
+import { sawPos, shockerActive } from './arena';
+import { DEFENSES, MELEE, TURRETS } from './data';
 import { bearing, wrapAngle, type Bot, type Match } from './match';
 
 const THINK_INTERVAL = 0.2;
@@ -39,7 +39,7 @@ export class BotBrain {
 
   private think(): void {
     const { bot, match } = this;
-    if (this.retargetT <= 0 || !this.target?.alive) {
+    if (this.retargetT <= 0 || !this.target?.alive || !match.canSee(bot, this.target)) {
       this.retargetT = RETARGET_INTERVAL;
       this.target = this.pickTarget();
     }
@@ -48,34 +48,55 @@ export class BotBrain {
     const repair = hurt ? this.nearestPickup('repair') : null;
     const scrap = this.nearestPickup('scrap');
     if (repair) {
-      this.goalX = repair.x;
-      this.goalZ = repair.z;
+      this.setGoal(repair.x, repair.z);
+    } else if (match.mode === 'koth' && !hurt) {
+      this.setGoal(match.arena.hill.x, match.arena.hill.z);
     } else if (scrap && Math.hypot(scrap.x - bot.x, scrap.z - bot.z) < 10) {
-      this.goalX = scrap.x;
-      this.goalZ = scrap.z;
+      this.setGoal(scrap.x, scrap.z);
     } else if (this.target) {
       const standoff = this.preferredRange();
       const dist = Math.hypot(this.target.x - bot.x, this.target.z - bot.z);
       if (standoff > 0 && dist < standoff + 4) {
         // Ranged builds circle at a distance instead of closing in.
         const around = bearing(this.target.x, this.target.z, bot.x, bot.z) + 0.8 * this.strafeSign;
-        this.goalX = this.target.x + Math.sin(around) * standoff;
-        this.goalZ = this.target.z + Math.cos(around) * standoff;
+        this.setGoal(this.target.x + Math.sin(around) * standoff, this.target.z + Math.cos(around) * standoff);
       } else {
-        this.goalX = this.target.x;
-        this.goalZ = this.target.z;
+        this.setGoal(this.target.x, this.target.z);
       }
     } else {
-      this.goalX = 0;
-      this.goalZ = 0;
+      this.setGoal(0, 0);
     }
 
     this.usePowerups();
     if (match.rng() < 0.05) this.strafeSign *= -1;
   }
 
+  /** Never drive toward a goal past a ledge, even if the target is hanging over one. */
+  private setGoal(x: number, z: number): void {
+    const { half, walled } = this.match.arena;
+    const limit = walled ? half : half - 4;
+    this.goalX = Math.max(-limit, Math.min(limit, x));
+    this.goalZ = Math.max(-limit, Math.min(limit, z));
+  }
+
   private preferredRange(): number {
-    return this.bot.loadout.turret === 'rockets' ? 13 : this.bot.loadout.turret === 'arc' ? 8 : 0;
+    switch (this.bot.loadout.turret) {
+      case 'rockets':
+      case 'guided':
+      case 'seeker':
+        return 13;
+      case 'mortar':
+      case 'laser':
+        return 16;
+      case 'arc':
+      case 'flamethrower':
+        return 7;
+      case 'discs':
+      case 'spear':
+        return 11;
+      default:
+        return 0;
+    }
   }
 
   private pickTarget(): Bot | null {
@@ -83,7 +104,7 @@ export class BotBrain {
     let best: Bot | null = null;
     let bestScore = Infinity;
     for (const other of match.bots) {
-      if (other === bot || !other.alive) continue;
+      if (other === bot || !other.alive || !match.canSee(bot, other)) continue;
       let score = Math.hypot(other.x - bot.x, other.z - bot.z) + other.hp * 0.08;
       if (other.id === bot.lastAttacker) score -= 10;
       score += match.rng() * 6;
@@ -112,6 +133,7 @@ export class BotBrain {
 
   private steer(dt: number): void {
     const { bot, match } = this;
+    const { arena } = match;
     let dirX = this.goalX - bot.x;
     let dirZ = this.goalZ - bot.z;
     const len = Math.hypot(dirX, dirZ) || 1;
@@ -128,19 +150,33 @@ export class BotBrain {
       dirX += (dx / dist) * force;
       dirZ += (dz / dist) * force;
     };
-    for (const pillar of ARENA.pillars) repel(pillar.x, pillar.z, pillar.r, 5, 1.6);
-    for (const saw of ARENA.saws) {
+    // Sliding on ice means reacting to hazards from much further away.
+    const caution = arena.grip < 0.5 ? 2 : 1;
+    for (const pillar of arena.pillars) repel(pillar.x, pillar.z, pillar.r, 5, 1.6);
+    for (const saw of arena.saws) {
       const pos = sawPos(saw, match.time);
-      repel(pos.x, pos.z, ARENA.sawRadius, 5, 2.2);
+      repel(pos.x, pos.z, 1.7, 5, 2.2);
     }
+    for (const pit of arena.pits) repel(pit.x, pit.z, pit.r, 6 * caution, 4);
+    for (const fire of arena.firePits) repel(fire.x, fire.z, fire.r, 4, 2);
+    for (const coil of arena.shockers) {
+      if (shockerActive(coil, match.time + 1)) repel(coil.x, coil.z, coil.r, 3, 2.5);
+    }
+    for (const sentry of arena.sentries) repel(sentry.x, sentry.z, sentry.range, 3, 2);
     for (const mine of match.mines) {
       if (mine.owner !== bot.id) repel(mine.x, mine.z, 1, 3 * this.skill, 1.5);
     }
-    const wall = ARENA.half - 5;
-    if (bot.x > wall) dirX -= (bot.x - wall) * 0.4;
-    if (bot.x < -wall) dirX += (-wall - bot.x) * 0.4;
-    if (bot.z > wall) dirZ -= (bot.z - wall) * 0.4;
-    if (bot.z < -wall) dirZ += (-wall - bot.z) * 0.4;
+    for (const patch of match.oil) {
+      if (patch.owner !== bot.id) repel(patch.x, patch.z, patch.r, 1.5 * this.skill, 1);
+    }
+
+    const margin = arena.walled ? 5 : 8 * caution;
+    const pull = arena.walled ? 0.4 : 1;
+    const wall = arena.half - margin;
+    if (bot.x > wall) dirX -= (bot.x - wall) * pull;
+    if (bot.x < -wall) dirX += (-wall - bot.x) * pull;
+    if (bot.z > wall) dirZ -= (bot.z - wall) * pull;
+    if (bot.z < -wall) dirZ += (-wall - bot.z) * pull;
 
     const speed = Math.hypot(bot.vx, bot.vz);
     if (this.reverseT > 0) {
@@ -158,10 +194,20 @@ export class BotBrain {
     const diff = wrapAngle(Math.atan2(dirX, dirZ) - bot.heading);
     bot.input.steer = Math.max(-1, Math.min(1, diff * 3));
     bot.input.throttle = Math.abs(diff) > 1.4 ? 0.25 : 1;
+    // Don't build up speed heading for an edge.
+    if (!arena.walled && this.nearEdge(10 * caution) && Math.abs(diff) > 0.5) bot.input.throttle = -0.3;
+  }
+
+  private nearEdge(distance: number): boolean {
+    const { bot, match } = this;
+    const look = 1.5;
+    const x = bot.x + bot.vx * look;
+    const z = bot.z + bot.vz * look;
+    return Math.abs(x) > match.arena.half - distance / 3 || Math.abs(z) > match.arena.half - distance / 3;
   }
 
   private fight(dt: number): void {
-    const { bot, match } = this;
+    const { bot } = this;
     const target = this.target;
     bot.input.melee = false;
     bot.input.defense = false;
@@ -173,27 +219,64 @@ export class BotBrain {
     const dist = Math.hypot(target.x - bot.x, target.z - bot.z);
     const angle = Math.abs(wrapAngle(bearing(bot.x, bot.z, target.x, target.z) - bot.heading));
     const melee = MELEE[bot.loadout.melee];
-    if (bot.loadout.melee === 'ram') {
-      bot.input.melee = dist < 10 && angle < 0.25;
-    } else {
-      bot.input.melee = dist - target.radius < melee.range && angle < melee.arc;
+    switch (melee.kind) {
+      case 'ram':
+        bot.input.melee = dist < 10 && angle < 0.25;
+        break;
+      case 'magnet':
+        bot.input.melee = dist < melee.range && dist > 3 && angle < melee.arc;
+        break;
+      default:
+        bot.input.melee = dist - target.radius < melee.range && angle < melee.arc;
     }
 
     // Short bursts rather than holding the trigger, so low-skill bots lose some damage.
     this.burstT -= dt;
     if (this.burstT < -0.4) this.burstT = 0.3 + this.skill * 1.5;
+    const turret = TURRETS[bot.loadout.turret];
     const aimed = bot.turretTarget >= 0 && bot.turretError < 0.2;
-    bot.input.turret = aimed && this.burstT > 0 && dist < TURRETS[bot.loadout.turret].range;
+    bot.input.turret = aimed && this.burstT > 0 && dist < turret.range && bot.blindT <= 0;
 
+    bot.input.defense = this.wantsDefense(target, dist, angle);
+  }
+
+  private wantsDefense(target: Bot, dist: number, angle: number): boolean {
+    const { bot, match } = this;
+    const health = bot.hp / bot.maxHp;
     const recentlyHit = match.time - bot.lastHitT < 0.5;
+    const def = DEFENSES[bot.loadout.defense];
     switch (bot.loadout.defense) {
       case 'shield':
-        bot.input.defense = recentlyHit && bot.hp / bot.maxHp < 0.7;
-        break;
+        return recentlyHit && health < 0.7;
       case 'mines':
       case 'oil':
-        bot.input.defense = dist < 9 && angle > 2.2;
-        break;
+      case 'glue':
+      case 'nails':
+        return dist < 9 && angle > 2.2;
+      case 'blades':
+      case 'cutter':
+        return dist - target.radius - bot.radius < def.radius;
+      case 'teleport':
+        return (health < 0.4 && recentlyHit) || (dist > 18 && angle < 0.2);
+      case 'flash':
+      case 'emp':
+        return dist < def.radius * 0.7;
+      case 'regen':
+        return health < 0.6;
+      case 'cloak':
+        return health < 0.45 && recentlyHit;
+      case 'minibot':
+        return dist < 24;
+      case 'remote': {
+        const charge = match.mines.find((m) => m.owner === bot.id && m.kind === 'charge');
+        if (!charge) return dist < 12 && angle > 1.5;
+        return match.bots.some((o) => o !== bot && o.alive && Math.hypot(o.x - charge.x, o.z - charge.z) < charge.radius * 0.7);
+      }
+      case 'kamikaze':
+        return health < 0.2 && dist < def.radius * 0.6;
+      case 'steelram':
+      case 'plow':
+        return false;
     }
   }
 
@@ -202,9 +285,12 @@ export class BotBrain {
     if (match.rng() > this.skill) return;
     const dist = target ? Math.hypot(target.x - bot.x, target.z - bot.z) : Infinity;
     const health = bot.hp / bot.maxHp;
-    if (health < 0.4 && bot.powerups.repair > 0) bot.input.powerup = 'repair';
-    else if (dist < 9 && health > 0.4 && bot.powerups.overdrive > 0) bot.input.powerup = 'overdrive';
-    else if (dist < 6 && health < 0.6 && bot.powerups.emp > 0) bot.input.powerup = 'emp';
-    else if (dist > 22 && bot.powerups.turbo > 0) bot.input.powerup = 'turbo';
+    const p = bot.powerups;
+    if (health < 0.4 && p.repair > 0) bot.input.powerup = 'repair';
+    else if (health < 0.5 && dist < 12 && p.megashield > 0) bot.input.powerup = 'megashield';
+    else if (dist < 9 && health > 0.4 && p.rage > 0) bot.input.powerup = 'rage';
+    else if (health < 0.3 && p.cloaking > 0) bot.input.powerup = 'cloaking';
+    else if (!target && p.xray > 0) bot.input.powerup = 'xray';
+    else if (dist > 22 && p.turbo > 0) bot.input.powerup = 'turbo';
   }
 }

@@ -11,17 +11,28 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "balance": "vite-node scripts/balance.ts"
+    "balance": "vite-node scripts/balance.ts",
+    "server": "vite-node server/index.ts",
+    "build:server": "node scripts/build-server.mjs",
+    "server:dev": "vite-node scripts/dev-server.ts"
   },
   "dependencies": {
-    "three": "^0.170.0"
+    "jose": "^6.2.14",
+    "pg": "^8.23.1",
+    "three": "^0.170.0",
+    "ws": "^8.22.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.14",
     "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
     "@types/three": "^0.170.0",
+    "@types/ws": "^8.18.2",
+    "esbuild": "^0.28.2",
     "typescript": "^5.6.0",
     "vite": "^6.0.0",
     "vite-node": "^3.2.4",
     "vitest": "^3.0.0"
-  }
+  },
+  "require": "createRequire(import.meta.url);"
 }

@@ -30,36 +30,44 @@ The current tuning comes from AI-versus-AI data and has not had a human playtest
 
 - [ ] Human playtest pass on handling, camera and weapon feel
 - [ ] Balance against human play, including the shop's money curve
-- [ ] Measure frame rate on real hardware and add quality settings
-- [ ] First-match tutorial prompts
-- [ ] Hit feedback: damage direction, wreck debris, better weapon sounds
-- [ ] Rebindable keys and gamepad support
-- [ ] Publish a public build (GitHub Pages requires the repo to be public, or a paid plan)
+- [x] Quality settings and a frame rate counter
+- [ ] Measure frame rate on real hardware
+- [x] First-match tutorial prompts
+- [x] Hit feedback: damage direction, wreck debris
+- [ ] Better weapon sounds
+- [x] Rebindable keys
+- [ ] Gamepad support: built, needs testing with a real controller
+- [x] Publish a public build on GitHub Pages
 
 ## v0.3: More to fight with
 
-- [ ] Two more arenas with distinct hazards
-- [ ] Rear-mounted weapon option
-- [ ] Two to three new weapons per slot
-- [ ] Paint and decal customization
-- [ ] Per-part damage visuals
+- [x] Five new maps: rooftop, furnace, canyon, foundry, frozen lake
+- [x] Every weapon found in the original games ([notes](docs/original-research.md))
+- [x] Ammo for turrets
+- [x] Paint shop: colors, patterns, toppers
+- [x] Rear-mounted weapon option
+- [x] Battle damage: scorched paint and armor plates falling off
 
 ## v0.4: Single-player career
 
-- [ ] Ladder of named rivals with escalating builds
-- [ ] New modes: last robot standing, king of the hill
-- [ ] Boss robots
-- [ ] Achievements and match stats
+- [x] Ladder of 12 fights with medals
+- [x] New modes: last robot standing, king of the hill
+- [x] Three boss robots
+- [x] Achievements and match stats
 
 ## v0.5: Online multiplayer
 
-The original was built around online play, so this is what most defines a faithful remake. It is also the largest and riskiest item here, because it adds a server to run and pay for.
+The original was built around online play, so this was moved to the front of the queue. The netcode and server are built; they go live once a server is hosted (see [docs/hosting.md](docs/hosting.md)).
 
-- [ ] Choose a netcode model and prove it with a two-player prototype (the sim is already deterministic and server-ready)
-- [ ] Authoritative WebSocket server running the shared sim
-- [ ] Quick-play matchmaking, with bots filling empty slots
-- [ ] Server-side accounts and progress, since browser saves can be edited
-- [ ] Anti-cheat validation, reconnects, hosting and cost plan
+- [x] Netcode: server-authoritative snapshots at 20 Hz, client prediction for your own robot, interpolation for the rest
+- [x] Authoritative WebSocket server running the shared sim
+- [x] Quick-play matchmaking, with bots filling empty slots
+- [x] Reconnects: a bot drives your robot until you return
+- [x] Input validation, rate and connection limits, Docker packaging, hosting guide, privacy notes
+- [ ] Host the server and test with real players over the internet
+- [x] Accounts: Google sign-in or guest, with progress owned by the server
+- [x] Match history, rating and leaderboard
+- [ ] Moderation for player names
 
 ## v1.0: Release
 

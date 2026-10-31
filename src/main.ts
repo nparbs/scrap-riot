@@ -1,15 +1,37 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Sfx } from './audio';
-import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, writeSave, type Save, type Slot } from './game/progress';
+import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, randomArena, writeSave, type Save, type Slot } from './game/progress';
+import { awardMedal, careerResult, fightSetups, loadCareer, writeCareer, type Fight } from './game/career';
+import { DEFAULT_BINDINGS, loadSettings, QUALITY, rebind, writeSettings, type Action } from './game/settings';
+import { Tutorial } from './game/tutorial';
 import { Keyboard } from './input';
+import { Api, ApiError } from './net/api';
+import { NetClient, type NetFailure } from './net/client';
+import { sanitizeName, type GarageAction, type HistoryEntry, type LeaderboardEntry, type Profile } from './net/protocol';
 import { GarageView } from './render/garageView';
 import { MatchView } from './render/matchView';
-import { Match, STEP, type Bot, type BotSetup, type GameEvent } from './sim/match';
+import { DEFAULT_PAINT } from './sim/data';
+import { emptyInput, Match, STEP, type Bot, type BotSetup, type GameEvent } from './sim/match';
+import { renderGoogleButton } from './ui/google';
 import { Hud } from './ui/hud';
-import { garageScreen, menuScreen, PLAYER_COLOR, pauseScreen, resultsScreen } from './ui/screens';
+import { garageScreen, lobbyScreen, menuScreen, pauseScreen, resultsScreen, settingsScreen, type GarageTab } from './ui/screens';
 
-type Mode = 'menu' | 'garage' | 'match' | 'paused' | 'results';
+type Mode = 'menu' | 'garage' | 'lobby' | 'match' | 'paused' | 'results';
+
+/** Without a configured server, the build simply offers no online mode. */
+const SERVER_URL: string = import.meta.env.VITE_SERVER_URL || (import.meta.env.DEV ? 'ws://localhost:8787' : '');
+
+const FAILURE_TEXT: Record<NetFailure, string> = {
+  unreachable: "Couldn't reach the game server. It may be offline, so try a practice match for now.",
+  lost: 'Lost the connection to the game server. That match has no payout.',
+  expired: 'That match is no longer available.',
+  full: 'The game server is full right now. Please try again shortly.',
+  outdated: 'This page is out of date. Refresh to get the latest version.',
+  'bad-request': 'The server rejected that request. Refreshing may help.',
+  'sign-in': 'Your session has expired. Refresh the page to sign back in.',
+  'in-match': 'This account is already in a match, possibly in another tab.',
+};
 
 function safeStorage(): Storage | null {
   try {
@@ -24,22 +46,40 @@ class Game {
   private readonly ui = document.getElementById('ui')!;
   private readonly renderer = new THREE.WebGLRenderer({ antialias: true });
   private readonly storage = safeStorage();
-  private readonly save: Save = loadSave(this.storage);
+  private save: Save = loadSave(this.storage);
+  /** The server's copy of this player, when connected. It then replaces the local save. */
+  private profile: Profile | null = null;
+  private readonly api: Api | null = SERVER_URL ? new Api(SERVER_URL, this.storage) : null;
+  private connecting = false;
+  private googleClientId: string | null = null;
+  private history: HistoryEntry[] = [];
+  private leaderboard: LeaderboardEntry[] = [];
+  private confirmDelete = false;
+  private readonly settings = loadSettings(this.storage);
+  private readonly career = loadCareer(this.storage);
+  private careerFight: Fight | null = null;
   private readonly view = new MatchView();
   private readonly garage = new GarageView();
-  private readonly keyboard = new Keyboard();
+  private readonly keyboard = new Keyboard(this.settings.bindings);
   private readonly sfx = new Sfx();
   private mode: Mode = 'menu';
   private match: Match | null = null;
   private player: Bot | null = null;
   private hud: Hud | null = null;
+  private net: NetClient | null = null;
+  private notice = '';
+  private garageTab: GarageTab = 'chassis';
+  private tutorial: Tutorial | null = null;
+  private readonly tutorialInput = emptyInput();
+  private readonly fpsEl = document.createElement('div');
+  private fpsFrames = 0;
+  private fpsTime = 0;
   private accumulator = 0;
   private last = performance.now();
   private clock = 0;
 
   constructor() {
     const r = this.renderer;
-    r.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     r.toneMapping = THREE.ACESFilmicToneMapping;
@@ -50,25 +90,115 @@ class Game {
     const pmrem = new THREE.PMREMGenerator(r);
     const environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     pmrem.dispose();
-    for (const scene of [this.view.arena.scene, this.garage.scene]) {
-      scene.environment = environment;
-      scene.environmentIntensity = 0.55;
-    }
+    this.view.setEnvironment(environment);
+    this.garage.scene.environment = environment;
+    this.garage.scene.environmentIntensity = 0.55;
 
     window.addEventListener('resize', () => this.resize());
-    this.resize();
+    this.applyQuality();
+
+    this.fpsEl.className = 'fps-counter';
+    this.fpsEl.hidden = !this.settings.showFps;
+    document.body.appendChild(this.fpsEl);
 
     this.keyboard.onFirstInput = () => this.sfx.unlock();
     this.keyboard.onPause = () => this.togglePause();
     this.keyboard.onMute = () => this.sfx.toggleMute();
     window.addEventListener('pointerdown', () => this.sfx.unlock());
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden && this.mode === 'match') this.togglePause();
+      if (!document.hidden || this.mode !== 'match') return;
+      // An online match cannot pause, and a hidden tab stops sending input, so let go of the controls.
+      if (this.net) this.net.sendNeutral();
+      else this.togglePause();
     });
     this.view.onEvent = (event) => this.onMatchEvent(event);
 
     this.showMenu();
     requestAnimationFrame((t) => this.frame(t));
+  }
+
+  private applyQuality(): void {
+    const quality = QUALITY[this.settings.quality];
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatio));
+    this.renderer.shadowMap.enabled = quality.shadows;
+    this.view.setParticleDensity(quality.particles);
+    // Materials compile with or without shadow support, so they must rebuild when it changes.
+    for (const scene of [this.view.arena.scene, this.garage.scene]) {
+      scene.traverse((node) => {
+        if (node instanceof THREE.Mesh) (node.material as THREE.Material).needsUpdate = true;
+      });
+    }
+    this.resize();
+  }
+
+  private openSettings(back: () => void): void {
+    let waiting: Action | null = null;
+    const save = () => writeSettings(this.storage, this.settings);
+    const render = () => {
+      this.setScreen(
+        settingsScreen(this.settings, waiting, {
+          onQuality: (quality) => {
+            this.settings.quality = quality;
+            save();
+            this.applyQuality();
+            render();
+          },
+          onFps: () => {
+            this.settings.showFps = !this.settings.showFps;
+            this.fpsEl.hidden = !this.settings.showFps;
+            save();
+            render();
+          },
+          onBind: (action) => {
+            waiting = action;
+            render();
+            this.keyboard.captureNextKey((code) => {
+              waiting = null;
+              if (code && rebind(this.settings.bindings, action, code)) {
+                this.keyboard.setBindings(this.settings.bindings);
+                save();
+              }
+              render();
+            });
+          },
+          onReset: () => {
+            this.keyboard.cancelCapture();
+            waiting = null;
+            this.settings.bindings = { ...DEFAULT_BINDINGS };
+            this.keyboard.setBindings(this.settings.bindings);
+            save();
+            render();
+          },
+          onBack: () => {
+            this.keyboard.cancelCapture();
+            back();
+          },
+        }),
+      );
+    };
+    this.sfx.click();
+    render();
+  }
+
+  private beginTutorial(): void {
+    this.tutorial = this.settings.tutorialDone ? null : new Tutorial(this.settings.bindings);
+  }
+
+  private endTutorial(): void {
+    this.tutorial = null;
+    if (this.settings.tutorialDone) return;
+    this.settings.tutorialDone = true;
+    writeSettings(this.storage, this.settings);
+  }
+
+  private updateTutorial(dt: number, player: Bot): void {
+    const { tutorial, tutorialInput: input } = this;
+    if (!tutorial) return;
+    this.keyboard.peek(input);
+    const powerups = Object.values(player.powerups).reduce((sum, n) => sum + n, 0);
+    tutorial.update(dt, { ...input, powerups });
+    this.hud?.setTutorialPrompt(tutorial.prompt);
+    if (tutorial.finished) this.endTutorial();
   }
 
   private resize(): void {
@@ -86,30 +216,90 @@ class Game {
   private showMenu(): void {
     this.mode = 'menu';
     this.startDemo();
-    this.setScreen(menuScreen(() => this.showGarage()));
+    this.showMenuScreen();
+  }
+
+  private showMenuScreen(): void {
+    this.setScreen(
+      menuScreen(() => this.showGarage(), () => this.openSettings(() => this.showMenuScreen()), this.settings.bindings),
+    );
   }
 
   /** The title screen runs a real AI-only match in the background. */
   private startDemo(): void {
     const seed = Math.floor(Math.random() * 1e9);
-    this.match = new Match(makeRivals(null, 6, seed), { seed });
+    this.match = new Match(makeRivals(null, 6, seed), { seed, arena: randomArena(Math.random) });
     this.player = null;
     this.view.setMatch(this.match, 0);
   }
 
   private showGarage(): void {
     this.sfx.click();
+    this.net?.leave();
+    this.net = null;
     this.mode = 'garage';
     this.match = null;
     this.hud = null;
     this.sfx.setLoops(-1, false);
     this.refreshGarage();
+    void this.connectAccount();
+  }
+
+  private setProfile(profile: Profile): void {
+    this.profile = profile;
+    this.save = profile.save;
+  }
+
+  /** Signs in as this browser's account, creating a guest for a new visitor. */
+  private async connectAccount(): Promise<void> {
+    if (!this.api || this.profile || this.connecting) return;
+    this.connecting = true;
+    try {
+      this.setProfile(await this.api.start());
+      this.googleClientId = await this.api.googleClientId();
+      if (this.mode === 'garage') this.refreshGarage();
+    } catch (error) {
+      // A 404 means a server without accounts. Anything else means it can't be reached right now.
+      if (!(error instanceof ApiError && error.status === 404) && this.mode === 'garage') {
+        this.notice = "Couldn't reach the game server, so your progress is being saved on this device only.";
+        this.refreshGarage();
+      }
+    } finally {
+      this.connecting = false;
+    }
+  }
+
+  private async loadProfileTab(): Promise<void> {
+    if (!this.api || !this.profile) return;
+    try {
+      [this.history, this.leaderboard] = await Promise.all([this.api.history(), this.api.leaderboard()]);
+      if (this.mode === 'garage' && this.garageTab === 'profile') this.refreshGarage();
+    } catch {
+      // The tab still shows the player's own stats without these.
+    }
+  }
+
+  /** Runs an account action, then shows the new state. */
+  private accountAction(run: () => Promise<Profile>, failure: string): void {
+    run()
+      .then((profile) => {
+        this.setProfile(profile);
+        this.history = [];
+        this.confirmDelete = false;
+        this.refreshGarage();
+        void this.loadProfileTab();
+      })
+      .catch(() => {
+        this.sfx.deny();
+        this.notice = failure;
+        this.refreshGarage();
+      });
   }
 
   private refreshGarage(): void {
     const { loadout } = this.save;
-    const { chassis, melee, turret, defense } = loadout;
-    this.garage.setBuild({ chassis, melee, turret, defense, color: PLAYER_COLOR });
+    const { chassis, melee, turret, defense, paint = DEFAULT_PAINT, rearMelee } = loadout;
+    this.garage.setBuild({ chassis, melee, turret, defense, paint, rearMelee, color: paint.primary });
     const panel = this.ui.querySelector('.garage-panel');
     const scroll = panel ? panel.scrollTop : 0;
     const buy = (ok: boolean) => {
@@ -121,24 +311,115 @@ class Game {
         this.sfx.deny();
       }
     };
+    /** With an account the server decides, and the browser only shows the outcome. */
+    const change = (action: GarageAction, local: () => boolean) => {
+      if (!this.api || !this.profile) {
+        buy(local());
+        return;
+      }
+      this.api
+        .garage(action)
+        .then((profile) => {
+          this.setProfile(profile);
+          this.sfx.click();
+          this.refreshGarage();
+        })
+        .catch(() => this.sfx.deny());
+    };
+    const notice = this.notice;
+    this.notice = '';
     this.setScreen(
-      garageScreen(this.save, {
-        onEquip: (slot: Slot, id: string) => buy(buyOrEquip(this.save, slot, id)),
-        onPowerup: (id) => buy(buyPowerup(this.save, id)),
-        onUpgrade: (id) => buy(buyUpgrade(this.save, id)),
-        onFight: () => this.startMatch(),
-      }),
+      garageScreen(
+        this.save,
+        {
+          onEquip: (slot: Slot, id: string) => change({ type: 'equip', slot, id }, () => buyOrEquip(this.save, slot, id)),
+          onPowerup: (id) => change({ type: 'powerup', id }, () => buyPowerup(this.save, id)),
+          onUpgrade: (id) => change({ type: 'upgrade', id }, () => buyUpgrade(this.save, id)),
+          onFight: () => this.startMatch(),
+          onOnline: () => this.startOnline(),
+          onSettings: () => this.openSettings(() => this.refreshGarage()),
+          onTab: (tab) => {
+            this.garageTab = tab;
+            this.sfx.click();
+            this.refreshGarage();
+            this.ui.querySelector('.garage-panel')!.scrollTop = 0;
+            if (tab === 'profile') void this.loadProfileTab();
+          },
+          onPaint: (paint) =>
+            change({ type: 'paint', paint }, () => {
+              this.save.loadout.paint = { ...(this.save.loadout.paint ?? DEFAULT_PAINT), ...paint };
+              return true;
+            }),
+          onPractice: (practice) =>
+            change({ type: 'practice', ...practice }, () => {
+              Object.assign(this.save.practice, practice);
+              return true;
+            }),
+          onName: (name) =>
+            change({ type: 'name', name }, () => {
+              this.save.name = sanitizeName(name);
+              return true;
+            }),
+          onCareer: (fight) => this.startMatch(fight),
+          onRear: (rear) =>
+            change({ type: 'rear', rear }, () => {
+              this.save.loadout.rearMelee = rear;
+              return true;
+            }),
+          onSignOut: () => this.accountAction(() => this.api!.signOut(), "Couldn't sign out. Please try again."),
+          onDelete: () => {
+            if (!this.confirmDelete) {
+              this.confirmDelete = true;
+              this.sfx.deny();
+              this.refreshGarage();
+              return;
+            }
+            this.accountAction(() => this.api!.deleteAccount(), "Couldn't delete the account. Please try again.");
+          },
+        },
+        {
+          onlineAvailable: SERVER_URL !== '',
+          notice,
+          keys: this.settings.bindings,
+          tab: this.garageTab,
+          career: this.career,
+          account: this.profile && {
+            profile: this.profile,
+            history: this.history,
+            leaderboard: this.leaderboard,
+            googleAvailable: this.googleClientId !== null,
+            confirmDelete: this.confirmDelete,
+          },
+        },
+      ),
     );
     const next = this.ui.querySelector('.garage-panel');
     if (next) next.scrollTop = scroll;
+    this.mountGoogleButton();
   }
 
-  private startMatch(): void {
+  private mountGoogleButton(): void {
+    const slot = this.ui.querySelector<HTMLElement>('[data-google]');
+    const { api, googleClientId } = this;
+    if (!slot || !api || !googleClientId) return;
+    renderGoogleButton(slot, googleClientId, (credential) => {
+      this.accountAction(() => api.signInWithGoogle(credential), 'Google sign-in failed. Please try again.');
+    }).catch(() => {
+      slot.textContent = "Couldn't load Google sign-in. A browser extension may be blocking it.";
+    });
+  }
+
+  private startMatch(fight: Fight | null = null): void {
     const seed = Math.floor(Math.random() * 1e9);
-    const me: BotSetup = { name: 'You', color: PLAYER_COLOR, loadout: this.save.loadout, isAI: false };
-    this.match = new Match([me, ...makeRivals(this.save, 5, seed)], { seed });
+    const { name, loadout, practice } = this.save;
+    const me: BotSetup = { name, color: (loadout.paint ?? DEFAULT_PAINT).primary, loadout, isAI: false };
+    this.careerFight = fight;
+    this.match = fight
+      ? new Match([me, ...fightSetups(fight, seed)], { seed, arena: fight.arena, mode: fight.mode, killTarget: fight.killTarget })
+      : new Match([me, ...makeRivals(this.save, 5, seed)], { seed, arena: practice.arena, mode: practice.mode });
     this.player = this.match.bots[0];
-    this.hud = new Hud(this.match, this.player);
+    this.hud = new Hud(this.match, this.player, this.settings.bindings);
+    this.beginTutorial();
     this.view.setMatch(this.match, this.player.id);
     this.setScreen(this.hud.root);
     this.keyboard.clear();
@@ -147,11 +428,49 @@ class Game {
     this.sfx.click();
   }
 
+  private startOnline(): void {
+    this.sfx.click();
+    this.mode = 'lobby';
+    const lobby = lobbyScreen(() => this.showGarage(), this.profile !== null);
+    this.setScreen(lobby.el);
+    const { name, loadout } = this.save;
+    this.net = new NetClient(SERVER_URL, { name, loadout, session: this.api?.token ?? undefined }, {
+      onQueue: lobby.update,
+      onStart: (match, player) => {
+        this.match = match;
+        this.player = player;
+        this.hud = new Hud(match, player, this.settings.bindings);
+        this.beginTutorial();
+        this.view.setMatch(match, player.id);
+        this.setScreen(this.hud.root);
+        this.keyboard.clear();
+        this.mode = 'match';
+      },
+      onOver: () => this.finishMatch(),
+      onFail: (reason) => {
+        this.net = null;
+        this.notice = FAILURE_TEXT[reason];
+        this.showGarage();
+      },
+      onReconnecting: (active) => {
+        if (this.hud) this.hud.notice = active ? 'Connection lost. Reconnecting…' : '';
+      },
+    });
+    this.net.connect();
+  }
+
   private togglePause(): void {
+    if (this.net && this.mode === 'match') {
+      // Online the menu is only an overlay, because the match carries on for everyone else.
+      const open = this.ui.querySelector('.screen-pause');
+      if (open) open.remove();
+      else this.ui.appendChild(pauseScreen(true, () => this.togglePause(), () => this.showGarage(), this.settings.bindings));
+      return;
+    }
     if (this.mode === 'match') {
       this.mode = 'paused';
       this.sfx.setLoops(-1, false);
-      const overlay = pauseScreen(() => this.togglePause(), () => this.showGarage());
+      const overlay = pauseScreen(false, () => this.togglePause(), () => this.showGarage(), this.settings.bindings);
       this.ui.appendChild(overlay);
     } else if (this.mode === 'paused') {
       this.mode = 'match';
@@ -164,12 +483,37 @@ class Game {
     const { match, player } = this;
     if (!match || !player) return;
     this.mode = 'results';
+    this.endTutorial();
     this.sfx.setLoops(-1, false);
     const standings = match.standings();
     const mine = standings.find((s) => s.bot === player)!;
-    applyResult(this.save, mine.total, mine.place, player.powerups);
-    writeSave(this.storage, this.save);
-    this.setScreen(resultsScreen(standings, player.id, () => this.showGarage()));
+    const online = this.net !== null;
+    this.net = null;
+    let note = '';
+    const fight = this.careerFight;
+    this.careerFight = null;
+    if (fight) {
+      const medal = careerResult(fight, standings, player.id);
+      const reward = awardMedal(this.career, fight, medal);
+      writeCareer(this.storage, this.career);
+      note = medal ? `${medal[0].toUpperCase()}${medal.slice(1)} medal! ` : 'No medal this time. Finish higher to unlock the next fight. ';
+      if (!this.profile) {
+        // Without an account, career money goes into the save on this device.
+        applyResult(this.save, reward, mine.place, player.powerups);
+        writeSave(this.storage, this.save);
+        if (reward > 0) note += `You earned $${reward}.`;
+      }
+    } else if (this.profile) {
+      // The server already banked an online match. A practice match runs in this browser, so
+      // nothing it reports can be trusted with real money.
+      if (online) this.api?.me().then((profile) => this.setProfile(profile)).catch(() => {});
+      else note = 'Practice match, so no payout. Fight online to earn money and rating.';
+    } else {
+      // Online robots get free powerups, so the ones in the garage are left untouched.
+      applyResult(this.save, mine.total, mine.place, online ? this.save.loadout.powerups : player.powerups);
+      writeSave(this.storage, this.save);
+    }
+    this.setScreen(resultsScreen(standings, player.id, () => this.showGarage(), note));
   }
 
   private onMatchEvent(event: GameEvent): void {
@@ -184,6 +528,15 @@ class Game {
         break;
       case 'arc':
         this.sfx.arc(near(event.points[0].x, event.points[0].z));
+        break;
+      case 'beam':
+        this.sfx.arc(near(event.x1, event.z1));
+        break;
+      case 'pulse':
+        this.sfx.strike(near(event.x, event.z));
+        break;
+      case 'teleport':
+        this.sfx.arc(near(event.x1, event.z1));
         break;
       case 'hit':
         if (event.source === player.id && event.amount >= 1) this.sfx.hit(0.8);
@@ -211,9 +564,11 @@ class Game {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.clock += dt;
+    this.updateFps(dt);
 
     switch (this.mode) {
       case 'garage':
+      case 'lobby':
         this.garage.update(dt);
         this.renderer.render(this.garage.scene, this.garage.camera);
         return;
@@ -238,6 +593,16 @@ class Game {
     this.renderer.render(this.view.arena.scene, this.view.camera);
   }
 
+  private updateFps(dt: number): void {
+    if (!this.settings.showFps) return;
+    this.fpsFrames++;
+    this.fpsTime += dt;
+    if (this.fpsTime < 0.5) return;
+    this.fpsEl.textContent = `${Math.round(this.fpsFrames / this.fpsTime)} FPS`;
+    this.fpsFrames = 0;
+    this.fpsTime = 0;
+  }
+
   private tickDemo(dt: number): void {
     const match = this.match;
     if (!match) return;
@@ -250,19 +615,26 @@ class Game {
   }
 
   private tickMatch(dt: number): void {
-    const { match, player } = this;
+    const { match, player, net } = this;
     if (!match || !player) return;
-    this.accumulator += dt;
-    while (this.accumulator >= STEP) {
-      this.keyboard.applyTo(player.input);
-      match.step();
-      this.accumulator -= STEP;
+    if (net) {
+      net.update(dt, (input) => this.keyboard.applyTo(input));
+      this.hud?.setPing(net.rttMs);
+    } else {
+      this.accumulator += dt;
+      while (this.accumulator >= STEP) {
+        this.keyboard.applyTo(player.input);
+        match.step();
+        this.accumulator -= STEP;
+      }
     }
     this.view.rearView = this.keyboard.rearView;
     this.hud?.update(dt);
+    this.updateTutorial(dt, player);
     const top = player.chassis.speed * player.speedMult;
-    this.sfx.setLoops(player.alive ? Math.min(1, Math.hypot(player.vx, player.vz) / top) : -1, player.alive && player.meleeActive);
-    if (match.over) {
+    this.sfx.setLoops(player.alive ? Math.min(1, Math.hypot(player.vx, player.vz) / top) : -1, player.alive && player.meleeActive && ['chainsaw', 'drill', 'rollingpin'].includes(player.loadout.melee));
+    // Online, the server announces the end of the match and onOver handles it.
+    if (match.over && !net) {
       this.view.update(0, 1);
       this.finishMatch();
     }

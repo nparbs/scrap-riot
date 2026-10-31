@@ -344,11 +344,338 @@ button:focus-visible {
   background: var(--accent);
 }
 
-.btn-fight {
+.stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.stat-row b {
+  display: block;
+  font: 400 26px var(--display);
+  color: var(--text);
+}
+
+.stat-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.google-slot {
+  min-height: 44px;
+  margin-top: 8px;
+}
+
+.mini-danger {
+  border-color: #e8695b;
+  color: #ff8a7a;
+}
+
+.garage-panel .results td:nth-child(2),
+.garage-panel .results th:nth-child(2) {
+  width: auto;
+}
+
+.garage-panel .results {
+  font-size: 12px;
+}
+
+.card-boss {
+  border-color: #a8481a;
+  background: rgba(168, 72, 26, 0.16);
+}
+
+.card-locked {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.medal-bronze em {
+  color: #d08a50;
+}
+
+.medal-silver em {
+  color: #c4ccd4;
+}
+
+.medal-gold em {
+  color: #ffd23a;
+}
+
+.achievements {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+}
+
+.achievement {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  opacity: 0.55;
+  font-size: 12px;
+}
+
+.achievement strong,
+.achievement span {
+  display: block;
+}
+
+.achievement span {
+  color: var(--muted);
+}
+
+.achievement-on {
+  border-color: #ffd23a;
+  opacity: 1;
+}
+
+.garage-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
   width: min(620px, 100%);
-  margin: 0;
   flex: none;
-  font-size: 26px;
+}
+
+.tab {
+  flex: 1 1 auto;
+  padding: 7px 6px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  background: #1e2024;
+  color: var(--muted);
+  font: 600 12px var(--body);
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab-on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #1a0f05;
+}
+
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 5px;
+}
+
+.swatch {
+  aspect-ratio: 1;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  outline: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+}
+
+.swatch-on {
+  border-color: #fff;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.hud-mode {
+  position: absolute;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.hud-blind {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.slot-ammo {
+  position: absolute !important;
+  right: 4px;
+  bottom: 4px;
+  left: 4px;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.slot-ammo i {
+  display: block;
+  height: 100%;
+}
+
+.garage-actions {
+  display: flex;
+  gap: 8px;
+  width: min(620px, 100%);
+  flex: none;
+}
+
+.garage-actions .btn {
+  margin: 0;
+  font-size: 24px;
+}
+
+.garage-actions .btn-settings {
+  flex: 0 0 auto;
+  width: auto;
+  font-size: 16px;
+}
+
+.garage-name {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.garage-name input {
+  width: 12em;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #1e2024;
+  color: var(--text);
+  font: inherit;
+}
+
+.garage-notice {
+  width: min(620px, 100%);
+  padding: 8px 12px;
+  border-left: 4px solid #e8695b;
+  background: var(--panel);
+  font-size: 14px;
+}
+
+.hud-tutorial {
+  position: absolute;
+  top: 20%;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(560px, 90vw);
+  text-align: center;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.hud-tutorial:not(:empty) {
+  padding: 8px 16px;
+  border-bottom: 3px solid var(--stripe);
+  background: rgba(10, 11, 13, 0.75);
+}
+
+/* Each mark is a full-size square rotated around the screen center, with an arc at its top edge. */
+.hud-damage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+}
+
+.damage-mark {
+  position: absolute;
+  top: -180px;
+  left: -180px;
+  width: 360px;
+  height: 360px;
+}
+
+.damage-mark::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 90px;
+  width: 180px;
+  height: 46px;
+  border-top: 8px solid #ff3a2a;
+  border-radius: 50% / 100% 100% 0 0;
+  filter: drop-shadow(0 0 6px #ff3a2a);
+}
+
+.fps-counter {
+  position: fixed;
+  right: 4px;
+  bottom: 2px;
+  z-index: 5;
+  color: var(--muted);
+  font: 11px var(--body);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.settings-card {
+  width: min(560px, 100%);
+}
+
+.settings-card h3 {
+  margin: 16px 0 6px;
+  color: var(--muted);
+  font-size: 17px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 14px;
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+}
+
+.mini-btn {
+  min-width: 72px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #2a2d32;
+  color: var(--text);
+  font: 600 13px var(--body);
+  cursor: pointer;
+}
+
+.mini-btn:hover {
+  background: #383c42;
+}
+
+.mini-on {
+  border-color: var(--accent);
+  background: rgba(255, 138, 42, 0.2);
+}
+
+.mini-wait {
+  border-color: var(--stripe);
+  color: var(--stripe);
+}
+
+.settings-hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.hud-ping {
+  position: absolute;
+  top: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 620px) {
@@ -359,6 +686,10 @@ button:focus-visible {
   .cards,
   .cards-4 {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .swatches {
+    grid-template-columns: repeat(6, 1fr);
   }
 }
 
