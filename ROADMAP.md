@@ -37,7 +37,7 @@ The current tuning comes from AI-versus-AI data and has not had a human playtest
 - [ ] Better weapon sounds
 - [x] Rebindable keys
 - [ ] Gamepad support: built, needs testing with a real controller
-- [ ] Publish a public build (GitHub Pages requires the repo to be public, or a paid plan)
+- [x] Publish a public build on GitHub Pages
 
 ## v0.3: More to fight with
 

@@ -8,12 +8,14 @@ Scrap Riot is a fan-made homage to *Robot Rage*, the Miniclip web game. All code
 
 ## Play
 
+**[Play in your browser](https://nparbs.github.io/scrap-riot/)**. A keyboard and a WebGL-capable browser are required.
+
+To run it locally:
+
 ```sh
 npm install
 npm run dev
 ```
-
-Then open the URL Vite prints. A keyboard and a WebGL-capable browser are required.
 
 | Key | Action |
 | --- | --- |
