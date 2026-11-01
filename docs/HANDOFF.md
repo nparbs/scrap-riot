@@ -15,12 +15,19 @@ If `git pull --ff-only origin main` fails with "Cannot fast-forward to multiple 
 ## Current state
 
 - **Live:** everything through PR #43 is merged and on the page.
-- **Server:** on protocol 11, last rebuilt for PR #43, and its health check answered afterwards.
-- **Tests:** 321 pass.
-- **Not verified yet:** the new animations, tracks and window fixes have only run in a headless browser, and nobody has played with them by hand. An account already showing `null/3` hasn't been checked on the real database, only in tests. Nothing since the phone work has run on a real phone. That includes the thumb buttons, the face-off when a phone really rotates or goes full screen, the landscape lock and Add to Home Screen. The join banner and phone counts have only run against a mocked server, not a real queue.
+- **Server:** on protocol 11, last rebuilt for PR #43. The map work is protocol 12, so the page and server have to go live together.
+- **Tests:** see `npm test`, which includes the map layout checks.
+- **Not verified yet:** the new maps, animations, tracks and window fixes have only run in a headless browser, and nobody has played them by hand. Hazard timings and damage are first guesses, tuned against bots only. An account already showing `null/3` hasn't been checked on the real database, only in tests. Nothing since the phone work has run on a real phone. That includes the thumb buttons, the face-off when a phone really rotates or goes full screen, the landscape lock and Add to Home Screen. The join banner and phone counts have only run against a mocked server, not a real queue.
 
-## Latest work (protocol 11)
+## Latest work (protocol 12)
 
+- **Maps redone:** the brief, and what the research said, are in [map-design.md](map-design.md). `ARENAS` in `src/sim/arena.ts` holds each layout, and `tests/maps.test.ts` fails if anything on a floor overlaps anything else, which is what caused the old glitches, so a new map gets that check for free. Everything new is timed by `match.time`, so it needs no extra snapshot data.
+- **Real holes:** `floorGeometry` in `src/render/hazards.ts` cuts them out of one sheet of floor, with walls going down and a hot line and glow at the rim. Canyon and Black Ice build only the sides of what's under the floor, because a solid box would plug the holes. Trapdoor leaves sit just below the floor and slide under it, so the floor hides them, and nothing there may use `polygonOffset` or it draws on top.
+- **New hazards:** trapdoors (`trapdoorAmount`), chasms and `crossings`, launch ramps, conveyors, drop hammers, wrecking balls, wall grinders and erupting vents, all in `src/sim/arena.ts`, with their looks in `src/render/hazards.ts`. Bots avoid them all, and route over bridges with `crossingToward`, but they never use a ramp on purpose.
+- **Shapes:** `shape` on a map is square, round or plus. Ask `onDeck` or `solidGround` rather than comparing with `half`.
+- **Rooftop Rumble is gone:** The Rig replaced it, and `tidyPowerups` moves a save that remembers it back to The Skyscraper. Old match history still shows the id `rooftop`, because `ARENAS[h.arena]?.name ?? h.arena` falls back to that.
+- **Online count:** `.bar-online` beside the balance replaces the pill that was on the robot preview, and it opens the `players` tab.
+- **Weapon pictures:** `.card-thumb` on melee and defense cards, from `scripts/make-previews.mjs`.
 - **Window shapes:** narrow windows (860 wide or less) scroll as one column, and the music and settings buttons are fixed to the window, so content used to slide under them. `.ws-bar` is now sticky there, and the buttons are placed inside the bar by the `--ws-*` variables at the end of the stylesheet, including when `zoom` scales the page. A tall window with a mouse also stacks the match dock in two rows, in the `@media (max-width: 1100px)` rules near the end, because two cards side by side squeezed the slots until keys ran into counts.
 - **Battery Pack null/3:** this powerup was once called `turbo`, so older accounts had no `battery` count. Buying or using one made it `NaN`, which saves as null. `tidyPowerups` in `src/game/progress.ts` gives every powerup a real count on every load. Anyone already affected shows 0, and any Battery Packs they paid for in that state aren't refunded.
 - **Till:** the balance is a box of its own (`.garage-money`), rolling to its new value and flashing when it changes (`rollMoney`). The match's earnings use the same look.

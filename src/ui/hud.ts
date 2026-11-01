@@ -1,4 +1,4 @@
-import { sawPos, TRAP_NAMES } from '../sim/arena';
+import { sawPos, TRAP_NAMES, trapdoorOpen } from '../sim/arena';
 import { pickLastWords } from '../game/lastWords';
 import { keyLabel, type Action, type Bindings } from '../game/settings';
 import { isTouchDevice } from './touch';
@@ -632,7 +632,25 @@ export class Hud {
         g.fill();
       }
     };
+    if (arena.shape !== 'square') {
+      // What isn't floor is dark, drawn over the square the map starts as.
+      g.fillStyle = 'rgba(0,0,0,0.75)';
+      if (arena.shape === 'round') {
+        g.beginPath();
+        g.rect(0, 0, size, size);
+        g.arc(size / 2, size / 2, arena.half * scale, 0, Math.PI * 2, true);
+        g.fill();
+      } else {
+        const corner = (arena.half - arena.arm!) * scale;
+        for (const [x, y] of [[0, 0], [size - corner, 0], [0, size - corner], [size - corner, size - corner]]) g.fillRect(x, y, corner, corner);
+      }
+    }
     circles(arena.pits, '#000');
+    g.fillStyle = '#000';
+    for (const chasm of arena.chasms) g.fillRect(toX(chasm.x) - (chasm.w * scale) / 2, toY(chasm.z) - (chasm.d * scale) / 2, chasm.w * scale, chasm.d * scale);
+    circles(arena.trapdoors.filter((door) => trapdoorOpen(door, this.match.time)), '#000');
+    circles(arena.trapdoors.filter((door) => !trapdoorOpen(door, this.match.time)), '#5a2a22');
+    circles(arena.hammers, '#6a5a2a');
     circles(arena.firePits, '#a8481a');
     circles(arena.shockers, '#2b6a8a');
     circles(arena.pillars, '#4a4e52');

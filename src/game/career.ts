@@ -34,21 +34,21 @@ export interface Fight {
 export const CAREER: Fight[] = [
   { id: 'c1', title: 'First Bolts', blurb: 'One slow rival. Learn the controls.', arena: 'pit', mode: 'ffa', rivals: 1, level: 0, reward: 100, killTarget: 3 },
   { id: 'c2', title: 'Three-Way', blurb: 'Two rivals, and the saws are running.', arena: 'pit', mode: 'ffa', rivals: 2, level: 0, reward: 150, killTarget: 5 },
-  { id: 'c3', title: 'Mind the Edge', blurb: 'No walls up here. Shove them off.', arena: 'rooftop', mode: 'ffa', rivals: 3, level: 0, reward: 200, killTarget: 6 },
-  { id: 'c4', title: 'Hold the Roof', blurb: 'Take the zone and keep it.', arena: 'rooftop', mode: 'koth', rivals: 3, level: 1, reward: 250 },
+  { id: 'c3', title: 'Mind the Edge', blurb: 'No rails on this deck. Shove them into the sea.', arena: 'rig', mode: 'ffa', rivals: 3, level: 0, reward: 200, killTarget: 6 },
+  { id: 'c4', title: 'Hold the Deck', blurb: 'Take the middle and keep it, with the ball swinging through.', arena: 'rig', mode: 'koth', rivals: 3, level: 1, reward: 250 },
   {
     id: 'c5', title: 'Old Ironjaw', blurb: 'Boss. The scrapyard\'s oldest brawler wants a word.', arena: 'pit', mode: 'ffa', rivals: 1, level: 1, reward: 500, killTarget: 4,
     boss: { name: 'Old Ironjaw', chassis: 'rhino', melee: 'hammer', defense: 'steelram', color: 0x8a9096, hpMult: 2.5, size: 1.3 },
   },
-  { id: 'c6', title: 'Heat Stroke', blurb: 'Stay out of the fire. Keep them in it.', arena: 'furnace', mode: 'ffa', rivals: 4, level: 1, reward: 300, killTarget: 8 },
+  { id: 'c6', title: 'Heat Stroke', blurb: 'Stay off the vents. Shove them in the steel.', arena: 'furnace', mode: 'ffa', rivals: 4, level: 1, reward: 300, killTarget: 8 },
   { id: 'c7', title: 'Last One Out', blurb: 'One life each, five rivals.', arena: 'furnace', mode: 'lms', rivals: 5, level: 2, reward: 350 },
-  { id: 'c8', title: 'Moving Parts', blurb: 'Learn the pistons before they teach you.', arena: 'foundry', mode: 'ffa', rivals: 4, level: 2, reward: 400, killTarget: 8 },
+  { id: 'c8', title: 'Moving Parts', blurb: 'Learn the belts and hammers before they teach you.', arena: 'foundry', mode: 'ffa', rivals: 4, level: 2, reward: 400, killTarget: 8 },
   {
     id: 'c9', title: 'Queen Cinder', blurb: 'Boss. She built the Furnace, and she likes it hot.', arena: 'furnace', mode: 'ffa', rivals: 2, level: 2, reward: 800, killTarget: 5,
     boss: { name: 'Queen Cinder', chassis: 'juggernaut', melee: 'flamethrower', defense: 'mines', color: 0xe0503a, hpMult: 3, size: 1.4 },
   },
   { id: 'c10', title: 'Thin Ice', blurb: 'Nobody can stop out here, including you.', arena: 'glacier', mode: 'ffa', rivals: 5, level: 3, reward: 500, killTarget: 10 },
-  { id: 'c11', title: 'Three Lanes', blurb: 'Hold the mesa with chasms on both sides.', arena: 'canyon', mode: 'koth', rivals: 5, level: 3, reward: 600 },
+  { id: 'c11', title: 'Three Lanes', blurb: 'Hold the middle lane, with chasms on both sides.', arena: 'canyon', mode: 'koth', rivals: 5, level: 3, reward: 600 },
   {
     id: 'c12', title: 'The Last Machine', blurb: 'Final boss. Nothing has ever scratched it.', arena: 'foundry', mode: 'ffa', rivals: 3, level: 4, reward: 1500, killTarget: 6,
     boss: { name: 'The Last Machine', chassis: 'juggernaut', melee: 'magnet', defense: 'emp', color: 0x33363b, hpMult: 4, size: 1.6 },

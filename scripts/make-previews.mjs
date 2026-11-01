@@ -2,7 +2,7 @@
 // It needs a browser to draw with: npm i --no-save playwright-core, then node scripts/make-previews.mjs
 // It uses Microsoft Edge, so nothing else has to be downloaded. Run it again whenever a map or a fight's look changes.
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -18,7 +18,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const server = spawn(`npx vite --port ${PORT} --strictPort`, { cwd: root, shell: true, stdio: 'ignore' });
 await sleep(4000);
-const browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--use-angle=d3d11'] });
 const context = await browser.newContext({ viewport: { width: WIDTH, height: HEIGHT } });
 await context.addInitScript(() => localStorage.setItem('scrap-riot.settings.v4', JSON.stringify({ quality: 'high', tutorialDone: true, pilotName: 'Pilot', fullscreen: false })));
 await context.route(/localhost:8787/, (route) => route.abort());
@@ -60,6 +60,8 @@ const names = await page.evaluate(async () => {
       Object.assign(bot, { x: spot.x, prevX: spot.x, z: spot.z, prevZ: spot.z, heading: spot.heading, prevHeading: spot.heading, invulnT: 0, vx: 0, vz: 0 });
     });
     match.step = () => {};
+    // A moment in, with the wrecking ball swung out of the way and the doors still shut.
+    match.time = 2;
     g.training = false;
     g.careerFight = null;
     g.match = match;
@@ -72,7 +74,8 @@ const names = await page.evaluate(async () => {
     const { half } = ARENAS[id];
     const rival = { name: 'B', color: 0xe0503a, isAI: false, loadout: newSave().loadout };
     stage([{ name: 'A', color: 0xff8a2a, isAI: false, loadout: newSave().loadout }, rival], id, 'ffa', (i) => ({ x: i ? half * 0.28 : -half * 0.22, z: i ? -half * 0.1 : half * 0.14, heading: i ? -1.2 : 1.9 }));
-    window.__view = { from: [half * 0.95, half * 0.72, half * 1.05], at: [0, 0, -half * 0.04], fov: 46 };
+    // From the corner with nothing standing in it.
+    window.__view = { from: [half * 0.95, half * 0.72, -half * 1.05], at: [0, 0, half * 0.04], fov: 46 };
   };
   // How much is in the way of a shot from here. Pits and pillars near the robots or between them and the camera all count.
   const blocked = (def, centre, camera) => {
@@ -151,6 +154,57 @@ for (const id of names.maps) {
 for (const id of names.fights) {
   await page.evaluate((id) => window.__fight(id), id);
   await shoot(`fight-${id}`);
+}
+// A close look at every weapon and defense, for their cards in the workshop.
+const THUMB_W = 400;
+const THUMB_H = 175;
+const parts = await page.evaluate(async () => {
+  const { MELEE, DEFENSES } = await import('/src/sim/data.ts');
+  return { melee: Object.keys(MELEE), defense: Object.keys(DEFENSES) };
+});
+await page.evaluate(async ([width, height]) => {
+  const g = window.__game;
+  const THREE = await import('/node_modules/three/build/three.module.js');
+  // Hands back the one the map shots wrapped, which only moves the camera while a view is set.
+  window.__view = null;
+  window.__thumb = (slot, id) => {
+    const garage = g.garage;
+    garage.setBuild({ chassis: 'brawler', melee: slot === 'melee' ? id : 'dagger', defense: slot === 'defense' ? id : 'shield', tower: 'medium', wheels: 'large4', color: 0xff8a2a });
+    garage.turntable.rotation.y = 0;
+    const model = garage.model;
+    model.root.updateMatrixWorld(true);
+    const { camera } = garage;
+    camera.aspect = width / height;
+    camera.fov = 30;
+    if (slot === 'melee') {
+      const box = new THREE.Box3().setFromObject(model.meleePivot);
+      const centre = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3()).length();
+      const away = Math.max(size * 1.5, 3.4);
+      camera.position.set(centre.x + away * 0.62, centre.y + away * 0.46, centre.z + away * 0.64);
+      camera.lookAt(centre);
+    } else {
+      // Defenses go on the back of the robot, on a shelf or the tower.
+      const rootX = model.root.position.x;
+      const rootZ = model.root.position.z;
+      camera.position.set(rootX + 2.3, 2.3, rootZ - 4.1);
+      camera.lookAt(rootX, 0.85, rootZ - 1.15);
+    }
+    camera.updateProjectionMatrix();
+    g.renderer.setPixelRatio(1);
+    g.renderer.setSize(width, height, false);
+    g.renderer.setScissorTest(false);
+    g.renderer.setViewport(0, 0, width, height);
+    g.renderer.render(garage.scene, camera);
+    return g.renderer.domElement.toDataURL('image/jpeg', 0.8);
+  };
+}, [THUMB_W, THUMB_H]);
+for (const slot of ['melee', 'defense']) {
+  for (const id of parts[slot]) {
+    const url = await page.evaluate(([slot, id]) => window.__thumb(slot, id), [slot, id]);
+    writeFileSync(join(out, `${slot}-${id}.jpg`), Buffer.from(url.split(',')[1], 'base64'));
+    console.log(`${slot}-${id}`);
+  }
 }
 if (errors.length) console.log('page errors', errors);
 await browser.close();

@@ -457,7 +457,7 @@ describe('arsenal', () => {
   });
 
   it('teleport moves forward and refuses to jump off a ledge', () => {
-    const safe = fight('rooftop', { defense: 'teleport' });
+    const safe = fight('rig', { defense: 'teleport' });
     const [a] = faceOff(safe, 25);
     a.x = -6;
     a.z = -20;
@@ -465,7 +465,7 @@ describe('arsenal', () => {
     a.input.defense = true;
     safe.step();
     expect(a.z).toBeGreaterThan(-20);
-    const edge = fight('rooftop', { defense: 'teleport' });
+    const edge = fight('rig', { defense: 'teleport' });
     const [c] = faceOff(edge, 25);
     c.x = 0;
     c.z = 26.4;
@@ -473,7 +473,7 @@ describe('arsenal', () => {
     c.input.defense = true;
     edge.step();
     expect(c.alive).toBe(true);
-    expect(Math.abs(c.z)).toBeLessThan(ARENAS.rooftop.half);
+    expect(Math.abs(c.z)).toBeLessThan(ARENAS.rig.half);
     expect(c.defenseCd).toBe(0);
   });
 
@@ -528,10 +528,10 @@ describe('powerups: original four', () => {
 
 describe('arenas', () => {
   it('driving off an open edge destroys the robot and credits whoever hit it last', () => {
-    const match = fight('rooftop');
+    const match = fight('rig');
     const [a, b] = faceOff(match, 10);
     b.x = 0;
-    b.z = ARENAS.rooftop.half + 0.5;
+    b.z = ARENAS.rig.half + 0.5;
     b.lastAttacker = a.id;
     match.step();
     expect(b.alive).toBe(false);
@@ -541,7 +541,7 @@ describe('arenas', () => {
   });
 
   it('pits destroy robots, and walled maps hold them in', () => {
-    const match = fight('rooftop');
+    const match = fight('furnace');
     const [, b] = faceOff(match, 10);
     b.x = 0;
     b.z = 0;
@@ -568,12 +568,14 @@ describe('arenas', () => {
     run(hot, 0.5);
     expect(a.hp).toBeLessThan(a.maxHp);
 
-    const shock = fight('furnace');
+    const coil = ARENAS.foundry.shockers[0];
+    const shock = fight('foundry');
     const [s, t] = faceOff(shock, 25);
-    t.x = 25;
+    t.x = -25;
     t.z = 8;
-    s.x = 0;
-    s.z = 0;
+    s.x = coil.x;
+    s.z = coil.z;
+    shock.time = coil.period - coil.phase;
     shock.step();
     expect(s.stunT).toBeGreaterThan(0);
 
@@ -637,7 +639,8 @@ describe('arenas', () => {
       for (const spot of def.repairSpots) {
         expect(def.pits.some((p) => Math.hypot(p.x - spot.x, p.z - spot.z) < p.r + 1), `${id} repair`).toBe(false);
       }
-      expect(match.isSafeGround(def.hill.x, def.hill.z, 0) || def.pits.length === 0, `${id} hill`).toBe(true);
+      // A hill can be a ring around a pool, so it's the ring that has to be on solid ground.
+      expect(match.isSafeGround(def.hill.x + def.hill.r - 1, def.hill.z, 0) || def.pits.length === 0, `${id} hill`).toBe(true);
     }
   });
 });

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ARENAS, PISTON_REACH, pistonExtension, sawPos, shockerActive, TRAP_NAMES, type ArenaId } from '../sim/arena';
+import { ARENAS, hammerClock, onDeck, sawPos, shockerActive, solidGround, TRAP_NAMES, ventHeat, type ArenaId } from '../sim/arena';
 import { BOOST_SPEED, legibleColor, MATCH, MELEE, TRAP } from '../sim/data';
 import { lerpAngle, type Bot, type GameEvent, type Match, type Trap } from '../sim/match';
 import { buildArena, type ArenaScene } from './arenaScene';
@@ -117,7 +117,7 @@ function trapVisual(trap: Trap, arena: ArenaId): { group: THREE.Group; drop: THR
 }
 
 export class MatchView {
-  readonly camera = new THREE.PerspectiveCamera(CAM_FOV, 1, 0.1, 300);
+  readonly camera = new THREE.PerspectiveCamera(CAM_FOV, 1, 0.25, 500);
   arena: ArenaScene;
   /** Bot the camera follows. Also the point of reference for shake. */
   followId = 0;
@@ -208,6 +208,7 @@ export class MatchView {
     this.arena = this.sceneFor(match.arena.id);
     this.arena.scene.add(this.particles.mesh, this.bolts.group, this.flash);
     this.particles.floorHalf = match.arena.walled ? Infinity : match.arena.half;
+    this.particles.floorAt = (x, z) => solidGround(match.arena, x, z) && !match.arena.pits.some((p) => Math.hypot(x - p.x, z - p.z) < p.r);
     this.arena.hill.visible = match.mode === 'koth';
     this.match = match;
     this.followId = followId;
@@ -507,9 +508,12 @@ export class MatchView {
     this.showDamage(bot, v, 0);
     this.ragdolls.get(id)?.dispose();
     const { half, walled } = this.arena.def;
-    this.ragdolls.set(id, new Ragdoll(v.model.root, x, z, v.model.root.rotation.y, vx, vz, fell, { scene: this.arena.scene, half, walled, ledges: this.arena.ledges }, (position, overEdge) => {
+    const { def } = this.arena;
+    // Down a hole, it drops straight rather than sailing off under the floor.
+    const hole = fell && onDeck(def, x, z) ? 0.25 : 1;
+    this.ragdolls.set(id, new Ragdoll(v.model.root, x, z, v.model.root.rotation.y, vx * hole, vz * hole, fell, { scene: this.arena.scene, half, walled, ledges: this.arena.ledges, floorAt: (fx, fz) => onDeck(def, fx, fz) }, (position, overEdge) => {
       // Over a pit the robot has sunk out of sight, so the blast comes up out of the hole.
-      const overFloor = Math.abs(position.x) < half && Math.abs(position.z) < half;
+      const overFloor = onDeck(def, position.x, position.z);
       const y = overEdge && overFloor ? 0.6 : position.y;
       this.explosionFx(position.x, y, position.z, true, !overEdge && overFloor);
       // The sound comes from the same place as every other explosion.
@@ -739,10 +743,26 @@ export class MatchView {
         });
       }
     });
-    def.pistons.forEach((piston, i) => {
-      const reach = PISTON_REACH * pistonExtension(piston, match.time);
-      arena.pistons[i].position.set(piston.x + piston.dirX * reach, 0, piston.z + piston.dirZ * reach);
-    });
+    arena.sync(match.time);
+    for (const vent of def.firePits) {
+      const heat = ventHeat(vent, match.time);
+      if (heat <= 0 || Math.random() > dt * (heat >= 1 ? 90 : heat * 26)) continue;
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.random()) * vent.r * 0.8;
+      this.particles.burst(vent.x + Math.cos(a) * r, vent.z + Math.sin(a) * r, {
+        count: 1, color: Math.random() < 0.6 ? 0xff8a2a : 0xffe08a, speed: heat >= 1 ? 6 : 2, size: heat >= 1 ? 0.9 : 0.4, life: 0.8, y: 0.3, gravity: heat >= 1 ? -16 : -6,
+      });
+    }
+    for (const hammer of def.hammers) {
+      if (hammerClock(hammer, match.time) > dt * 1.5) continue;
+      // Felt through the floor, more the closer you are.
+      const near = match.bots[this.followId];
+      if (near) this.shake = Math.max(this.shake, Math.max(0, 1 - Math.hypot(near.x - hammer.x, near.z - hammer.z) / 30) * 0.9);
+      for (let i = 0; i < 14; i++) {
+        const a = (i / 14) * Math.PI * 2;
+        this.particles.burst(hammer.x + Math.cos(a) * hammer.r, hammer.z + Math.sin(a) * hammer.r, { count: 1, color: 0xd8d4c8, speed: 5, size: 0.5, life: 0.5, y: 0.2, gravity: 3, dir: { x: Math.cos(a), z: Math.sin(a), jitter: 2 } });
+      }
+    }
     for (const sentry of def.sentries) {
       for (const bot of match.bots) {
         if (!bot.alive || Math.hypot(bot.x - sentry.x, bot.z - sentry.z) >= sentry.range) continue;

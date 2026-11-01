@@ -2148,6 +2148,42 @@ select:focus-visible {
   background: repeating-linear-gradient(135deg, var(--accent) 0 5px, #141516 5px 10px);
 }
 
+/* Who's around, right beside the till. The whole thing opens the list of players. */
+.bar-online {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--seam);
+  border-radius: 15px;
+  background: #15171a;
+  color: var(--text);
+  font: 700 12px var(--body);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+
+.bar-online:empty {
+  display: none;
+}
+
+.bar-online:hover {
+  border-color: var(--good);
+}
+
+.bar-online::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--good);
+  box-shadow: 0 0 7px var(--good);
+}
+
 .money-coin {
   display: grid;
   flex: none;
@@ -2305,74 +2341,6 @@ select:focus-visible {
   color: var(--text);
   font: 700 16px var(--body);
   cursor: pointer;
-}
-
-.online-pill {
-  display: none;
-}
-
-/* Phones have no Players panel beside the robot, so these carry the same news. */
-@media (max-width: 960px) and (max-height: 500px), (max-width: 600px) and (orientation: portrait) {
-  .online-pill:not(:empty) {
-    position: absolute;
-    top: 6px;
-    left: 6px;
-    z-index: 1;
-    display: block;
-    min-height: 28px;
-    padding: 4px 10px;
-    border: 1px solid var(--seam);
-    border-radius: 14px;
-    background: rgba(18, 19, 20, 0.82);
-    color: var(--text);
-    font: 700 11px var(--body);
-    white-space: nowrap;
-    cursor: pointer;
-  }
-
-  .online-pill::before {
-    content: '';
-    display: inline-block;
-    width: 7px;
-    height: 7px;
-    margin-right: 6px;
-    border-radius: 50%;
-    background: var(--good);
-  }
-
-  .nav-btn.nav-btn-play small:not(:empty) {
-    display: block;
-    line-height: 1.1;
-  }
-
-  .nav-btn.nav-btn-play {
-    padding-top: 3px;
-    padding-bottom: 3px;
-  }
-
-  .hud-touch .hud-offer {
-    top: calc(44px + env(safe-area-inset-top));
-    width: min(380px, 56vw);
-  }
-
-  .hud-touch .offer-join {
-    padding: 4px 10px;
-  }
-
-  .hud-touch .offer-join b {
-    font-size: 12px;
-  }
-
-  .hud-touch .offer-join small {
-    font-size: 10.5px;
-  }
-}
-
-@media (max-width: 600px) and (orientation: portrait) {
-  .hud-touch .hud-offer {
-    top: calc(52px + env(safe-area-inset-top));
-    width: 94vw;
-  }
 }
 
 /* Pinned to the bottom of the panel, so a fight is one press away however far down the lists are scrolled. */
@@ -4483,5 +4451,44 @@ html:has(.ws) .music-button {
 
   .hud:not(.hud-touch) .dock-battery label {
     display: none;
+  }
+}
+
+/* A look at the weapon itself, across the top of its card. */
+.card-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 7;
+  margin-bottom: 6px;
+  border-radius: 5px;
+  background: #181a1d;
+  object-fit: cover;
+}
+
+@media (max-width: 960px) and (max-height: 500px) {
+  .card-thumb {
+    aspect-ratio: 16 / 5;
+    margin-bottom: 4px;
+  }
+
+  .bar-online {
+    height: 26px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 600px) and (orientation: portrait) {
+  .bar-online {
+    height: 26px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+}
+
+/* Under the till and tabs row, the pill sits between the balance and the corner buttons. */
+@media (max-width: 860px) and (min-height: 501px) {
+  .bar-online {
+    margin: 0 4px;
   }
 }

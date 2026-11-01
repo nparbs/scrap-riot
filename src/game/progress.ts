@@ -1,4 +1,4 @@
-import { ARENA_ORDER, type ArenaId } from '../sim/arena';
+import { ARENA_ORDER, isArenaId, type ArenaId } from '../sim/arena';
 import {
   CHASSIS,
   DEFAULT_PAINT,
@@ -117,7 +117,9 @@ export function retireGuns<T extends { money: number; owned: Save['owned']; load
  * Battery Pack was, and a count that's missing turns into NaN and then null once it's saved.
  * Saves from before there were slots start with the first powerups they have, and pick from there.
  */
-export function tidyPowerups<T extends { loadout: Loadout }>(save: T): T {
+export function tidyPowerups<T extends { loadout: Loadout; practice?: Save['practice'] }>(save: T): T {
+  // The last map chosen may since have been replaced.
+  if (save.practice && !isArenaId(save.practice.arena)) save.practice.arena = 'skyscraper';
   const counts = save.loadout.powerups as Partial<Record<PowerupId, unknown>>;
   for (const id of POWERUP_ORDER) {
     const count = counts[id];
