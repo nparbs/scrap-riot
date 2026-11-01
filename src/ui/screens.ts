@@ -433,7 +433,9 @@ function partCards(save: Save, slot: Slot, preview: PartPreview | null): string 
       const broke = !has && save.money < item.price;
       const fits = partFits(save, slot, id);
       const type = slot === 'melee' ? `<small class="card-type">${MELEE[id as MeleeId].type}</small>` : '';
-      const about = `<strong>${item.name}</strong>${type}<span>${item.blurb}</span><div class="chips">${partChips(slot, id)}</div>`;
+      // Made by scripts/make-previews.mjs, from the game's own models.
+      const thumb = slot === 'melee' || slot === 'defense' ? `<img class="card-thumb" src="${import.meta.env.BASE_URL}previews/${slot}-${id}.jpg" alt="" loading="lazy" />` : '';
+      const about = `${thumb}<strong>${item.name}</strong>${type}<span>${item.blurb}</span><div class="chips">${partChips(slot, id)}</div>`;
       const price = has ? '<small class="card-owned">Owned</small>' : `<small class="card-price">$${item.price.toLocaleString()}</small>`;
       const action = has
         ? `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${fits ? '' : 'disabled'}>${fits ? 'Fit' : 'No room'}</button>`
@@ -554,10 +556,10 @@ export function queueLabel(online: OnlineStatus | null, queue: OnlineQueue): str
   return waiting === undefined ? '' : `${waiting} in queue`;
 }
 
-/** The short version, for phones, which have no room for the Players panel beside the robot. */
+/** How many people are playing or waiting right now, for beside the balance. */
 export function onlineLabel(online: OnlineStatus | null): string {
   if (!online) return '';
-  return `${online.queued + online.playing} online · ${online.queued} in queue`;
+  return `${online.queued + online.playing} online`;
 }
 
 /** Who's around now, and who was recently. */
@@ -712,6 +714,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
       <header class="ws-bar">
         <div class="ws-brand">${logoHtml()}</div>
         <nav class="top-tabs">${topTabs}</nav>
+        <button class="bar-online" data-tab="players" data-online-label title="See who is online">${onlineLabel(options.online)}</button>
         <div class="garage-money" data-money><span class="money-coin" aria-hidden="true">$</span><span class="money-read"><small>Balance</small><b data-money-value>${money}</b></span></div>
       </header>
       <div class="ws-left">
@@ -719,7 +722,6 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
       </div>
       <div class="ws-right">
         <div class="preview-window" data-preview>
-          <button class="online-pill" data-tab="players" data-online-label>${onlineLabel(options.online)}</button>
           <div class="zoom-row"><button class="step-btn" data-zoom="0.15" aria-label="Zoom out">−</button><button class="step-btn" data-zoom="-0.15" aria-label="Zoom in">+</button></div>
         </div>
         <nav class="side-tabs">${sideTabs}</nav>

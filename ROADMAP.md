@@ -79,6 +79,10 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] Claw, crusher, forks and every other weapon animated, in the match and in the workshop preview
 - [x] Tank tracks with links that really run around their wheels
 - [x] Pictures of each map and career fight on their cards
+- [x] Real holes in the floor, with depth, instead of black circles painted on it
+- [x] A shape, landmark and signature hazard of its own for each map
+- [x] The Rig replaces Rooftop Rumble, which was a second city roof
+- [x] A count of who's online beside the balance, and a picture on every weapon and defense card
 
 ## v0.1: Playable slice (done)
 

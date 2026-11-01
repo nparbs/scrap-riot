@@ -19,6 +19,27 @@ import {
   shockerActive,
   type ArenaDef,
   type ArenaId,
+  ballHeight,
+  ballPos,
+  BALL_DAMAGE,
+  BALL_FORCE,
+  BALL_HIT_HEIGHT,
+  BALL_RADIUS,
+  GRINDER_DPS,
+  GRINDER_PUSH,
+  HAMMER_DAMAGE,
+  HAMMER_HIT,
+  HAMMER_STUN,
+  hammerClock,
+  LAUNCH_AIR,
+  LAUNCH_MIN_SPEED,
+  LAUNCH_SPEED,
+  onDeck,
+  overChasm,
+  solidGround,
+  trapdoorOpen,
+  VENT_MULT,
+  ventErupting,
 } from './arena';
 import { BotBrain } from './ai';
 import {
@@ -1046,7 +1067,13 @@ export class Match {
     const { arena } = this;
     const limit = arena.half - radius - 0.5;
     if (Math.abs(x) > limit || Math.abs(z) > limit) return false;
+    // Checked out at the robot's own width, so its wheels stay on the ground as well.
+    const reach = radius + 0.5;
+    for (const [dx, dz] of [[0, 0], [reach, 0], [-reach, 0], [0, reach], [0, -reach], [reach * 0.7, reach * 0.7], [reach * 0.7, -reach * 0.7], [-reach * 0.7, reach * 0.7], [-reach * 0.7, -reach * 0.7]]) {
+      if (!solidGround(arena, x + dx, z + dz)) return false;
+    }
     if (arena.pits.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + radius)) return false;
+    if (arena.trapdoors.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + radius)) return false;
     if (arena.blocks.some((b) => {
       const near = closestOnBlock(b, x, z);
       return Math.hypot(near.x - x, near.z - z) < radius;
@@ -1368,8 +1395,10 @@ export class Match {
       if (!bot.alive) continue;
 
       // The center of the robot has to cross the edge, so wheels can hang over a little.
-      const overEdge = !arena.walled && (Math.abs(bot.x) > arena.half || Math.abs(bot.z) > arena.half);
-      const inPit = arena.pits.some((p) => Math.hypot(bot.x - p.x, bot.z - p.z) < p.r);
+      const overEdge = !arena.walled && !onDeck(arena, bot.x, bot.z);
+      const inPit = arena.pits.some((p) => Math.hypot(bot.x - p.x, bot.z - p.z) < p.r)
+        || overChasm(arena, bot.x, bot.z)
+        || arena.trapdoors.some((door) => trapdoorOpen(door, this.time) && Math.hypot(bot.x - door.x, bot.z - door.z) < door.r);
       // A thrown robot only falls once it comes down, so it can sail over a hole.
       if ((overEdge || inPit) && bot.clawTarget < 0 && bot.airT <= 0) {
         this.destroy(bot, true);
@@ -1387,7 +1416,7 @@ export class Match {
         bot.vz += (dz / dist) * SAW_KNOCK * dt * 8;
       }
       for (const fire of arena.firePits) {
-        if (Math.hypot(bot.x - fire.x, bot.z - fire.z) < fire.r) hurt(bot, FIRE_DPS * dt);
+        if (Math.hypot(bot.x - fire.x, bot.z - fire.z) < fire.r) hurt(bot, FIRE_DPS * (ventErupting(fire, this.time) ? VENT_MULT : 1) * dt);
       }
       for (const coil of arena.shockers) {
         if (!shockerActive(coil, this.time) || Math.hypot(bot.x - coil.x, bot.z - coil.z) >= coil.r) continue;
@@ -1408,6 +1437,52 @@ export class Match {
         hurt(bot, PISTON_DAMAGE);
         bot.vx += (piston.dirX * PISTON_FORCE) / bot.mass;
         bot.vz += (piston.dirZ * PISTON_FORCE) / bot.mass;
+      }
+
+      if (bot.airT <= 0) {
+        for (const belt of arena.conveyors) {
+          if (Math.abs(bot.x - belt.x) > belt.w / 2 || Math.abs(bot.z - belt.z) > belt.d / 2) continue;
+          bot.x += belt.dirX * belt.speed * dt;
+          bot.z += belt.dirZ * belt.speed * dt;
+        }
+        for (const ramp of arena.launchers) {
+          if (bot.pistonCd > 0 || Math.hypot(bot.x - ramp.x, bot.z - ramp.z) > ramp.r) continue;
+          if (bot.vx * ramp.dirX + bot.vz * ramp.dirZ < LAUNCH_MIN_SPEED) continue;
+          bot.pistonCd = 0.6;
+          bot.airT = LAUNCH_AIR;
+          bot.vx = ramp.dirX * LAUNCH_SPEED;
+          bot.vz = ramp.dirZ * LAUNCH_SPEED;
+        }
+      }
+      for (const hammer of arena.hammers) {
+        if (bot.pistonCd > 0 || hammerClock(hammer, this.time) > HAMMER_HIT || Math.hypot(bot.x - hammer.x, bot.z - hammer.z) > hammer.r) continue;
+        bot.pistonCd = 1;
+        hurt(bot, HAMMER_DAMAGE);
+        bot.stunT = Math.max(bot.stunT, HAMMER_STUN);
+      }
+      for (const ball of arena.balls) {
+        const now = ballPos(ball, this.time);
+        if (bot.pistonCd > 0 || ballHeight(ball, now.along) > BALL_HIT_HEIGHT) continue;
+        if (Math.hypot(bot.x - now.x, bot.z - now.z) > BALL_RADIUS + bot.radius) continue;
+        // Knocked the way the ball is going.
+        const next = ballPos(ball, this.time + 0.05);
+        const dx = next.x - now.x;
+        const dz = next.z - now.z;
+        const travel = Math.hypot(dx, dz) || 1;
+        bot.pistonCd = 1;
+        hurt(bot, BALL_DAMAGE);
+        bot.vx += (dx / travel) * BALL_FORCE / bot.mass;
+        bot.vz += (dz / travel) * BALL_FORCE / bot.mass;
+      }
+      for (const grinder of arena.grinders) {
+        const near = closestOnBlock(grinder, bot.x, bot.z);
+        const dx = bot.x - near.x;
+        const dz = bot.z - near.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist >= bot.radius || dist < 1e-4) continue;
+        hurt(bot, GRINDER_DPS * dt);
+        bot.vx += (dx / dist) * GRINDER_PUSH * dt;
+        bot.vz += (dz / dist) * GRINDER_PUSH * dt;
       }
 
       for (const patch of this.oil) {

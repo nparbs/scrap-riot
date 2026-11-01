@@ -42,6 +42,8 @@ export class Particles {
   density = 1;
   /** How far the floor reaches from the middle. Anything past it keeps falling. */
   floorHalf = Infinity;
+  /** Whether there's floor here, for maps with holes in them or another shape. */
+  floorAt: ((x: number, z: number) => boolean) | null = null;
 
   constructor() {
     this.mesh = new THREE.InstancedMesh(
@@ -98,7 +100,7 @@ export class Particles {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.z += p.vz * dt;
-      if (above && p.y < FLOOR_Y && Math.abs(p.x) < this.floorHalf && Math.abs(p.z) < this.floorHalf) {
+      if (above && p.y < FLOOR_Y && Math.abs(p.x) < this.floorHalf && Math.abs(p.z) < this.floorHalf && (this.floorAt?.(p.x, p.z) ?? true)) {
         p.y = FLOOR_Y;
         p.vy *= -0.35;
         p.vx *= 0.6;

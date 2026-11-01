@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { SAW_RADIUS, type ArenaDef, type ArenaId, type Block } from '../sim/arena';
+import { SAW_RADIUS, type ArenaDef, type ArenaId, type Block, type Pillar, type Rect } from '../sim/arena';
+import { addBridge, buildHazards, deckPath, floorGeometry, wallAround, type HoleLook } from './hazards';
 import { drawLogo } from './logo';
 
 /** What makes each map look like itself. None of it affects play, so it lives here and not in the rules. */
@@ -19,51 +20,60 @@ interface Look {
   floor: 'panels' | 'concrete' | 'rock' | 'ice';
   /** Specks in the air. A negative speed falls instead of rising. */
   motes?: { color: number; count: number; speed: number; size: number };
+  /** What the holes in the floor look like, and what's down them. */
+  hole: HoleLook;
+  /** What stands in for a plain pillar here. Each map's are a landmark of its own, at the same size. */
+  pillar: PillarLook;
+  /** Where a chasm has a bridge over it. Only for show, because the gap in the chasm is what makes it passable. */
+  bridges?: Rect[];
 }
+
+type PillarLook = 'scrap' | 'tank' | 'chimney' | 'rock' | 'column' | 'ice';
 
 const LOOKS: Record<ArenaId, Look> = {
   skyscraper: {
-    accent: 0x38e8ff, second: 0xff3d9a, floor: 'concrete', stars: 700, drift: 0.002,
+    hole: 'shaft', pillar: 'column', accent: 0x38e8ff, second: 0xff3d9a, floor: 'concrete', stars: 700, drift: 0.002,
     sky: [[0, '#05061a'], [0.3, '#12123e'], [0.43, '#47206a'], [0.49, '#c8487c'], [0.51, '#2a1830'], [1, '#07070e']],
   },
   pit: {
-    accent: 0xff7f3f, second: 0xf2eadb, floor: 'panels',
+    hole: 'shaft', pillar: 'scrap', accent: 0xff7f3f, second: 0xf2eadb, floor: 'panels',
     sky: [[0, '#050608'], [0.46, '#101216'], [0.5, '#1a1c21'], [1, '#050608']],
   },
-  rooftop: {
-    accent: 0x3fe0d0, second: 0xff7f3f, floor: 'panels', clouds: '#ffb38a',
-    sun: { azimuth: 2.4, altitude: 0.07, size: 150, color: '#fff0c8' },
-    sky: [[0, '#16244f'], [0.36, '#54467e'], [0.46, '#e47f5c'], [0.495, '#ffc88c'], [0.52, '#3a3040'], [1, '#12121a']],
+  rig: {
+    hole: 'sea', pillar: 'tank', accent: 0xffc23a, second: 0xff5a2a, floor: 'panels', clouds: '#4a3a4e',
+    sun: { azimuth: 2.4, altitude: 0.04, size: 170, color: '#ffd8a0' },
+    motes: { color: 0xcfe0ec, count: 160, speed: -6, size: 0.07 },
+    sky: [[0, '#10141f'], [0.3, '#232838'], [0.42, '#5a4a58'], [0.475, '#c8704a'], [0.5, '#ffb070'], [0.525, '#6a4a4e'], [0.6, '#1a2a38'], [1, '#04101a']],
   },
   furnace: {
-    accent: 0xff6a1a, second: 0xffa94d, floor: 'panels',
+    hole: 'lava', pillar: 'chimney', accent: 0xff6a1a, second: 0xffa94d, floor: 'panels',
     motes: { color: 0xff8a3a, count: 90, speed: 2.4, size: 0.16 },
     sky: [[0, '#070302'], [0.44, '#1c0a04'], [0.5, '#3a1508'], [1, '#070302']],
   },
   canyon: {
-    accent: 0x3fe0d0, second: 0xff7f3f, floor: 'rock', clouds: '#ffc49a',
+    hole: 'rock', pillar: 'rock', accent: 0xffd08a, second: 0xff7f3f, floor: 'rock', clouds: '#ffc49a',
+    bridges: [{ x: -13, z: -6, w: 8, d: 8 }, { x: 13, z: 6, w: 8, d: 8 }],
     sun: { azimuth: 0.7, altitude: 0.1, size: 210, color: '#fff2cf' },
     sky: [[0, '#1c2858'], [0.34, '#754884'], [0.45, '#ee7658'], [0.495, '#ffd08a'], [0.52, '#6a3a2a'], [1, '#2a1a14']],
   },
   foundry: {
-    accent: 0x4fd0ff, second: 0xf2eadb, floor: 'panels',
+    hole: 'shaft', pillar: 'column', accent: 0x4fd0ff, second: 0xf2eadb, floor: 'panels',
     motes: { color: 0x9fe0ff, count: 45, speed: 1.2, size: 0.1 },
     sky: [[0, '#05070b'], [0.46, '#0d1219'], [0.5, '#17202c'], [1, '#05070b']],
   },
   glacier: {
-    accent: 0x7df9d8, second: 0x8f7dff, floor: 'ice', stars: 1100, aurora: true, drift: 0.006,
+    hole: 'ice', pillar: 'ice', accent: 0x7df9d8, second: 0x8f7dff, floor: 'ice', stars: 1100, aurora: true, drift: 0.006,
     motes: { color: 0xdff4ff, count: 120, speed: -1.1, size: 0.1 },
     sky: [[0, '#040818'], [0.35, '#0a1a38'], [0.47, '#123c56'], [0.495, '#2a6a7a'], [0.52, '#0a1a28'], [1, '#040810']],
   },
 };
 
 /** Lethal things glow this colour on every map, so a new map never has to be learned. */
-const DANGER = 0xff3a1e;
+export const DANGER = 0xff3a1e;
 const WINDOWS_NIGHT = ['#9fc4d8', '#c8d8e4', '#b4ccdc', '#d8c8a8', '#7fb4d0', '#c88cb0'];
-const WINDOWS_SUNSET = ['#d8b890', '#e4ccac', '#d09868', '#e8dcc8', '#90b0c4'];
 
 /** A fixed sequence, so every player sees the same scenery. */
-function sequence(start: number): () => number {
+export function sequence(start: number): () => number {
   let seed = start;
   return () => {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -71,7 +81,7 @@ function sequence(start: number): () => number {
   };
 }
 
-function canvasTexture(width: number, height: number, paint: (g: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
+export function canvasTexture(width: number, height: number, paint: (g: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -248,9 +258,16 @@ function skyTexture(look: Look): THREE.CanvasTexture {
       g.fillStyle = look.clouds;
       for (let i = 0; i < 46; i++) {
         g.globalAlpha = 0.05 + rand() * 0.12;
-        g.beginPath();
-        g.ellipse(rand() * width, height * (0.36 + rand() * 0.13), 60 + rand() * 240, 2 + rand() * 7, 0, 0, Math.PI * 2);
-        g.fill();
+        const cloudX = rand() * width;
+        const cloudY = height * (0.36 + rand() * 0.13);
+        const cloudW = 60 + rand() * 240;
+        const cloudH = 2 + rand() * 7;
+        // Drawn again a full turn away, so one crossing the join carries on around it.
+        for (const x of [cloudX, cloudX - width, cloudX + width]) {
+          g.beginPath();
+          g.ellipse(x, cloudY, cloudW, cloudH, 0, 0, Math.PI * 2);
+          g.fill();
+        }
       }
       g.globalAlpha = 1;
     }
@@ -312,14 +329,14 @@ function towerGeometry(w: number, h: number, d: number, x: number, y: number, z:
 }
 
 /** Many pieces become one draw, which is what lets a map have this much scenery. */
-function addMerged(scene: THREE.Scene, parts: THREE.BufferGeometry[], material: THREE.Material): THREE.Mesh {
+export function addMerged(scene: THREE.Scene, parts: THREE.BufferGeometry[], material: THREE.Material): THREE.Mesh {
   const mesh = new THREE.Mesh(mergeGeometries(parts), material);
   for (const part of parts) part.dispose();
   scene.add(mesh);
   return mesh;
 }
 
-function placedBox(w: number, h: number, d: number, x: number, y: number, z: number): THREE.BufferGeometry {
+export function placedBox(w: number, h: number, d: number, x: number, y: number, z: number): THREE.BufferGeometry {
   return new THREE.BoxGeometry(w, h, d).translate(x, y, z);
 }
 
@@ -363,7 +380,7 @@ function dotTexture(): THREE.CanvasTexture {
  * Everything that glows, gathered up and drawn in a couple of calls per colour. Glow is a soft layer
  * added on top rather than a full-screen bloom pass, so it costs next to nothing on a weak graphics card.
  */
-class GlowBatch {
+export class GlowBatch {
   private readonly solid = new Map<number, THREE.BufferGeometry[]>();
   private readonly soft = new Map<number, THREE.BufferGeometry[]>();
 
@@ -457,7 +474,7 @@ function addTicker(scene: THREE.Scene, animators: Animator[], color: string, wid
 let sharedLogo: THREE.CanvasTexture | null = null;
 
 /** The game's logo, shared by every sign and floor marking. */
-function logoTexture(): THREE.CanvasTexture {
+export function logoTexture(): THREE.CanvasTexture {
   if (sharedLogo) return sharedLogo;
   sharedLogo = canvasTexture(512, 512, (g) => drawLogo(g, 512));
   sharedLogo.anisotropy = 4;
@@ -583,10 +600,11 @@ function addTowerTops(glow: GlowBatch, beacons: [number, number, number][], look
   towers.forEach(([x, z, w, d, top], i) => {
     const color = i % 2 ? look.second : look.accent;
     const y = top - 0.6;
-    glow.box(color, w + 0.1, 0.35, 0.1, x, y, z + d / 2);
-    glow.box(color, w + 0.1, 0.35, 0.1, x, y, z - d / 2);
-    glow.box(color, 0.1, 0.35, d + 0.1, x + w / 2, y, z);
-    glow.box(color, 0.1, 0.35, d + 0.1, x - w / 2, y, z);
+    const proud = 0.7;
+    glow.box(color, w + proud, 0.35, proud, x, y, z + d / 2);
+    glow.box(color, w + proud, 0.35, proud, x, y, z - d / 2);
+    glow.box(color, proud, 0.35, d + proud, x + w / 2, y, z);
+    glow.box(color, proud, 0.35, d + proud, x - w / 2, y, z);
     if (i % 3 === 0) beacons.push([x, top + 0.6, z]);
   });
 }
@@ -639,8 +657,8 @@ function buildNightCity(scene: THREE.Scene, half: number, look: Look, glow: Glow
   glow.box(look.accent, 34, 0.5, 0.5, 28, -9.8, half + 13);
 
   // Scrolling signs up on the towers behind the roof.
-  addTicker(scene, animators, '#ff7f3f', 34, 14, 44, half + 24.9, Math.PI);
-  addTicker(scene, animators, '#38e8ff', 28, half + 30.9, 62, half + 10, -Math.PI / 2);
+  addTicker(scene, animators, '#ff7f3f', 34, 14, 44, half + 24.6, Math.PI);
+  addTicker(scene, animators, '#38e8ff', 28, half + 30.6, 62, half + 10, -Math.PI / 2);
 
   // The gear sign on two poles behind the back of the roof, lit from behind.
   const gear = new THREE.Mesh(
@@ -662,6 +680,8 @@ function buildNightCity(scene: THREE.Scene, half: number, look: Look, glow: Glow
   const posts: THREE.BufferGeometry[] = [];
   for (let along = -half; along <= half; along += 7.5) {
     for (const [x, z] of [[along, half - 0.3], [along, -half + 0.3], [half - 0.3, along], [-half + 0.3, along]]) {
+      // The fenced stretches have posts of their own.
+      if ((z > half - 1 && x < 4) || (x < -half + 1 && z > 2)) continue;
       posts.push(new THREE.CylinderGeometry(0.06, 0.06, 1.1, 5).translate(x, 0.55, z));
       glow.box(look.accent, 0.13, 0.13, 0.13, x, 1.12, z);
     }
@@ -670,26 +690,113 @@ function buildNightCity(scene: THREE.Scene, half: number, look: Look, glow: Glow
   addTraffic(scene, animators, half);
 }
 
-/** Glass towers at sunset, all around and well below the roof, so the drop looks as lethal as it is. */
-function buildSunsetCity(scene: THREE.Scene, half: number, look: Look, glow: GlowBatch, animators: Animator[]): void {
-  const map = windowTexture(WINDOWS_SUNSET, 41);
-  const parts = [towerGeometry(half * 2, 300, half * 2, 0, -150.05, 0, 1.3)];
-  const tops: [number, number, number, number, number][] = [];
-  for (let i = 0; i < 44; i++) {
-    const a = (i / 44) * Math.PI * 2;
-    const dist = half + 30 + ((i * 37) % 70);
-    const top = 30 + ((i * 53) % 90) - 60;
-    const width = 9 + (i % 4) * 2.5;
+/** Rolling grey water, with a little white on it. */
+function seaTexture(): THREE.CanvasTexture {
+  const rand = sequence(515);
+  const texture = canvasTexture(512, 512, (g) => {
+    g.fillStyle = '#123040';
+    g.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 900; i++) {
+      const shade = rand();
+      g.fillStyle = shade < 0.5 ? `rgba(6,22,32,${0.2 + rand() * 0.3})` : `rgba(60,110,130,${0.08 + rand() * 0.2})`;
+      g.beginPath();
+      g.ellipse(rand() * 512, rand() * 512, 10 + rand() * 46, 1.5 + rand() * 5, (rand() - 0.5) * 0.3, 0, Math.PI * 2);
+      g.fill();
+    }
+    for (let i = 0; i < 90; i++) {
+      g.fillStyle = `rgba(226,240,246,${0.1 + rand() * 0.28})`;
+      g.beginPath();
+      g.ellipse(rand() * 512, rand() * 512, 3 + rand() * 16, 0.7 + rand() * 1.4, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+  });
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  return texture;
+}
+
+const SEA_LEVEL = -26;
+
+/** A deck on steel legs over a stormy sea, with a gas flare on one corner and other rigs out on the horizon. */
+function buildRig(scene: THREE.Scene, def: ArenaDef, look: Look, glow: GlowBatch, animators: Animator[]): void {
+  const { half } = def;
+  const map = seaTexture();
+  map.repeat.set(26, 26);
+  const sea = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map, color: 0x7f9fb0, roughness: 0.42, metalness: 0.25 }));
+  sea.position.y = SEA_LEVEL;
+  scene.add(sea);
+  const second = map.clone();
+  second.needsUpdate = true;
+  second.repeat.set(11, 11);
+  const swell = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: second, transparent: true, opacity: 0.32, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+  swell.position.y = SEA_LEVEL + 0.1;
+  scene.add(swell);
+  animators.push((time) => {
+    map.offset.set(time * 0.006, time * 0.012);
+    second.offset.set(-time * 0.004, time * 0.007);
+    sea.position.y = SEA_LEVEL + Math.sin(time * 0.6) * 0.3;
+    swell.position.y = sea.position.y + 0.1;
+  });
+
+  // The deck has a real thickness, and steelwork below it.
+  const steel = new THREE.MeshStandardMaterial({ color: 0x3c4046, metalness: 0.55, roughness: 0.6 });
+  const deck = deckPath(def);
+  scene.add(new THREE.Mesh(wallAround(deck, -0.01, -1.6), new THREE.MeshStandardMaterial({ color: 0x2a2d31, metalness: 0.5, roughness: 0.6, side: THREE.DoubleSide })));
+  const arm = def.arm!;
+  const under: THREE.BufferGeometry[] = [];
+  for (const [x, z] of [[arm - 2, arm - 2], [-arm + 2, arm - 2], [arm - 2, -arm + 2], [-arm + 2, -arm + 2], [half - 3, 0], [-half + 3, 0], [0, half - 3], [0, -half + 3]]) {
+    under.push(new THREE.CylinderGeometry(1.5, 2, 60, 14).translate(x, -31, z));
+    for (let y = -6; y > -26; y -= 6) under.push(new THREE.TorusGeometry(1.75, 0.16, 6, 18).rotateX(Math.PI / 2).translate(x, y, z));
+  }
+  // Cross bracing between the legs, under the arms, leaving the hatches clear to look down through.
+  for (const [ax, az, bx, bz] of [[arm - 2, arm - 2, -arm + 2, -arm + 2], [-arm + 2, arm - 2, arm - 2, -arm + 2], [half - 3, 0, 0, half - 3], [0, half - 3, -half + 3, 0], [-half + 3, 0, 0, -half + 3], [0, -half + 3, half - 3, 0]]) {
+    const length = Math.hypot(bx - ax, bz - az);
+    under.push(new THREE.CylinderGeometry(0.28, 0.28, length, 7).rotateX(Math.PI / 2).rotateY(Math.atan2(bx - ax, bz - az)).translate((ax + bx) / 2, -14, (az + bz) / 2));
+  }
+  addMerged(scene, under, steel);
+
+  // Safety rail lights along the cut-away corners, where the drop comes up on you fastest.
+  for (let i = 0; i < deck.length; i++) {
+    const [x, z] = deck[i];
+    const [nx, nz] = deck[(i + 1) % deck.length];
+    const length = Math.hypot(nx - x, nz - z);
+    for (let along = 2; along < length - 1; along += 4.2) {
+      const t = along / length;
+      glow.box(look.accent, 0.14, 0.14, 0.14, x + (nx - x) * t, 0.34, z + (nz - z) * t);
+    }
+  }
+
+  // The gas flare, burning off on a boom out past the corner. It's the map's landmark from anywhere.
+  const stack = half * 0.72;
+  const flarePipe = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.9, 62, 12), steel);
+  flarePipe.position.set(-stack, 9, -stack);
+  scene.add(flarePipe);
+  const flame = new THREE.Mesh(new THREE.SphereGeometry(2.6, 14, 10), new THREE.MeshBasicMaterial({ color: 0xffb040, toneMapped: false, fog: false }));
+  flame.scale.set(1, 2.2, 1);
+  flame.position.set(-stack, 43, -stack);
+  scene.add(flame);
+  const halo = new THREE.Mesh(new THREE.PlaneGeometry(26, 34), new THREE.MeshBasicMaterial({ map: dotTexture(), color: 0xff7a2a, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, fog: false }));
+  halo.position.copy(flame.position);
+  scene.add(halo);
+  animators.push((time) => {
+    const beat = 1 + Math.sin(time * 7) * 0.09 + Math.sin(time * 13.7) * 0.06;
+    flame.scale.set(beat, 2.2 * (2 - beat), beat);
+    halo.lookAt(0, 8, 0);
+  });
+
+  // Other rigs on the horizon, just a silhouette and a few lights.
+  const far: THREE.BufferGeometry[] = [];
+  const beacons: [number, number, number][] = [];
+  for (const [a, dist, size] of [[0.7, 300, 1.3], [2.9, 380, 1], [4.2, 260, 1.5], [5.4, 420, 0.9]]) {
     const x = Math.cos(a) * dist;
     const z = Math.sin(a) * dist;
-    parts.push(towerGeometry(width, top + 300, width, x, top - (top + 300) / 2, z, 1));
-    tops.push([x, z, width, width, top]);
+    far.push(placedBox(46 * size, 8 * size, 30 * size, x, 24 * size, z));
+    far.push(placedBox(10 * size, 22 * size, 10 * size, x + 8 * size, 38 * size, z));
+    far.push(new THREE.CylinderGeometry(0.6, 3 * size, 60 * size, 5).translate(x - 14 * size, 50 * size, z));
+    for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) far.push(placedBox(4 * size, 46 * size, 4 * size, x + lx * 16 * size, 2 * size, z + lz * 11 * size));
+    beacons.push([x - 14 * size, 80 * size, z]);
   }
-  addMerged(scene, parts, new THREE.MeshBasicMaterial({ map, color: 0xb8b0b4, toneMapped: false }));
-  const beacons: [number, number, number][] = [];
-  addTowerTops(glow, beacons, look, tops);
+  addMerged(scene, far, new THREE.MeshBasicMaterial({ color: 0x141820 }));
   addBeacons(scene, animators, beacons);
-  addTraffic(scene, animators, half);
 }
 
 /** Horizontal bands of old sediment. */
@@ -713,7 +820,11 @@ function strataTexture(): THREE.CanvasTexture {
 /** Mesas striped with rock layers, with a few radio masts to say someone works out here. */
 function buildCanyon(scene: THREE.Scene, half: number, animators: Animator[]): void {
   const strata = strataTexture();
-  scene.add(new THREE.Mesh(placedBox(half * 2, 200, half * 2, 0, -100.05, 0), new THREE.MeshStandardMaterial({ map: strata, roughness: 1 })));
+  // Only the sides, so the chasms have nothing plugging them.
+  const face = wallAround([[half, half], [-half, half], [-half, -half], [half, -half]], -0.02, -200);
+  const faceUv = face.getAttribute('uv');
+  for (let i = 0; i < faceUv.count; i++) faceUv.setXY(i, faceUv.getX(i) * 0.02, faceUv.getY(i));
+  scene.add(new THREE.Mesh(face, new THREE.MeshStandardMaterial({ map: strata, roughness: 1, side: THREE.DoubleSide })));
   const parts: THREE.BufferGeometry[] = [];
   for (let i = 0; i < 26; i++) {
     const a = (i / 26) * Math.PI * 2;
@@ -735,8 +846,22 @@ function buildCanyon(scene: THREE.Scene, half: number, animators: Animator[]): v
 }
 
 /** Dark peaks with snow on their tips, under the aurora. */
-function buildGlacier(scene: THREE.Scene, half: number): void {
-  scene.add(new THREE.Mesh(placedBox(half * 2, 200, half * 2, 0, -100.05, 0), new THREE.MeshStandardMaterial({ color: 0x223a52, roughness: 0.8 })));
+function buildGlacier(scene: THREE.Scene, def: ArenaDef): void {
+  const { half } = def;
+  // A shelf of ice around the lake, then dark water all the way out to the mountains.
+  scene.add(new THREE.Mesh(wallAround(deckPath(def), -0.01, -2.4), new THREE.MeshStandardMaterial({ color: 0x9fd2ea, roughness: 0.4, metalness: 0.1, side: THREE.DoubleSide })));
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x06141f, roughness: 0.25, metalness: 0.4 }));
+  water.position.y = -2.4;
+  scene.add(water);
+  const floes: THREE.BufferGeometry[] = [];
+  const rand = sequence(909);
+  for (let i = 0; i < 46; i++) {
+    const a = rand() * Math.PI * 2;
+    const dist = half + 5 + rand() * rand() * 70;
+    const size = 0.6 + rand() * 2.6;
+    floes.push(new THREE.CylinderGeometry(size, size * 1.15, 0.6, 5 + Math.floor(rand() * 3)).rotateY(rand() * 6).translate(Math.cos(a) * dist, -2.2, Math.sin(a) * dist));
+  }
+  addMerged(scene, floes, new THREE.MeshStandardMaterial({ color: 0x8fb0c4, roughness: 0.7, flatShading: true }));
   const tinted = (geometry: THREE.BufferGeometry, hex: number) => {
     const color = new THREE.Color(hex);
     const { count } = geometry.getAttribute('position');
@@ -753,7 +878,7 @@ function buildGlacier(scene: THREE.Scene, half: number): void {
     const x = Math.cos(a) * dist;
     const z = Math.sin(a) * dist;
     const y = (height - 70) / 2 - 45;
-    parts.push(tinted(new THREE.ConeGeometry(radius, height, 6).rotateY(i).translate(x, y, z), 0x1a2a3e));
+    parts.push(tinted(new THREE.ConeGeometry(radius, height, 6).rotateY(i).translate(x, y, z), 0x34506e));
     // The cap is the same cone's tip, a little proud of it.
     const cap = 0.24;
     parts.push(tinted(new THREE.ConeGeometry(radius * cap * 1.01, height * cap, 6).rotateY(i).translate(x, y + height / 2 - (height * cap) / 2 + 0.2, z), 0xdcebf8));
@@ -950,7 +1075,7 @@ function addShed(scene: THREE.Scene, b: Block, look: Look, glow: GlowBatch): voi
   glow.wallHalo(look.second, b.w, 2.4, b.x, height - 0.2, b.z - b.d / 2 - 0.06);
 }
 
-function hazardTexture(): THREE.CanvasTexture {
+export function hazardTexture(): THREE.CanvasTexture {
   const texture = canvasTexture(256, 64, (g) => {
     g.fillStyle = '#ff7f3f';
     g.fillRect(0, 0, 256, 64);
@@ -987,14 +1112,174 @@ export function buildSaw(): THREE.Group {
   return saw;
 }
 
+/** Whether something on the floor is already here, so markings can keep clear of it. */
+function floorTaken(def: ArenaDef, x: number, z: number, pad: number): boolean {
+  const inCircle = (c: { x: number; z: number; r: number }) => Math.hypot(x - c.x, z - c.z) < c.r + pad;
+  const inRect = (c: Rect) => Math.abs(x - c.x) < c.w / 2 + pad && Math.abs(z - c.z) < c.d / 2 + pad;
+  const sawRect = (saw: ArenaDef['saws'][number]): Rect => {
+    const long = saw.amplitude * 2 + SAW_RADIUS * 2;
+    return saw.axis === 'x' ? { x: 0, z: saw.fixed, w: long, d: 3 } : { x: saw.fixed, z: 0, w: 3, d: long };
+  };
+  return [...def.pits, ...def.trapdoors, ...def.firePits, ...def.shockers, ...def.hammers, ...def.pillars, def.logo].some(inCircle)
+    || [...def.chasms, ...def.conveyors, ...def.grinders, ...def.saws.map(sawRect)].some(inRect)
+    || def.pistons.some((p) => inRect({ x: p.x + p.dirX * 4, z: p.z + p.dirZ * 4, w: p.dirX ? 10 : 6, d: p.dirX ? 6 : 10 }));
+}
+
+/** A thin bright line standing on the edge of the floor, and a glow rising from it. */
+function addMergedEdge(scene: THREE.Scene, outline: [number, number][], color: number): void {
+  scene.add(new THREE.Mesh(wallAround(outline, 0.05, -0.12), new THREE.MeshBasicMaterial({ color, toneMapped: false, fog: false, side: THREE.DoubleSide })));
+  const texture = softTexture();
+  const spill = wallAround(outline, 0.9, -0.9);
+  scene.add(new THREE.Mesh(spill, new THREE.MeshBasicMaterial({ map: texture, color, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, fog: false, side: THREE.DoubleSide })));
+}
+
+/** A copper coil set in a dark plate, with warning paint around it. */
+function coilTexture(): THREE.CanvasTexture {
+  return canvasTexture(256, 256, (g) => {
+    g.fillStyle = '#16181b';
+    g.fillRect(0, 0, 256, 256);
+    g.save();
+    g.translate(128, 128);
+    g.strokeStyle = '#c27a3f';
+    g.lineWidth = 7;
+    g.beginPath();
+    for (let a = 0; a < Math.PI * 14; a += 0.08) {
+      const r = 8 + (a / (Math.PI * 14)) * 100;
+      if (a === 0) g.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+      else g.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    g.stroke();
+    for (let i = 0; i < 24; i++) {
+      g.fillStyle = i % 2 ? '#4fd0ff' : '#101214';
+      g.beginPath();
+      g.arc(0, 0, 126, (i / 24) * Math.PI * 2, ((i + 1) / 24) * Math.PI * 2);
+      g.arc(0, 0, 113, ((i + 1) / 24) * Math.PI * 2, (i / 24) * Math.PI * 2, true);
+      g.fill();
+    }
+    g.restore();
+  });
+}
+
+/** The map's own kind of obstacle, filling the space its round footprint takes up in the rules. */
+function addPillarProp(scene: THREE.Scene, p: Pillar, look: Look, wall: number, plain: THREE.Material, glow: GlowBatch): void {
+  const rand = sequence(Math.floor(Math.abs(p.x * 13 + p.z * 7)) + 21);
+  const shadowed = (mesh: THREE.Mesh) => {
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return mesh;
+  };
+  switch (look.pillar) {
+    case 'scrap': {
+      // A stack of crushed cars, each block a different faded colour.
+      const colors = [0x6a3a28, 0x3e4a50, 0x5a5230, 0x3a3d40, 0x552a24, 0x2e3a32, 0x5e4a3a];
+      const parts: THREE.BufferGeometry[] = [];
+      let y = 0;
+      for (let i = 0; i < 5; i++) {
+        const tall = 0.8 + rand() * 0.5;
+        const side = p.r * (1.62 - i * 0.05);
+        const block = new THREE.BoxGeometry(side, tall, side * (0.86 + rand() * 0.1), 3, 2, 3);
+        const position = block.getAttribute('position');
+        // Dented, because they've been through a crusher.
+        for (let v = 0; v < position.count; v++) {
+          position.setXYZ(v, position.getX(v) + (rand() - 0.5) * 0.14, position.getY(v) + (rand() - 0.5) * 0.1, position.getZ(v) + (rand() - 0.5) * 0.14);
+        }
+        block.rotateY((rand() - 0.5) * 0.5);
+        block.translate(p.x + (rand() - 0.5) * 0.2, y + tall / 2, p.z + (rand() - 0.5) * 0.2);
+        const color = new THREE.Color(colors[Math.floor(rand() * colors.length)]);
+        const paint = new Float32Array(position.count * 3);
+        for (let v = 0; v < position.count; v++) paint.set([color.r, color.g, color.b], v * 3);
+        block.setAttribute('color', new THREE.BufferAttribute(paint, 3));
+        parts.push(block.toNonIndexed());
+        block.dispose();
+        y += tall;
+      }
+      const mesh = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0.15, flatShading: true }));
+      for (const part of parts) part.dispose();
+      scene.add(shadowed(mesh));
+      return;
+    }
+    case 'tank': {
+      // A pressure tank in warning yellow, with bands and a pipe.
+      const tank = shadowed(new THREE.Mesh(new THREE.CapsuleGeometry(p.r * 0.92, 2.4, 8, 20), new THREE.MeshStandardMaterial({ color: 0xc89a2a, metalness: 0.4, roughness: 0.5 })));
+      tank.position.set(p.x, p.r * 0.92 + 1.2, p.z);
+      scene.add(tank);
+      const bands: THREE.BufferGeometry[] = [];
+      for (const y of [0.9, 2.6]) bands.push(new THREE.TorusGeometry(p.r * 0.94, 0.07, 6, 24).rotateX(Math.PI / 2).translate(p.x, y, p.z));
+      bands.push(new THREE.CylinderGeometry(0.14, 0.14, 2.2, 8).translate(p.x, 5.2, p.z));
+      addMerged(scene, bands, new THREE.MeshStandardMaterial({ color: 0x2c2f33, metalness: 0.6, roughness: 0.5 }));
+      glow.box(look.second, 0.24, 0.24, 0.24, p.x, 6.4, p.z);
+      return;
+    }
+    case 'chimney': {
+      // A brick stack, with hot light showing through a slot and the top glowing.
+      const stack = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(p.r * 0.72, p.r, 7, 20), new THREE.MeshStandardMaterial({ color: 0x3a2a24, roughness: 0.9 })));
+      stack.position.set(p.x, 3.5, p.z);
+      scene.add(stack);
+      for (const y of [2.1, 4.2]) glow.part(look.second, new THREE.CylinderGeometry(p.r * (1 - y * 0.04) + 0.03, p.r * (1 - y * 0.04) + 0.03, 0.14, 20, 1, true).translate(p.x, y, p.z));
+      glow.part(look.accent, new THREE.CylinderGeometry(p.r * 0.56, p.r * 0.56, 0.12, 20).translate(p.x, 7.02, p.z));
+      return;
+    }
+    case 'rock': {
+      // A weathered stack of the map's own rock, its layers lining up with the cliffs.
+      const geometry = new THREE.CylinderGeometry(p.r * 0.72, p.r * 1.04, 7, 9, 5);
+      const position = geometry.getAttribute('position');
+      const seen = new Map<string, [number, number]>();
+      for (let v = 0; v < position.count; v++) {
+        const key = `${position.getX(v).toFixed(3)},${position.getY(v).toFixed(3)},${position.getZ(v).toFixed(3)}`;
+        // The same corner gets the same nudge, or the faces would split apart.
+        const nudge = seen.get(key) ?? [(rand() - 0.5) * 0.5, (rand() - 0.5) * 0.5];
+        seen.set(key, nudge);
+        position.setXYZ(v, position.getX(v) + nudge[0], position.getY(v), position.getZ(v) + nudge[1]);
+      }
+      geometry.computeVertexNormals();
+      const mesh = shadowed(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ map: strataTexture(), roughness: 1, flatShading: true })));
+      mesh.position.set(p.x, 3.5, p.z);
+      scene.add(mesh);
+      return;
+    }
+    case 'ice': {
+      // Shards of blue ice, thrust up through the lake and glowing faintly from inside.
+      const parts: THREE.BufferGeometry[] = [];
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2;
+        const out = i === 0 ? 0 : p.r * 0.62;
+        const tall = i === 0 ? 7 : 2.4 + rand() * 2.6;
+        const width = i === 0 ? p.r * 0.72 : p.r * (0.32 + rand() * 0.2);
+        const shard = new THREE.ConeGeometry(width, tall, 5).rotateY(rand() * 6);
+        shard.rotateZ(i === 0 ? 0 : Math.cos(a) * -0.16).rotateX(i === 0 ? 0 : Math.sin(a) * 0.16);
+        parts.push(shard.translate(p.x + Math.cos(a) * out, tall / 2 - 0.1, p.z + Math.sin(a) * out));
+      }
+      const mesh = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshStandardMaterial({ color: 0x9fdcf0, emissive: 0x1f6a8a, emissiveIntensity: 0.65, roughness: 0.2, metalness: 0.1, transparent: true, opacity: 0.88, flatShading: true }));
+      for (const part of parts) part.dispose();
+      mesh.castShadow = true;
+      scene.add(mesh);
+      return;
+    }
+    default: {
+      // A steel column with a band of warning paint, and a lit ring near its head.
+      const column = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(p.r * 0.92, p.r * 1.04, 5.4, 24), plain));
+      column.position.set(p.x, 2.7, p.z);
+      scene.add(column);
+      const strip = hazardTexture();
+      strip.repeat.set(4, 1);
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(p.r * 1.06, p.r * 1.07, 0.7, 24, 1, true), new THREE.MeshStandardMaterial({ map: strip, roughness: 0.7 }));
+      band.position.set(p.x, 0.6, p.z);
+      scene.add(band);
+      glow.part(look.accent, new THREE.CylinderGeometry(p.r * 0.96, p.r * 0.96, 0.16, 24, 1, true).translate(p.x, 4.7, p.z));
+      glow.part(look.accent, new THREE.CylinderGeometry(p.r * 0.6, p.r * 0.6, 0.14, 24).translate(p.x, 5.46, p.z));
+      void wall;
+    }
+  }
+}
+
 function buildBackdrop(scene: THREE.Scene, def: ArenaDef, look: Look, glow: GlowBatch, animators: Animator[]): void {
   const { half, theme } = def;
   if (theme.backdrop === 'stands') buildStadium(scene, half, look, glow);
   else if (theme.backdrop === 'foundry') buildFoundry(scene, half, look, glow);
   else if (theme.backdrop === 'night') buildNightCity(scene, half, look, glow, animators);
-  else if (theme.backdrop === 'city') buildSunsetCity(scene, half, look, glow, animators);
+  else if (theme.backdrop === 'sea') buildRig(scene, def, look, glow, animators);
   else if (theme.backdrop === 'canyon') buildCanyon(scene, half, animators);
-  else buildGlacier(scene, half);
+  else buildGlacier(scene, def);
 }
 
 export interface Ledge {
@@ -1012,13 +1297,14 @@ export interface ArenaScene {
   ledges: Ledge[];
   saws: THREE.Group[];
   shockers: THREE.MeshStandardMaterial[];
-  pistons: THREE.Group[];
   fire: THREE.MeshStandardMaterial;
   hill: THREE.Mesh;
   /** Stands in for the light reflections would give, on settings without them. */
   fill: THREE.AmbientLight;
   /** Moves the scenery that has nothing to do with the match, such as signs and air traffic. */
   animate: Animator;
+  /** Moves the hazards, by the match's clock, because the rules go by that. */
+  sync: (matchTime: number) => void;
 }
 
 export function buildArena(def: ArenaDef): ArenaScene {
@@ -1058,7 +1344,7 @@ export function buildArena(def: ArenaDef): ArenaScene {
   const size = half * 2;
   const concrete = look.floor === 'concrete';
   const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(size, size),
+    floorGeometry(def),
     new THREE.MeshStandardMaterial({
       map: FLOORS[look.floor](),
       color: theme.floor,
@@ -1068,15 +1354,16 @@ export function buildArena(def: ArenaDef): ArenaScene {
       roughness: concrete || look.floor === 'rock' ? 0.95 : def.grip < 0.5 ? 0.58 : 0.82,
     }),
   );
-  floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
 
   const stripes = hazardTexture();
   if (def.walled) {
-    const outer = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: 0x0f1012, roughness: 1 }));
-    outer.rotation.x = -Math.PI / 2;
-    outer.position.y = -0.02;
+    // Ground beyond the walls, with the middle left out so it can't plug a hole in the floor.
+    const beyond = new THREE.Shape([new THREE.Vector2(-200, -200), new THREE.Vector2(200, -200), new THREE.Vector2(200, 200), new THREE.Vector2(-200, 200)]);
+    beyond.holes.push(new THREE.Path([new THREE.Vector2(-half, -half), new THREE.Vector2(-half, half), new THREE.Vector2(half, half), new THREE.Vector2(half, -half)]));
+    const outer = new THREE.Mesh(new THREE.ShapeGeometry(beyond).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x0f1012, roughness: 1 }));
+    outer.position.y = -0.1;
     scene.add(outer);
 
     // Dark walls with ribs, lit by a band of LEDs along the top and a line at the foot.
@@ -1108,26 +1395,19 @@ export function buildArena(def: ArenaDef): ArenaScene {
     for (let along = -inset; along < inset; along += 3.6) {
       const middle = along + 0.9;
       for (const side of [inset, -inset]) {
-        glow.flat(marking, 1.8, 0.09, middle, side);
-        glow.flat(marking, 0.09, 1.8, side, middle);
+        if (!floorTaken(def, middle, side, 1.6)) glow.flat(marking, 1.8, 0.09, middle, side);
+        if (!floorTaken(def, side, middle, 1.6)) glow.flat(marking, 0.09, 1.8, side, middle);
       }
     }
   } else {
-    // A bar of light at the floor's edge, so the drop is easy to read while driving.
-    const w = 0.22;
-    const spill = 1.5;
-    const edge = half - w / 2;
-    const inner = half - spill / 2;
-    for (const side of [1, -1]) {
-      glow.flat(look.accent, size, w, 0, edge * side, 0.02);
-      glow.flat(look.accent, w, size, edge * side, 0, 0.02);
-      glow.floorHalo(look.accent, size, spill, 0, inner * side);
-      glow.floorHalo(look.accent, spill, size, inner * side, 0);
-    }
+    // A line of light at the floor's edge, which follows its real shape, so the drop is easy to read while driving.
+    const outline = deckPath(def);
+    addMergedEdge(scene, outline, look.accent);
   }
 
   buildBackdrop(scene, def, look, glow, animators);
-  addFloorLogo(scene, def.logo.x, def.logo.z, def.logo.r);
+  // A logo over a trapdoor is painted on the doors instead.
+  if (!def.trapdoors.some((door) => Math.hypot(door.x - def.logo.x, door.z - def.logo.z) < 1)) addFloorLogo(scene, def.logo.x, def.logo.z, def.logo.r);
   const metal = new THREE.MeshStandardMaterial({ color: 0x2e3136, metalness: 0.4, roughness: 0.6 });
   const link = def.blocks.some((b) => b.kind === 'fence') ? chainLinkTexture() : null;
   for (const block of def.blocks) {
@@ -1163,72 +1443,24 @@ export function buildArena(def: ArenaDef): ArenaScene {
       glow.box(look.accent, p.r * 2.4, 0.2, p.r * 2.4, p.x, 9.1, p.z);
       continue;
     }
-    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(p.r, p.r * 1.1, 5, 24), pillarMat);
-    pillar.position.set(p.x, 2.5, p.z);
-    pillar.castShadow = true;
-    pillar.receiveShadow = true;
-    scene.add(pillar);
-    const cap = new THREE.CylinderGeometry(p.r * 0.7, p.r * 0.7, 0.25, 24).translate(p.x, 5.1, p.z);
-    glow.part(look.accent, cap);
-    glow.ring(look.accent, p.r * 1.1, p.r * 1.1 + 0.12, p.x, p.z, 0.02);
+    addPillarProp(scene, p, look, theme.wall, pillarMat, glow);
   }
 
-  // Pits are black holes ringed in the colour of danger.
-  const pitMat = new THREE.MeshBasicMaterial({ color: 0x020203, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
-  const danger = new THREE.Color(DANGER).multiplyScalar(0.14).getHex();
-  for (const p of def.pits) {
-    const hole = new THREE.Mesh(new THREE.CircleGeometry(p.r, 32), pitMat);
-    hole.rotation.x = -Math.PI / 2;
-    hole.position.set(p.x, 0.034, p.z);
-    scene.add(hole);
-    glow.ring(danger, p.r + 0.14, p.r + 0.6, p.x, p.z, 0.026);
-    glow.ring(DANGER, p.r, p.r + 0.14, p.x, p.z);
-  }
+  const sync = buildHazards(scene, def, look.hole, glow);
+  for (const bridge of look.bridges ?? []) addBridge(scene, bridge);
 
+  // The sentries and everything else that burns share this, so it all flickers together.
   const fire = new THREE.MeshStandardMaterial({ color: 0xb02a00, emissive: 0xff3a00, emissiveIntensity: 0.8 });
-  for (const f of def.firePits) {
-    const bed = new THREE.Mesh(new THREE.CircleGeometry(f.r, 28), fire);
-    bed.rotation.x = -Math.PI / 2;
-    bed.position.set(f.x, 0.03, f.z);
-    scene.add(bed);
-    const lip = new THREE.Mesh(new THREE.RingGeometry(f.r, f.r + 0.5, 28), new THREE.MeshStandardMaterial({ color: 0x1f1512, roughness: 1 }));
-    lip.rotation.x = -Math.PI / 2;
-    lip.position.set(f.x, 0.035, f.z);
-    scene.add(lip);
-  }
 
   const shockers: THREE.MeshStandardMaterial[] = [];
   for (const s of def.shockers) {
-    const mat = new THREE.MeshStandardMaterial({ color: 0x2b4a66, emissive: 0x4fd0ff, emissiveIntensity: 0.1, transparent: true, opacity: 0.85 });
-    const disc = new THREE.Mesh(new THREE.CircleGeometry(s.r, 32), mat);
-    disc.rotation.x = -Math.PI / 2;
-    disc.position.set(s.x, 0.03, s.z);
+    const map = coilTexture();
+    const mat = new THREE.MeshStandardMaterial({ map, emissiveMap: map, emissive: 0x7fdcff, emissiveIntensity: 0.1, roughness: 0.5, metalness: 0.4, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(s.r, 40).rotateX(-Math.PI / 2), mat);
+    disc.position.set(s.x, 0.024, s.z);
+    disc.receiveShadow = true;
     scene.add(disc);
     shockers.push(mat);
-    for (const radius of [s.r * 0.45, s.r * 0.95]) {
-      const coil = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.1, 6, 32), new THREE.MeshStandardMaterial({ color: 0xb87333, metalness: 0.8, roughness: 0.4 }));
-      coil.rotation.x = Math.PI / 2;
-      coil.position.set(s.x, 0.1, s.z);
-      scene.add(coil);
-    }
-  }
-
-  const pistons: THREE.Group[] = [];
-  const headMat = new THREE.MeshStandardMaterial({ color: 0xe8602a, metalness: 0.5, roughness: 0.45 });
-  const rodMat = new THREE.MeshStandardMaterial({ color: 0xc0c6cc, metalness: 0.9, roughness: 0.3 });
-  for (const p of def.pistons) {
-    const group = new THREE.Group();
-    group.position.set(p.x, 0, p.z);
-    group.rotation.y = Math.atan2(p.dirX, p.dirZ);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(5, 2.4, 1.2), headMat);
-    head.position.set(0, 1.2, 0.6);
-    head.castShadow = true;
-    group.add(head);
-    const rod = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 8), rodMat);
-    rod.position.set(0, 1.2, -4);
-    group.add(rod);
-    scene.add(group);
-    pistons.push(group);
   }
 
   const sentryBody = new THREE.MeshStandardMaterial({ color: 0x2a2320, metalness: 0.5, roughness: 0.55 });
@@ -1240,22 +1472,23 @@ export function buildArena(def: ArenaDef): ArenaScene {
     const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 0.5, 20), fire);
     nozzle.position.set(s.x, 2.8, s.z);
     scene.add(nozzle);
-    const warn = new THREE.Mesh(new THREE.RingGeometry(s.range - 0.2, s.range, 40), new THREE.MeshBasicMaterial({ color: 0xff6a1a, transparent: true, opacity: 0.4 }));
+    // Only the quarter facing the map. The rest of the circle would be inside the walls.
+    const facing = Math.atan2(Math.sign(s.z), -Math.sign(s.x));
+    const warn = new THREE.Mesh(new THREE.RingGeometry(s.range - 0.2, s.range, 24, 1, facing - Math.PI / 4, Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff6a1a, transparent: true, opacity: 0.4, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
     warn.rotation.x = -Math.PI / 2;
     warn.position.set(s.x, 0.03, s.z);
     scene.add(warn);
   }
 
   // Saw tracks and blades, with a warning line down each side of the slot.
-  const trench = new THREE.MeshStandardMaterial({ color: 0x0d0e10, roughness: 1 });
+  const trench = new THREE.MeshStandardMaterial({ color: 0x0d0e10, roughness: 1, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   const saws: THREE.Group[] = [];
   for (const saw of def.saws) {
     const length = saw.amplitude * 2 + SAW_RADIUS * 2;
     const alongX = saw.axis === 'x';
     const trackX = alongX ? 0 : saw.fixed;
     const trackZ = alongX ? saw.fixed : 0;
-    const track = new THREE.Mesh(new THREE.PlaneGeometry(alongX ? length : 0.7, alongX ? 0.7 : length), trench);
-    track.rotation.x = -Math.PI / 2;
+    const track = new THREE.Mesh(new THREE.PlaneGeometry(alongX ? length : 0.7, alongX ? 0.7 : length).rotateX(-Math.PI / 2), trench);
     track.position.set(trackX, 0.02, trackZ);
     scene.add(track);
     for (const side of [0.42, -0.42]) {
@@ -1283,7 +1516,7 @@ export function buildArena(def: ArenaDef): ArenaScene {
   glow.build(scene);
 
   return {
-    def, scene, saws, shockers, pistons, fire, hill, fill,
+    def, scene, saws, shockers, fire, hill, fill, sync,
     ledges: theme.backdrop === 'night' ? nightCityLedges(half) : [],
     animate: (time) => {
       for (const animator of animators) animator(time);

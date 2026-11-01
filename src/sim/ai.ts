@@ -1,4 +1,4 @@
-import { closestOnBlock, rayBlock, sawPos, shockerActive, type Block } from './arena';
+import { closestOnBlock, rayBlock, sawPos, shockerActive, type Block, ballHeight, ballPos, BALL_HIT_HEIGHT, BALL_RADIUS, HAMMER_WARN, hammerClock, solidGround, trapdoorWarning } from './arena';
 import { DEFENSES, MELEE } from './data';
 import { bearing, wrapAngle, type Bot, type Match } from './match';
 
@@ -6,6 +6,11 @@ const THINK_INTERVAL = 0.2;
 const RETARGET_INTERVAL = 1.5;
 /** How wide a berth to give big obstacles when driving round them. */
 /** How much room a robot keeps between itself and a ledge, and how far before that it slows for a turn. */
+/** How close to a bridge's middle counts as being on it, and how far along it the far bank is. */
+const CROSSING_REACHED = 3.5;
+const CROSSING_FAR_SIDE = 7;
+/** How far ahead a bot looks for a drop on a map that isn't a plain square. */
+const ROOM_LOOKAHEAD = 24;
 const EDGE_CLEARANCE = 3;
 const EDGE_SLOW_ZONE = 6;
 const ROUTE_MARGIN = 1.5;
@@ -48,6 +53,9 @@ export class BotBrain {
     this.fight();
   }
 
+  /** Heading for a bridge, rather than straight for the goal. */
+  private crossing = false;
+
   private think(): void {
     const { bot, match } = this;
     if (this.retargetT <= 0 || !this.target?.alive || !match.canSee(bot, this.target)) {
@@ -86,9 +94,43 @@ export class BotBrain {
     const limit = walled ? half : half - 4;
     const goalX = Math.max(-limit, Math.min(limit, x));
     const goalZ = Math.max(-limit, Math.min(limit, z));
+    const crossing = this.crossingToward(goalX, goalZ);
+    this.crossing = crossing !== null;
+    if (crossing) {
+      this.goalX = crossing.x;
+      this.goalZ = crossing.z;
+      return;
+    }
     const corner = this.cornerAround(goalX, goalZ, limit);
     this.goalX = corner ? corner.x : goalX;
     this.goalZ = corner ? corner.z : goalZ;
+  }
+
+  /** The bridge to head for if there's a chasm on the way to the goal, or null if there isn't. */
+  private crossingToward(goalX: number, goalZ: number): { x: number; z: number } | null {
+    const { bot, match } = this;
+    const { chasms, crossings } = match.arena;
+    if (chasms.length === 0) return null;
+    const dist = Math.hypot(goalX - bot.x, goalZ - bot.z);
+    if (dist < 1e-3) return null;
+    const dirX = (goalX - bot.x) / dist;
+    const dirZ = (goalZ - bot.z) / dist;
+    const blocked = chasms.some((chasm) => {
+      const t = rayBlock({ ...chasm, w: chasm.w + bot.radius, d: chasm.d + bot.radius }, bot.x, bot.z, dirX, dirZ);
+      return t !== null && t < dist;
+    });
+    if (!blocked) return null;
+    let best: { x: number; z: number } | null = null;
+    let bestCost = Infinity;
+    for (const bridge of crossings) {
+      const cost = Math.hypot(bridge.x - bot.x, bridge.z - bot.z) + Math.hypot(goalX - bridge.x, goalZ - bridge.z);
+      if (cost >= bestCost) continue;
+      bestCost = cost;
+      // Once on it, on across to the far side, which is the way the goal lies.
+      const near = Math.hypot(bridge.x - bot.x, bridge.z - bot.z) < CROSSING_REACHED;
+      best = near ? { x: bridge.x + Math.sign(goalX - bridge.x || 1) * CROSSING_FAR_SIDE, z: bridge.z } : bridge;
+    }
+    return best;
   }
 
   /** The way round the first big obstacle in the way, or null if the path is clear. */
@@ -196,6 +238,36 @@ export class BotBrain {
       repel(pos.x, pos.z, 1.7, 5, 2.2);
     }
     for (const pit of arena.pits) repel(pit.x, pit.z, pit.r, 6 * caution, 4);
+    for (const door of arena.trapdoors) {
+      if (trapdoorWarning(door, match.time + 1) > 0) repel(door.x, door.z, door.r, 6 * caution, 4);
+    }
+    for (const chasm of arena.chasms) {
+      const near = closestOnBlock(chasm, bot.x, bot.z);
+      // Shying away this far would stop it ever getting onto a bridge, which runs right between two of them.
+      if (this.crossing) repel(near.x, near.z, 0, 2, 1.5);
+      else repel(near.x, near.z, 0, 6 * caution, 4);
+    }
+    if (arena.shape === 'plus') {
+      // The cut-away corners are drops like any other.
+      const arm = arena.arm!;
+      const size = arena.half - arm;
+      const middle = arm + size / 2;
+      for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const near = closestOnBlock({ x: sx * middle, z: sz * middle, w: size, d: size }, bot.x, bot.z);
+        repel(near.x, near.z, 0, 6 * caution, 4);
+      }
+    }
+    for (const hammer of arena.hammers) {
+      if (hammerClock(hammer, match.time) > hammer.period - HAMMER_WARN) repel(hammer.x, hammer.z, hammer.r, 3, 3);
+    }
+    for (const ball of arena.balls) {
+      const soon = ballPos(ball, match.time + 0.5);
+      if (ballHeight(ball, soon.along) < BALL_HIT_HEIGHT) repel(soon.x, soon.z, BALL_RADIUS, 4, 3);
+    }
+    for (const grinder of arena.grinders) {
+      const near = closestOnBlock(grinder, bot.x, bot.z);
+      repel(near.x, near.z, 0, 3, 2);
+    }
     for (const fire of arena.firePits) repel(fire.x, fire.z, fire.r, 4, 2);
     for (const coil of arena.shockers) {
       if (shockerActive(coil, match.time + 1)) repel(coil.x, coil.z, coil.r, 3, 2.5);
@@ -215,6 +287,13 @@ export class BotBrain {
     if (bot.x < -wall) dirX += (-wall - bot.x) * pull;
     if (bot.z > wall) dirZ -= (bot.z - wall) * pull;
     if (bot.z < -wall) dirZ += (-wall - bot.z) * pull;
+    if (arena.shape === 'round') {
+      const out = Math.hypot(bot.x, bot.z);
+      if (out > wall) {
+        dirX -= (bot.x / out) * (out - wall) * pull;
+        dirZ -= (bot.z / out) * (out - wall) * pull;
+      }
+    }
 
     const speed = Math.hypot(bot.vx, bot.vz);
     if (this.reverseT > 0) {
@@ -261,7 +340,14 @@ export class BotBrain {
     const limit = match.arena.half - bot.radius;
     const across = dx > 1e-6 ? (limit - bot.x) / dx : dx < -1e-6 ? (-limit - bot.x) / dx : Infinity;
     const along = dz > 1e-6 ? (limit - bot.z) / dz : dz < -1e-6 ? (-limit - bot.z) / dz : Infinity;
-    return Math.min(across, along);
+    const room = Math.min(across, along);
+    const { arena } = match;
+    if (arena.shape === 'square' && arena.chasms.length === 0) return room;
+    // Anything other than a plain square gets walked along to find the drop.
+    for (let d = 1; d < Math.min(room, ROOM_LOOKAHEAD); d++) {
+      if (!solidGround(arena, bot.x + dx * d, bot.z + dz * d)) return Math.max(0, d - bot.radius);
+    }
+    return room;
   }
 
   private fight(): void {

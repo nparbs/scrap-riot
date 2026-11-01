@@ -24,6 +24,8 @@ export interface RagdollWorld {
   half: number;
   walled: boolean;
   ledges: Ledge[];
+  /** Whether there's floor here, for maps that aren't a plain square. */
+  floorAt?: (x: number, z: number) => boolean;
 }
 
 /**
@@ -125,8 +127,8 @@ export class Ragdoll {
   /** What the robot would come to rest on, given how high it was a moment ago. */
   private groundBelow(fromY: number): number {
     const { x, z } = this.root.position;
-    const { half, ledges } = this.world;
-    if (!this.fell && Math.abs(x) < half && Math.abs(z) < half) return REST_HEIGHT;
+    const { half, ledges, floorAt } = this.world;
+    if (!this.fell && Math.abs(x) < half && Math.abs(z) < half && (floorAt?.(x, z) ?? true)) return REST_HEIGHT;
     for (const ledge of ledges) {
       const rest = ledge.top + REST_HEIGHT;
       if (fromY >= rest && Math.abs(x - ledge.x) < ledge.w / 2 && Math.abs(z - ledge.z) < ledge.d / 2) return rest;

@@ -48,7 +48,7 @@ The server is authoritative: it runs the same simulation as the game, and client
 - **40 weapons, and no guns:** 23 main weapons and 17 defenses, drawn from every version of the original and from real combat robots such as spinners, flippers, crushers and flamethrowers ([research notes](docs/original-research.md))
 - **6 powerups, take 3 into a match:** Rage, Mega Shield, Cloaking, X-Ray, Repair Kit, Battery Pack
 - **3 upgrade tracks** of 5 levels each: armor, engine, weapons
-- **7 maps:** The Skyscraper for duels, plus for Offline vs Bots walled pits, a rooftop and a canyon with lethal drops, a furnace, a piston foundry, and a frozen lake
+- **7 maps:** The Skyscraper for duels, plus for Offline vs Bots a pit with a timed trapdoor and saws in the walls, a cross-shaped oil rig with a wrecking ball, a furnace with erupting vents around a molten pool, a canyon with chasms, bridges and jump ramps, a foundry with belts and drop hammers, and a round frozen lake with ice that gives way
 - **4 modes:** Online Duel and Online Brawl (up to 8 robots in a Free-for-All on a random map, with bots in any empty seats), plus for Offline vs Bots Free-for-All, Last Robot Standing and King of the Hill
 - **Career:** 12 fights with medals and 3 boss robots, plus achievements
 - **Customization:** paint colors, patterns, body shapes and front or rear weapon mounts, all visible to other players
