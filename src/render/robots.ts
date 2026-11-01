@@ -48,7 +48,14 @@ const paintRed = new THREE.MeshStandardMaterial({ color: 0xc8261c, metalness: 0.
 const warhead = new THREE.MeshStandardMaterial({ color: 0xd8c23a, metalness: 0.35, roughness: 0.5 });
 const glowBlue = new THREE.MeshStandardMaterial({ color: 0x8fdcff, emissive: 0x2a9fe8, emissiveIntensity: 1.5 });
 const glowRed = new THREE.MeshStandardMaterial({ color: 0xff5a4a, emissive: 0xd01a10, emissiveIntensity: 1.5 });
-const shared = new Set<THREE.Material>([steel, dark, blade, hot, copper, paintRed, warhead, glowBlue, glowRed]);
+const glowGreen = new THREE.MeshStandardMaterial({ color: 0x8ff0a0, emissive: 0x1fbf4a, emissiveIntensity: 1.3 });
+const glowViolet = new THREE.MeshStandardMaterial({ color: 0xc9a2ff, emissive: 0x7a2fe8, emissiveIntensity: 1.5 });
+const glowWhite = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2c0, emissiveIntensity: 1.4 });
+const oilBlack = new THREE.MeshStandardMaterial({ color: 0x0b0b10, metalness: 0.9, roughness: 0.2 });
+const oilTip = new THREE.MeshStandardMaterial({ color: 0xf06a24, metalness: 0.4, roughness: 0.4 });
+const glueTank = new THREE.MeshStandardMaterial({ color: 0xc99a2e, metalness: 0.15, roughness: 0.4 });
+const glueTip = new THREE.MeshStandardMaterial({ color: 0xffdb3a, metalness: 0.2, roughness: 0.35 });
+const shared = new Set<THREE.Material>([steel, dark, blade, hot, copper, paintRed, warhead, glowBlue, glowRed, glowGreen, glowViolet, glowWhite, oilBlack, oilTip, glueTank, glueTip]);
 
 function box(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -967,9 +974,112 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec): BuiltMelee
  * Only gear that does its work out at the ends or sides gets a model, which keeps the deck clear.
  * It's all drawn at the nose, and the caller turns it to the side opposite the main weapon.
  */
-function buildDefenseGear(root: THREE.Group, id: DefenseId, deckY: number, spec: HullSpec): THREE.Group | null {
+function placed(mesh: THREE.Mesh, x: number, y: number, z: number): THREE.Mesh {
+  mesh.position.set(x, y, z);
+  return mesh;
+}
+
+/** A vertical ring, or with `across` one that wraps around a bar running side to side. */
+function ring(radius: number, thick: number, mat: THREE.Material, x: number, y: number, z: number, across = false): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.TorusGeometry(radius, thick, 8, ROUND_SIDES), mat);
+  mesh.rotation[across ? 'y' : 'x'] = Math.PI / 2;
+  mesh.position.set(x, y, z);
+  mesh.castShadow = true;
+  return mesh;
+}
+
+/** A bar running side to side. */
+function crossBar(r: number, length: number, mat: THREE.Material, y: number, z: number): THREE.Mesh {
+  const mesh = cylinder(r, length, mat);
+  mesh.rotation.z = Math.PI / 2;
+  mesh.position.set(0, y, z);
+  return mesh;
+}
+
+function ball(r: number, mat: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(r, ROUND_SIDES, 10), mat);
+  mesh.position.set(x, y, z);
+  mesh.castShadow = true;
+  return mesh;
+}
+
+/** A tank across the back with a coloured nozzle at each end, pointing down at the floor it's about to coat. */
+function spreader(root: THREE.Group, y: number, back: number, width: number, tank: THREE.Material, tip: THREE.Material): void {
+  root.add(crossBar(0.16, width, tank, y, back + 0.2));
+  for (const side of [-1, 1]) {
+    const x = side * width * 0.36;
+    const band = cylinder(0.175, 0.05, steel);
+    band.rotation.z = Math.PI / 2;
+    root.add(placed(band, x, y, back + 0.2));
+    root.add(rod([x, y - 0.06, back + 0.26], [x, y - 0.2, back + 0.42], 0.04, dark, 10));
+    const nozzle = turned([[0, 0], [0.05, 0], [0.11, 0.13], [0.11, 0.16], [0.06, 0.16], [0, 0.1]], tip, back + 0.4, y - 0.22, x);
+    root.add(nozzle);
+  }
+  root.add(placed(cylinder(0.05, 0.08, steel), 0, y + 0.18, back + 0.2));
+}
+
+/** Where gear on the tower goes: behind and to one side, clear of a gun on top of it and of the mast. */
+const TOWER_SPOT = { x: -0.38, y: 0.2, z: 0.05 };
+
+/**
+ * Whatever a defense shows on the robot. Anything big goes on a shelf behind the hull, with `+z` here
+ * facing away from the main weapon, because only the tower stands above the deck.
+ */
+function buildDefenseGear(root: THREE.Group, tower: THREE.Group, id: DefenseId, deckY: number, spec: HullSpec): THREE.Group | null {
   const front = spec.length / 2;
+  const y = deckY - spec.height * 0.45;
+  const shelfWidth = spec.width * 0.62;
+  const shelf = () => {
+    root.add(box(shelfWidth, 0.05, 0.5, dark, 0, y - 0.15, front + 0.22));
+    for (const side of [-1, 1]) root.add(rod([side * shelfWidth * 0.4, y + 0.02, front + 0.01], [side * shelfWidth * 0.4, y - 0.14, front + 0.12], 0.03, steel, 8));
+  };
+  const onShelf = y - 0.125;
+  const middle = front + 0.24;
+  const { x: tx, y: ty, z: tz } = TOWER_SPOT;
   switch (id) {
+    case 'shield': {
+      // A glowing emitter ring around the tower.
+      tower.add(ring(0.45, 0.022, glowBlue, 0, 0.09, 0));
+      break;
+    }
+    case 'mines': {
+      // A rack of them, stacked ready to drop, with a red arming light on each.
+      shelf();
+      for (const side of [-1, 1]) {
+        for (const z of [-0.2, 0.2]) root.add(placed(cylinder(0.018, 0.34, steel, 8), side * 0.2, onShelf + 0.17, middle + z));
+      }
+      for (let i = 0; i < 3; i++) {
+        const level = onShelf + 0.05 + i * 0.1;
+        root.add(placed(cylinder(0.17, 0.07, dark), 0, level, middle));
+        root.add(placed(cylinder(0.05, 0.03, i === 2 ? glowRed : warhead), 0, level + 0.045, middle));
+      }
+      break;
+    }
+    case 'oil':
+      spreader(root, y, front, shelfWidth, oilBlack, oilTip);
+      break;
+    case 'glue':
+      spreader(root, y, front, shelfWidth, glueTank, glueTip);
+      break;
+    case 'nails': {
+      // A funnel of nails with the points sticking out of the top, and a spout to pour them through.
+      shelf();
+      const funnel = cone(0.24, 0.3, paintRed);
+      funnel.rotation.x = Math.PI;
+      root.add(placed(funnel, 0, onShelf + 0.17, middle));
+      root.add(ring(0.24, 0.02, steel, 0, onShelf + 0.32, middle));
+      for (const side of [-1, 1]) root.add(rod([side * 0.2, onShelf, middle], [side * 0.2, onShelf + 0.32, middle], 0.018, steel, 8));
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2;
+        const r = i === 0 ? 0 : 0.14;
+        const nail = cone(0.022, 0.2, blade, 4);
+        nail.rotation.set(Math.sin(a) * 0.25, 0, -Math.cos(a) * 0.25);
+        root.add(placed(nail, Math.cos(a) * r, onShelf + 0.43, middle + Math.sin(a) * r));
+      }
+      root.add(rod([0, onShelf + 0.04, middle + 0.24], [0, onShelf - 0.14, middle + 0.4], 0.045, paintRed, 10));
+      root.add(rod([0, onShelf + 0.03, middle], [0, onShelf + 0.03, middle + 0.24], 0.04, paintRed, 10));
+      break;
+    }
     case 'steelram': {
       // A chamfered slab of armour with a raised rib across it.
       const w = (spec.width + 0.4) / 2;
@@ -1010,6 +1120,92 @@ function buildDefenseGear(root: THREE.Group, id: DefenseId, deckY: number, spec:
       ring.position.y = deckY - spec.height * 0.5;
       ring.castShadow = true;
       root.add(ring);
+      break;
+    }
+    case 'teleport': {
+      // An antenna on the tower, with rings stacked up it and a charged ball on top.
+      tower.add(rod([tx, ty, tz], [tx, ty + 0.72, tz], 0.018, steel, 8));
+      for (let i = 0; i < 3; i++) tower.add(ring(0.085 - i * 0.018, 0.016, glowViolet, tx, ty + 0.24 + i * 0.16, tz));
+      tower.add(ball(0.055, glowViolet, tx, ty + 0.75, tz));
+      break;
+    }
+    case 'flash': {
+      // A big strobe in a hooded cup, up where it can be seen from every side.
+      tower.add(placed(cylinder(0.11, 0.1, dark), tx, ty + 0.06, tz));
+      tower.add(ball(0.095, glowWhite, tx, ty + 0.14, tz));
+      tower.add(ring(0.105, 0.016, steel, tx, ty + 0.13, tz));
+      break;
+    }
+    case 'regen': {
+      // Two glowing cells of repair goo, held in a steel cradle.
+      shelf();
+      for (const side of [-1, 1]) {
+        const x = side * 0.14;
+        root.add(placed(cylinder(0.085, 0.3, glowGreen), x, onShelf + 0.16, middle));
+        for (const level of [0.015, 0.31]) root.add(placed(cylinder(0.1, 0.03, steel), x, onShelf + level, middle));
+      }
+      root.add(box(0.46, 0.05, 0.04, dark, 0, onShelf + 0.16, middle + 0.1));
+      break;
+    }
+    case 'cloak': {
+      // Dark vanes either side of the tower, each with a violet seam.
+      for (const side of [-1, 1]) {
+        const vane = box(0.03, 0.26, 0.42, dark, side * 0.47, 0.18, 0);
+        vane.rotation.z = side * -0.32;
+        tower.add(vane);
+        const seam = box(0.012, 0.035, 0.36, glowViolet, side * 0.495, 0.18, 0);
+        seam.rotation.z = side * -0.32;
+        tower.add(seam);
+      }
+      break;
+    }
+    case 'emp': {
+      // A fat coil of copper across the back, charged up at both ends.
+      shelf();
+      const coilY = onShelf + 0.17;
+      root.add(crossBar(0.09, shelfWidth * 0.9, steel, coilY, middle));
+      const wound = shelfWidth * 0.34;
+      for (let i = 0; i <= 8; i++) root.add(ring(0.13, 0.032, copper, -wound + (i / 8) * wound * 2, coilY, middle, true));
+      for (const side of [-1, 1]) root.add(ball(0.075, glowBlue, side * shelfWidth * 0.46, coilY, middle));
+      break;
+    }
+    case 'minibot': {
+      // The little robot itself, riding on the back until it's sent out.
+      shelf();
+      const hullY = onShelf + 0.12;
+      root.add(box(0.3, 0.1, 0.4, warhead, 0, hullY, middle));
+      root.add(placed(cylinder(0.07, 0.07, dark), 0, hullY + 0.08, middle - 0.04));
+      root.add(ball(0.028, glowRed, 0, hullY + 0.03, middle + 0.2));
+      root.add(rod([0.05, hullY + 0.1, middle - 0.08], [0.05, hullY + 0.26, middle - 0.1], 0.008, steel, 6));
+      for (const side of [-1, 1]) {
+        for (const z of [-0.13, 0.13]) {
+          const wheel = cylinder(0.07, 0.05, dark);
+          wheel.rotation.z = Math.PI / 2;
+          root.add(placed(wheel, side * 0.18, onShelf + 0.07, middle + z));
+        }
+      }
+      break;
+    }
+    case 'remote': {
+      // Sticks of charge, strapped in a row and wired to a little receiver with a blinking light.
+      shelf();
+      for (let i = -1; i <= 1; i++) root.add(placed(cylinder(0.06, 0.28, paintRed), i * 0.14, onShelf + 0.14, middle));
+      root.add(box(0.46, 0.04, 0.14, dark, 0, onShelf + 0.17, middle));
+      root.add(box(0.14, 0.1, 0.1, steel, 0.31, onShelf + 0.05, middle));
+      root.add(rod([0.31, onShelf + 0.1, middle], [0.31, onShelf + 0.34, middle], 0.01, steel, 6));
+      root.add(ball(0.025, glowRed, 0.31, onShelf + 0.35, middle));
+      root.add(tube([[0.13, onShelf + 0.26, middle], [0.22, onShelf + 0.2, middle + 0.06], [0.28, onShelf + 0.08, middle]], 0.01, copper, false, 10));
+      break;
+    }
+    case 'kamikaze': {
+      // Exactly what it looks like: a big round bomb with the fuse already lit.
+      shelf();
+      const bombY = onShelf + 0.25;
+      root.add(ball(0.25, oilBlack, 0, bombY, middle));
+      root.add(ring(0.245, 0.018, warhead, 0, bombY, middle));
+      root.add(placed(cylinder(0.05, 0.05, steel), 0, bombY + 0.26, middle));
+      root.add(tube([[0, bombY + 0.28, middle], [0.04, bombY + 0.38, middle + 0.02], [0.1, bombY + 0.42, middle + 0.03]], 0.012, copper, false, 10));
+      root.add(ball(0.035, glowRed, 0.1, bombY + 0.43, middle + 0.03));
       break;
     }
     default:
@@ -1054,9 +1250,14 @@ export function buildRobot(build: RobotBuild): RobotModel {
   (mount ? towerPivot : root).add(meleePivot);
 
   const gear = new THREE.Group();
-  if (!build.rearMelee) gear.rotation.y = Math.PI;
-  const blades = buildDefenseGear(gear, build.defense, deckY, spec);
+  const towerGear = new THREE.Group();
+  if (!build.rearMelee) {
+    gear.rotation.y = Math.PI;
+    towerGear.rotation.y = Math.PI;
+  }
+  const blades = buildDefenseGear(gear, towerGear, build.defense, deckY, spec);
   root.add(gear);
+  towerPivot.add(towerGear);
 
   const shield = new THREE.Mesh(
     new THREE.SphereGeometry(spec.length * 0.95, 20, 14),

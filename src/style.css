@@ -2166,6 +2166,211 @@ select:focus-visible {
   letter-spacing: 0.01em;
 }
 
+/* Someone is waiting online. Up here, it's clear of both thumbs and the weapon keys. */
+.hud-offer {
+  position: absolute;
+  top: 78px;
+  left: 50%;
+  z-index: 2;
+  display: flex;
+  align-items: stretch;
+  width: min(460px, 92vw);
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(18, 19, 20, 0.92);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+  text-shadow: none;
+  transform: translateX(-50%);
+  animation: offer-in 0.22s ease-out backwards;
+}
+
+.hud-offer[hidden] {
+  display: none;
+}
+
+@keyframes offer-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -14px);
+  }
+}
+
+.offer-join {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 12px;
+  border: 0;
+  background: linear-gradient(var(--enamel), var(--enamel-dark));
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.offer-join b {
+  display: block;
+  font: 700 14px var(--body);
+}
+
+.offer-join small {
+  display: block;
+  margin-top: 1px;
+  color: rgba(255, 255, 255, 0.86);
+  font: 500 11px var(--body);
+}
+
+.offer-close {
+  flex: none;
+  width: 44px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 700 16px var(--body);
+  cursor: pointer;
+}
+
+.online-pill {
+  display: none;
+}
+
+/* Phones have no Players panel beside the robot, so these carry the same news. */
+@media (max-width: 960px) and (max-height: 500px), (max-width: 600px) and (orientation: portrait) {
+  .online-pill:not(:empty) {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    z-index: 1;
+    display: block;
+    min-height: 28px;
+    padding: 4px 10px;
+    border: 1px solid var(--seam);
+    border-radius: 14px;
+    background: rgba(18, 19, 20, 0.82);
+    color: var(--text);
+    font: 700 11px var(--body);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .online-pill::before {
+    content: '';
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--good);
+  }
+
+  .nav-btn.nav-btn-play small:not(:empty) {
+    display: block;
+    line-height: 1.1;
+  }
+
+  .nav-btn.nav-btn-play {
+    padding-top: 3px;
+    padding-bottom: 3px;
+  }
+
+  .hud-touch .hud-offer {
+    top: calc(44px + env(safe-area-inset-top));
+    width: min(380px, 56vw);
+  }
+
+  .hud-touch .offer-join {
+    padding: 4px 10px;
+  }
+
+  .hud-touch .offer-join b {
+    font-size: 12px;
+  }
+
+  .hud-touch .offer-join small {
+    font-size: 10.5px;
+  }
+}
+
+@media (max-width: 600px) and (orientation: portrait) {
+  .hud-touch .hud-offer {
+    top: calc(52px + env(safe-area-inset-top));
+    width: 94vw;
+  }
+}
+
+/* Pinned to the bottom of the panel, so a fight is one press away however far down the lists are scrolled. */
+.fight-bar {
+  position: sticky;
+  /* Reaches past the panel's padding, whichever size it is, so nothing shows through underneath. */
+  bottom: -14px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  margin: 12px 0 -14px;
+  padding: 10px 0 14px;
+  border-top: 2px solid var(--accent-dark);
+  background: #191b1e;
+}
+
+.fight-choice {
+  flex: 1;
+  min-width: 0;
+}
+
+.fight-choice strong,
+.fight-choice small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fight-choice strong {
+  color: var(--text);
+  font: 700 15px var(--body);
+}
+
+.fight-choice small {
+  color: var(--muted);
+  font: 600 12px var(--body);
+}
+
+.fight-bar .btn {
+  flex: 0 1 340px;
+  margin: 0;
+  min-width: 0;
+}
+
+/* A panel this narrow is shared out, so the choice stays readable beside the button. */
+@media (max-width: 860px), (max-width: 960px) and (max-height: 500px) {
+  .fight-bar {
+    gap: 10px;
+    padding-top: 8px;
+  }
+
+  .fight-choice {
+    flex: 0 1 36%;
+  }
+
+  .fight-choice strong {
+    font-size: 13px;
+  }
+
+  .fight-choice small {
+    font-size: 11px;
+  }
+
+  .fight-bar .btn {
+    flex: 1 1 0;
+    padding-right: 28px;
+    padding-left: 12px;
+    font-size: 15px;
+    white-space: nowrap;
+  }
+}
+
 .ws-panel > .btn:first-child {
   margin: 0 0 10px;
 }

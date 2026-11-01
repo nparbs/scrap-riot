@@ -243,7 +243,7 @@ export interface GarageActions {
   onRear: (rear: boolean) => void;
 }
 
-export type GarageTab = 'workshop' | 'paintshop' | 'sell' | 'bots' | 'stats' | 'help';
+export type GarageTab = 'workshop' | 'paintshop' | 'sell' | 'bots' | 'stats' | 'help' | 'players';
 export type SideTab = 'stats' | 'highscore' | 'players';
 export type BuyCategory = Slot | 'powerups' | 'upgrades';
 
@@ -551,6 +551,12 @@ export function queueLabel(online: OnlineStatus | null, queue: OnlineQueue): str
   return waiting === undefined ? '' : `${waiting} in queue`;
 }
 
+/** The short version, for phones, which have no room for the Players panel beside the robot. */
+export function onlineLabel(online: OnlineStatus | null): string {
+  if (!online) return '';
+  return `${online.queued + online.playing} online · ${online.queued} in queue`;
+}
+
 /** Who's around now, and who was recently. */
 export function playersPanel(online: OnlineStatus | null): string {
   if (!online) return '<p class="settings-hint">Connect to a game server to see who is playing.</p>';
@@ -616,10 +622,13 @@ function botsPanel(save: Save, options: GarageOptions): string {
     })
     .join('');
   return `<section><h3>Offline vs Bots</h3><p class="settings-hint">Fight computer-controlled robots, with no other players involved.</p></section>
-    <button class="btn btn-primary" data-fight>Start the fight</button>
     <section><h3>Mode</h3><div class="cards">${modes}</div></section>
     <section><h3>Map</h3><div class="cards">${maps}</div></section>
-    ${careerPanel(options.career)}`;
+    ${careerPanel(options.career)}
+    <div class="fight-bar">
+      <div class="fight-choice"><strong>${MODES[save.practice.mode].name}</strong><small>${ARENAS[save.practice.arena].name}</small></div>
+      <button class="btn btn-primary" data-fight>Start the fight</button>
+    </div>`;
 }
 
 function pilotPanel(save: Save, options: GarageOptions): string {
@@ -677,6 +686,8 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
         return pilotPanel(save, options);
       case 'help':
         return helpPanel(options.keys);
+      case 'players':
+        return `<section><h3>Who's online</h3><div data-players>${playersPanel(options.online)}</div></section>`;
       default:
         return workshopPanel(save, options);
     }
@@ -705,6 +716,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
       </div>
       <div class="ws-right">
         <div class="preview-window" data-preview>
+          <button class="online-pill" data-tab="players" data-online-label>${onlineLabel(options.online)}</button>
           <div class="zoom-row"><button class="step-btn" data-zoom="0.15" aria-label="Zoom out">−</button><button class="step-btn" data-zoom="-0.15" aria-label="Zoom in">+</button></div>
         </div>
         <nav class="side-tabs">${sideTabs}</nav>
