@@ -48,6 +48,58 @@ describe('defense gear', () => {
   });
 });
 
+describe('defense gear on show', () => {
+  const ALL = Object.keys(DEFENSES) as DefenseId[];
+  /** What a defense adds to a robot, as its shapes and what they're made of. */
+  const look = (defense: DefenseId) => {
+    const shapes: string[] = [];
+    const model = buildRobot({ ...build('brawler', 'wedge', defense), melee: 'hammer' });
+    model.root.traverse((node) => {
+      if (node instanceof THREE.Mesh) shapes.push(`${node.geometry.type}:${(node.material as THREE.MeshStandardMaterial).color.getHexString()}`);
+    });
+    return shapes.sort();
+  };
+
+  it('is different for every defense', () => {
+    const looks = ALL.map((defense) => look(defense).join());
+    expect(new Set(looks).size).toBe(ALL.length);
+  });
+
+  it('adds something to every robot, on top of a bare one', () => {
+    // A name that isn't a defense gets no gear at all.
+    const bare = look('none' as DefenseId).length;
+    for (const defense of ALL) expect(look(defense).length, defense).toBeGreaterThan(bare);
+  });
+
+  it.each(['oil', 'glue', 'nails', 'mines', 'regen', 'emp', 'minibot', 'remote', 'kamikaze'] as const)('the %s rides behind the hull, opposite the main weapon', (defense) => {
+    const shelfEnd = (rearMelee: boolean) => {
+      const model = buildRobot({ ...build('brawler', 'wedge', defense), melee: 'hammer', rearMelee });
+      model.root.updateMatrixWorld(true);
+      const hull = hullBox(model);
+      const weaponless = new THREE.Box3();
+      model.root.traverse((node) => {
+        let inWeapon = false;
+        for (let up: THREE.Object3D | null = node; up; up = up.parent) inWeapon ||= up === model.meleePivot || up === model.shield;
+        if (node instanceof THREE.Mesh && !inWeapon) weaponless.expandByObject(node);
+      });
+      return { behind: weaponless.min.z < hull.min.z - 0.2, ahead: weaponless.max.z > hull.max.z + 0.2 };
+    };
+    expect(shelfEnd(false).behind).toBe(true);
+    expect(shelfEnd(true).ahead).toBe(true);
+  });
+
+  it.each(['teleport', 'flash', 'cloak', 'shield'] as const)('the %s sits on the tower, so it grows with it', (defense) => {
+    const reach = (tower: 'small' | 'large') => {
+      const model = buildRobot({ ...build('brawler', 'wedge', defense), tower });
+      // The force field's bubble is far bigger than anything else, and only shows when it's on.
+      model.shield.removeFromParent();
+      model.root.updateMatrixWorld(true);
+      return new THREE.Box3().setFromObject(model.root).max.y;
+    };
+    expect(reach('large')).toBeGreaterThan(reach('small'));
+  });
+});
+
 describe('body shapes', () => {
   it.each(CHASSIS_IDS)('all fill the same footprint on the %s', (chassis) => {
     const sizes = BODY_IDS.map((body) => hullBox(buildRobot(build(chassis, body))).getSize(new THREE.Vector3()));

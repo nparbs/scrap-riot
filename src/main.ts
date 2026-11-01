@@ -8,7 +8,7 @@ import { Tutorial } from './game/tutorial';
 import { Keyboard } from './input';
 import { Api, ApiError } from './net/api';
 import { NetClient, type NetFailure } from './net/client';
-import { OFFLINE_PAYOUT_MAX, sanitizeName, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineQueue, type OnlineStatus, type Profile } from './net/protocol';
+import { OFFLINE_PAYOUT_MAX, sanitizeName, waitingQueue, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineQueue, type OnlineStatus, type Profile } from './net/protocol';
 import { GarageView } from './render/garageView';
 import type { ArenaId } from './sim/arena';
 import { installLogoIcon } from './render/logo';
@@ -21,7 +21,7 @@ import { DuelIntro } from './ui/duelIntro';
 import { Painter } from './ui/painter';
 import { enterFullscreen, exitFullscreen, isFullscreen, isInstalled, lockLandscape, onFullscreenChange, unlockOrientation } from './ui/fullscreen';
 import { isTouchDevice, touchControls } from './ui/touch';
-import { garageScreen, introScreen, lobbyScreen, menuScreen, nameScreen, pauseScreen, playersPanel, queueLabel, resultsScreen, settingsScreen, type BuyCategory, type GarageTab, type SideTab } from './ui/screens';
+import { garageScreen, introScreen, lobbyScreen, menuScreen, nameScreen, onlineLabel, pauseScreen, playersPanel, queueLabel, resultsScreen, settingsScreen, type BuyCategory, type GarageTab, type SideTab } from './ui/screens';
 
 type Mode = 'intro' | 'menu' | 'garage' | 'lobby' | 'match' | 'paused' | 'results';
 
@@ -38,7 +38,7 @@ const DRILL_AFTER_SALE = 0.55;
 const DESK_DOCK_HEIGHT = 136;
 const SPINNER_HIT_VOLUME = 0.35;
 const SKIN_SAVE_DELAY_MS = 700;
-const ONLINE_POLL_MS = 15_000;
+const ONLINE_POLL_MS = 5_000;
 const TRAINING_SECONDS = 30 * 60;
 /** How far away another robot's continuous sounds can be heard. */
 const SOUND_RANGE = 40;
@@ -110,6 +110,10 @@ class Game {
   private skinSave: Promise<void> | null = null;
   private wasFiring = false;
   private online: OnlineStatus | null = null;
+  /** Queues the player waved away, until they next empty out. */
+  private readonly dismissedQueues = new Set<OnlineQueue>();
+  /** So only a new offer makes a sound. */
+  private lastOffer: OnlineQueue | null = null;
   /** Redraws the settings page, while it's open. */
   private settingsOpen: (() => void) | null = null;
   /** Settings paused an offline match, so closing them should carry on with it. */
@@ -468,7 +472,7 @@ class Game {
 
   /** Updates just the parts of the page that show this, so nothing being done there is interrupted. */
   private async pollOnline(): Promise<void> {
-    if (!this.api || this.mode !== 'garage' || document.hidden) return;
+    if (!this.api || !(this.mode === 'garage' || this.inBotFight()) || document.hidden) return;
     try {
       this.online = await this.api.online();
     } catch {
@@ -478,8 +482,32 @@ class Game {
     for (const label of this.ui.querySelectorAll<HTMLElement>('[data-queue]')) {
       label.textContent = queueLabel(this.online, label.dataset.queue as OnlineQueue);
     }
-    const players = this.ui.querySelector('[data-players]');
-    if (players) players.innerHTML = playersPanel(this.online);
+    for (const label of this.ui.querySelectorAll<HTMLElement>('[data-online-label]')) label.textContent = onlineLabel(this.online);
+    for (const players of this.ui.querySelectorAll('[data-players]')) players.innerHTML = playersPanel(this.online);
+    this.updateQueueOffer();
+  }
+
+  private inBotFight(): boolean {
+    return (this.mode === 'match' || this.mode === 'paused') && !this.net;
+  }
+
+  /** While fighting bots, says when a real person is waiting online. */
+  private updateQueueOffer(): void {
+    if (!this.hud || !this.inBotFight()) return;
+    for (const queue of this.dismissedQueues) {
+      if (!this.online?.queues?.[queue]) this.dismissedQueues.delete(queue);
+    }
+    const offer = waitingQueue(this.online, this.dismissedQueues);
+    if (offer && offer.queue !== this.lastOffer) this.sfx.pickup();
+    this.lastOffer = offer?.queue ?? null;
+    this.hud.offerQueue(offer);
+  }
+
+  /** The same as forfeiting from the pause menu, then straight into the queue. */
+  private joinQueueFromFight(queue: OnlineQueue): void {
+    this.ui.querySelector('.screen-pause')?.remove();
+    this.showGarage();
+    this.startOnline(queue);
   }
 
   private setProfile(profile: Profile): void {
@@ -844,6 +872,8 @@ class Game {
     this.sfx.click();
     this.sfx.setTrack('battle');
     this.startDuelIntro(match, player);
+    this.lastOffer = null;
+    void this.pollOnline();
   }
 
   /** Plays over the first part of a duel's countdown. Joining late picks it up part way through. */
@@ -905,6 +935,11 @@ class Game {
       },
       onLeave: () => this.showGarage(),
       onCountdown: (go) => this.sfx.countdown(go),
+      onJoinQueue: (queue) => this.joinQueueFromFight(queue),
+      onDismissQueue: (queue) => {
+        this.dismissedQueues.add(queue);
+        this.updateQueueOffer();
+      },
       onDraw: () => {
         if (this.net) this.net.offerDraw();
         else this.hud?.message(`${match.bots.find((bot) => bot !== player)?.name ?? 'Your rival'} refuses a draw.`);
@@ -914,6 +949,7 @@ class Game {
 
   private startOnline(queue: OnlineQueue): void {
     this.training = false;
+    this.careerFight = null;
     this.sfx.click();
     this.mode = 'lobby';
     const lobby = lobbyScreen(queue, () => this.showGarage(), this.profile !== null);

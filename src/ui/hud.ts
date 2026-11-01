@@ -2,7 +2,7 @@ import { sawPos, TRAP_NAMES } from '../sim/arena';
 import { pickLastWords } from '../game/lastWords';
 import { keyLabel, type Action, type Bindings } from '../game/settings';
 import { isTouchDevice } from './touch';
-import { QUICK_CHAT } from '../net/protocol';
+import { QUICK_CHAT, type OnlineQueue } from '../net/protocol';
 import { CLOAK_TIME, COUNTDOWN, DEFENSES, fittedPowerups, leaveWait, legibleColor, MATCH, MEGA_TIME, MELEE, MODES, POWERUPS, RAGDOLL_TIME, RAGE_TIME, SPECTATE, TRAP, UPGRADES, XRAY_TIME, type PowerupId } from '../sim/data';
 import { relativeBearing, type Bot, type GameEvent, type Match } from '../sim/match';
 
@@ -30,6 +30,9 @@ export interface HudActions {
   /** Giving up after being knocked out of a match that's still going. */
   onLeave: () => void;
   onCountdown: (go: boolean) => void;
+  /** Dropping this fight for someone waiting online. */
+  onJoinQueue: (queue: OnlineQueue) => void;
+  onDismissQueue: (queue: OnlineQueue) => void;
 }
 
 /** How long "Eliminated" stays up before it gets out of the way of the view. */
@@ -91,6 +94,9 @@ export class Hud {
   private readonly duel: boolean;
   private rival: Bot;
 
+  private readonly offer: HTMLElement;
+  private readonly offerText: HTMLElement;
+  private offered: OnlineQueue | null = null;
   private readonly tutorial: HTMLElement;
   private touchButtons: Record<TrapId, HTMLElement> | null = null;
   private touchControls: HTMLElement | null = null;
@@ -117,6 +123,10 @@ export class Hud {
       <div class="hud-mode">${escapeText(match.arena.name)} · ${MODES[match.mode].name}</div>
       <div class="hud-arrow"></div>
       <div class="hud-board"></div>
+      <div class="hud-offer" role="status" hidden>
+        <button class="offer-join" tabindex="-1" data-offer-join><b data-offer-text></b><small>${touch ? 'Tap' : 'Click'} to join. You'll forfeit this fight.</small></button>
+        <button class="offer-close" tabindex="-1" data-offer-close aria-label="Not now">✕</button>
+      </div>
       <div class="hud-feed"></div>
       <div class="hud-blind"></div>
       <div class="hud-damage"></div>
@@ -180,6 +190,16 @@ export class Hud {
     this.chatMenu = q('.chat-menu');
     this.surrenderBtn = q('[data-surrender]') as HTMLButtonElement;
     this.drawBtn = q('[data-draw]') as HTMLButtonElement;
+    this.offer = q('.hud-offer');
+    this.offerText = q('[data-offer-text]');
+    q('[data-offer-join]').addEventListener('click', () => {
+      if (this.offered) actions.onJoinQueue(this.offered);
+    });
+    q('[data-offer-close]').addEventListener('click', (e) => {
+      // A button left focused would catch the spacebar, which fires the main weapon.
+      (e.currentTarget as HTMLElement).blur();
+      if (this.offered) actions.onDismissQueue(this.offered);
+    });
     this.tutorial = q('.hud-tutorial');
     this.damageLayer = q('.hud-damage');
     this.board = q('.hud-board');
@@ -231,6 +251,15 @@ export class Hud {
         actions.onDraw();
       }
     });
+  }
+
+  /** Someone is waiting online, while this is only a bot fight. Null takes the offer away. */
+  offerQueue(offer: { queue: OnlineQueue; waiting: number } | null): void {
+    this.offered = offer?.queue ?? null;
+    this.offer.hidden = !offer;
+    if (!offer) return;
+    const who = offer.waiting === 1 ? "Someone's" : `${offer.waiting} pilots are`;
+    this.offerText.textContent = `${who} waiting for an Online ${offer.queue === 'duel' ? 'Duel' : 'Brawl'}`;
   }
 
   private trapRow(key: string, name: string, id: string): string {

@@ -210,6 +210,15 @@ export interface OnlineStatus {
   recent: { name: string; lastSeen: string }[];
 }
 
+/** Who's worth interrupting a bot fight for. A duel starts the moment you join, so it comes first. */
+export function waitingQueue(online: OnlineStatus | null, dismissed: ReadonlySet<OnlineQueue>): { queue: OnlineQueue; waiting: number } | null {
+  for (const queue of ['duel', 'brawl'] as const) {
+    const waiting = online?.queues?.[queue] ?? 0;
+    if (waiting > 0 && !dismissed.has(queue)) return { queue, waiting };
+  }
+  return null;
+}
+
 export interface LeaderboardEntry {
   name: string;
   rating: number;

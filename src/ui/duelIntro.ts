@@ -14,7 +14,11 @@ const SHAKE_TIME = 0.32;
 const EXIT = 3;
 const STAGE_X = 3.5;
 const STAGE_FROM = 17;
-const CAMERA_Z = 12.5;
+// A long lens from further back, because a wide one stretches robots out toward the sides of a wide screen.
+const CAMERA_FOV = 18;
+const CAMERA_Z = 21;
+const CAMERA_Y = 2.7;
+const SHAKE_SIZE = 0.54;
 /** Below this shape the two robots wouldn't fit side by side, so the camera backs up. */
 const WIDE_ENOUGH = 1.8;
 /** Below this shape the VS would cover them side by side, so they stack, each by their own name. */
@@ -58,11 +62,13 @@ export class DuelIntro {
   private time: number;
   private renderer: THREE.WebGLRenderer | null = null;
   private readonly scene = new THREE.Scene();
-  private readonly camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+  private readonly camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 100);
   private readonly models: { model: RobotModel; side: 1 | -1; turn: number }[] = [];
   private whooshed = false;
   private slammed = false;
   private fitted = false;
+  private width = 0;
+  private height = 0;
   private stageX = STAGE_X;
   private stageY = 0;
 
@@ -129,6 +135,8 @@ export class DuelIntro {
   private resize(): void {
     const width = window.innerWidth;
     const height = window.innerHeight;
+    this.width = width;
+    this.height = height;
     this.renderer?.setSize(width, height, false);
     const aspect = width / height;
     const tall = aspect < TALL;
@@ -137,7 +145,7 @@ export class DuelIntro {
     this.stageX = tall ? TALL_STAGE_X : STAGE_X;
     this.stageY = tall ? TALL_STAGE_Y * viewHeight : 0;
     this.camera.aspect = aspect;
-    this.camera.position.set(0, 1.9, distance);
+    this.camera.position.set(0, CAMERA_Y, distance);
     this.camera.lookAt(0, 0.7, 0);
     this.camera.updateProjectionMatrix();
   }
@@ -159,6 +167,11 @@ export class DuelIntro {
       this.fitNames();
       // The display font may still be on its way, and it's wider than the fallback.
       void document.fonts?.ready.then(() => this.fitNames());
+    }
+    // Tapping into a fight is when a phone goes full screen and turns sideways, so this can change right after it starts.
+    if (window.innerWidth !== this.width || window.innerHeight !== this.height) {
+      this.resize();
+      this.fitNames();
     }
     this.time += dt;
     const t = this.time;
@@ -185,9 +198,9 @@ export class DuelIntro {
       for (const wheel of model.wheels) wheel.rotation.x += dt * (arrive < 1 ? 26 : 1.5);
     }
     // Screen shake when the VS lands.
-    const shake = t >= SLAM && t < SLAM + SHAKE_TIME ? (1 - (t - SLAM) / SHAKE_TIME) * 0.32 : 0;
+    const shake = t >= SLAM && t < SLAM + SHAKE_TIME ? (1 - (t - SLAM) / SHAKE_TIME) * SHAKE_SIZE : 0;
     this.camera.position.x = (Math.random() - 0.5) * shake;
-    this.camera.position.y = 1.9 + (Math.random() - 0.5) * shake;
+    this.camera.position.y = CAMERA_Y + (Math.random() - 0.5) * shake;
     this.renderer.render(this.scene, this.camera);
   }
 
