@@ -1,18 +1,19 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Sfx } from './audio';
-import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, previewLoadout, sellPart, setArmour, writeSave, type PartPreview, type Save, type Slot } from './game/progress';
+import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, previewLoadout, sellPart, setArmour, writeSave, type PartPreview, type Save, type Slot } from './game/progress';
 import { awardMedal, careerResult, fightSetups, loadCareer, writeCareer, type Fight } from './game/career';
 import { activeLevel, AutoQuality, DEFAULT_BINDINGS, loadSettings, QUALITY, rebind, writeSettings, type Action } from './game/settings';
 import { Tutorial } from './game/tutorial';
 import { Keyboard } from './input';
 import { Api, ApiError } from './net/api';
 import { NetClient, type NetFailure } from './net/client';
-import { sanitizeName, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineQueue, type OnlineStatus, type Profile } from './net/protocol';
+import { OFFLINE_PAYOUT_MAX, sanitizeName, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineQueue, type OnlineStatus, type Profile } from './net/protocol';
 import { GarageView } from './render/garageView';
+import type { ArenaId } from './sim/arena';
 import { installLogoIcon } from './render/logo';
 import { MatchView } from './render/matchView';
-import { DEFAULT_PAINT, MELEE, POWERUP_CAP, TURRETS } from './sim/data';
+import { COUNTDOWN, DEFAULT_PAINT, MELEE, POWERUP_CAP, TURRETS } from './sim/data';
 import { emptyInput, Match, STEP, type Bot, type BotSetup, type GameEvent } from './sim/match';
 import { renderGoogleButton } from './ui/google';
 import { Hud } from './ui/hud';
@@ -358,9 +359,9 @@ class Game {
   }
 
   /** The title screen runs a real AI-only match in the background. */
-  private startDemo(): void {
+  private startDemo(arena: ArenaId = 'skyscraper'): void {
     const seed = Math.floor(Math.random() * 1e9);
-    this.match = new Match(makeRivals(null, 4, seed), { seed, arena: 'skyscraper' });
+    this.match = new Match(makeRivals(null, 4, seed), { seed, arena });
     this.player = null;
     this.view.setMatch(this.match, 0);
   }
@@ -601,6 +602,7 @@ class Game {
               Object.assign(this.save.practice, practice);
               return true;
             }),
+          onCheat: (code) => this.useCheat(code),
           onName: (name) =>
             {
               this.settings.pilotName = sanitizeName(name);
@@ -656,6 +658,35 @@ class Game {
     this.mountGoogleButton();
   }
 
+  /** Codes are checked where the money lives, so with an account that's the server. */
+  private useCheat(code: string): void {
+    const done = (message: string | null) => {
+      if (message) this.sfx.click();
+      else this.sfx.deny();
+      this.notice = message ?? "That's not a cheat code.";
+      this.refreshGarage();
+    };
+    if (!this.api || !this.profile) {
+      const message = applyCheat(this.save, code);
+      if (message) writeSave(this.storage, this.save);
+      done(message);
+      return;
+    }
+    // A copy, so the message can be worked out without spending the code twice.
+    const message = applyCheat(structuredClone(this.save), code);
+    if (!message) {
+      done(null);
+      return;
+    }
+    this.api
+      .garage({ type: 'cheat', code })
+      .then((profile) => {
+        this.setProfile(profile);
+        done(message);
+      })
+      .catch(() => done(null));
+  }
+
   private mountGoogleButton(): void {
     const slot = this.ui.querySelector<HTMLElement>('[data-google]');
     const { api, googleClientId } = this;
@@ -677,7 +708,7 @@ class Game {
     const dummy: BotSetup = { name: 'Practice Dummy', color: 0xaaaaaa, loadout: { ...newSave().loadout, paint: { ...DEFAULT_PAINT, primary: 0xaaaaaa } }, isAI: false };
     this.training = true;
     this.careerFight = null;
-    this.match = new Match([me, dummy], { seed, arena: 'skyscraper', mode: 'ffa', duration: TRAINING_SECONDS, killTarget: Number.MAX_SAFE_INTEGER });
+    this.match = new Match([me, dummy], { seed, arena: 'skyscraper', mode: 'ffa', duration: TRAINING_SECONDS, killTarget: Number.MAX_SAFE_INTEGER, countdown: COUNTDOWN });
     this.player = this.match.bots[0];
     this.enterMatch(this.match, this.player);
   }
@@ -702,8 +733,8 @@ class Game {
     const me: BotSetup = { name, color: (loadout.paint ?? DEFAULT_PAINT).primary, loadout, isAI: false };
     this.careerFight = fight;
     this.match = fight
-      ? new Match([me, ...fightSetups(fight, seed)], { seed, arena: fight.arena, mode: fight.mode, killTarget: fight.killTarget })
-      : new Match([me, ...makeRivals(this.save, practice.mode === 'duel' ? 1 : 5, seed)], { seed, arena: practice.arena, mode: practice.mode });
+      ? new Match([me, ...fightSetups(fight, seed)], { seed, arena: fight.arena, mode: fight.mode, killTarget: fight.killTarget, countdown: COUNTDOWN })
+      : new Match([me, ...makeRivals(this.save, practice.mode === 'duel' ? 1 : 5, seed)], { seed, arena: practice.arena, mode: practice.mode, countdown: COUNTDOWN });
     this.player = this.match.bots[0];
     this.enterMatch(this.match, this.player);
   }
@@ -719,6 +750,8 @@ class Game {
         if (this.net) this.net.surrender();
         else match.forfeit(player.id);
       },
+      onLeave: () => this.showGarage(),
+      onCountdown: (go) => this.sfx.countdown(go),
       onDraw: () => {
         if (this.net) this.net.offerDraw();
         else this.hud?.message(`${match.bots.find((bot) => bot !== player)?.name ?? 'Your rival'} refuses a draw.`);
@@ -734,7 +767,12 @@ class Game {
     this.setScreen(lobby.el);
     const { name, loadout } = this.save;
     const net = new NetClient(SERVER_URL, { name, loadout, session: this.api?.token ?? undefined, queue }, {
-      onQueue: lobby.update,
+      onQueue: (players, capacity, startsIn, arena, mode) => {
+        lobby.update(players, capacity, startsIn, arena, mode);
+        // Bots fight on the map behind the queue screen, until the real match takes over.
+        if (this.mode === 'lobby' && this.match?.arena.id !== arena) this.startDemo(arena);
+        lobby.el.classList.add('lobby-map');
+      },
       onStart: (match, player) => {
         this.match = match;
         this.player = player;
@@ -804,6 +842,7 @@ class Game {
     const online = this.net !== null;
     this.net = null;
     let note = '';
+    let payout = mine.total;
     const fight = this.careerFight;
     this.careerFight = null;
     if (fight) {
@@ -811,21 +850,26 @@ class Game {
       const reward = awardMedal(this.career, fight, medal);
       writeCareer(this.storage, this.career);
       note = medal ? `${medal[0].toUpperCase()}${medal.slice(1)} medal! ` : 'No medal this time. Finish higher to unlock the next fight. ';
-      if (!this.profile) {
-        // Without an account, career money goes into the save on this device.
-        applyResult(this.save, reward, mine.place, player.powerups);
-        writeSave(this.storage, this.save);
-        if (reward > 0) note += `You earned $${reward}.`;
-      }
-    } else if (this.profile) {
-      // The server already banked an online match. A practice match runs in this browser, so
-      // nothing it reports can be trusted with real money.
-      if (online) this.api?.me().then((profile) => this.setProfile(profile)).catch(() => {});
-      else note = 'Offline, so no payout. Play Online to earn money and rating.';
-    } else {
+      payout = Math.max(reward, mine.total);
+      note += `You earned $${payout}.`;
+    }
+    if (!this.profile) {
       // Online robots get free powerups, so the ones in the garage are left untouched.
-      applyResult(this.save, mine.total, mine.place, online ? this.save.loadout.powerups : player.powerups);
+      applyResult(this.save, payout, mine.place, online ? this.save.loadout.powerups : player.powerups);
       writeSave(this.storage, this.save);
+    } else {
+      // The server already banked an online match. A match run in this browser is banked now.
+      const banked = online ? this.api!.me() : this.api!.garage({ type: 'payout', amount: Math.min(payout, OFFLINE_PAYOUT_MAX) });
+      banked
+        .then((profile) => {
+          this.setProfile(profile);
+          if (this.mode === 'garage') this.refreshGarage();
+        })
+        .catch(() => {
+          if (online) return;
+          this.notice = `Couldn't reach the game server, so your $${payout} wasn't saved.`;
+          if (this.mode === 'garage') this.refreshGarage();
+        });
     }
     this.setScreen(resultsScreen(standings, player.id, () => this.showGarage(), note, match.drawn));
   }
@@ -887,8 +931,13 @@ class Game {
     switch (this.mode) {
       case 'intro':
         return;
-      case 'garage':
       case 'lobby':
+        if (this.match) {
+          this.tickDemo(dt);
+          break;
+        }
+        return;
+      case 'garage':
         this.garage.update(dt);
         this.renderPreview();
         return;
@@ -910,6 +959,7 @@ class Game {
     if (!this.match) return;
     this.view.update(dt, this.accumulator / STEP);
     if (this.mode === 'menu') this.view.orbitCamera(this.clock);
+    if (this.mode === 'lobby') this.view.overviewCamera(this.clock);
     this.renderer.render(this.view.arena.scene, this.view.camera);
   }
 
@@ -948,7 +998,7 @@ class Game {
       match.step();
       this.accumulator -= STEP;
     }
-    if (match.over) this.startDemo();
+    if (match.over) this.startDemo(match.arena.id);
   }
 
   /** Continuous sounds from everyone on the map, fading with distance from the player. */

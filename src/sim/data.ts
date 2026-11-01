@@ -365,8 +365,8 @@ export const MODES: Record<ModeId, { name: string; blurb: string; duration: numb
 export const HILL_TARGET = 45;
 /** Long enough to watch the loser fall before the results appear. */
 export const DUEL_OUTRO = 1.5;
-/** Shorter matches pay no bonus, so two accounts can't farm money by surrendering to each other. */
-export const MIN_PAID_TIME = 30;
+/** Seconds of 3, 2, 1 before a match starts. */
+export const COUNTDOWN = 3;
 
 export const MATCH = {
   duration: MODES.ffa.duration,

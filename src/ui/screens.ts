@@ -1,5 +1,5 @@
 import { ACHIEVEMENTS, CAREER, isUnlocked, type AchievementStats, type CareerProgress, type Fight, type Medal } from '../game/career';
-import { canSell, CATALOG, partFits, previewLoadout, sellPrice, upgradeCost, type PartPreview, type Save, type Slot } from '../game/progress';
+import { canSell, CATALOG, CHEAT_MAX, partFits, previewLoadout, sellPrice, upgradeCost, type PartPreview, type Save, type Slot } from '../game/progress';
 import { ACTIONS, activeLevel, keyLabel, LEVELS, QUALITY, VOLUME_KINDS, type Action, type Bindings, type Quality, type Settings, type VolumeKind } from '../game/settings';
 import { DEFAULT_NAME, NAME_MAX, sanitizeName, type HistoryEntry, type LeaderboardEntry, type OnlineQueue, type OnlineStatus, type Profile } from '../net/protocol';
 import { logoUrl } from '../render/logo';
@@ -8,7 +8,6 @@ import {
   ARMOUR,
   buildStats,
   MELEE,
-  MIN_PAID_TIME,
   REWARD,
   TURRETS,
   DEFAULT_PAINT,
@@ -34,7 +33,8 @@ import type { Standing } from '../sim/match';
 import { escapeText, UPGRADE_ORDER } from './hud';
 import { timeAgo } from './timeAgo';
 
-const INTRO_MS = 3000;
+const INTRO_MS = 1000;
+const INTRO_SPARKS = 18;
 const NAME_MIN = 2;
 
 const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
@@ -62,13 +62,20 @@ function controlsTable(keys: Bindings): string {
 export function introScreen(onDone: () => void): HTMLElement {
   const el = document.createElement('div');
   el.className = 'screen screen-intro';
+  // Uneven lengths, or the sparks would burst out in a tidy circle.
+  const sparks = Array.from({ length: INTRO_SPARKS }, (_, i) =>
+    `<i style="--angle:${Math.round((i / INTRO_SPARKS) * 360)}deg;--reach:${30 + ((i * 7) % 11) * 3}vh"></i>`,
+  ).join('');
   el.innerHTML = `
     <div class="intro-band intro-band-top"></div>
     <div class="intro-band intro-band-bottom"></div>
     <div class="intro-stage">
+      <div class="intro-ring"></div>
+      <div class="intro-sparks">${sparks}</div>
       <img class="intro-logo" src="${logoUrl()}" alt="Scrap Riot" />
       <p class="intro-line">Build it. Bolt it. Break it.</p>
-    </div>`;
+    </div>
+    <div class="intro-flash"></div>`;
   let finished = false;
   const finish = () => {
     if (finished) return;
@@ -153,7 +160,7 @@ export function lobbyScreen(queue: OnlineQueue, onCancel: () => void, hasAccount
       <h2>${brawl ? 'Online Brawl' : 'Online Duel'}</h2>
       <p class="lobby-status" data-status>Connecting to the server&hellip;</p>
       <p class="tagline" data-where></p>
-      <p class="tagline">${brawl ? "Up to six pilots, no bots. It starts 20 seconds after a second pilot joins, or as soon as it's full." : 'A duel starts as soon as another pilot joins.'} ${hasAccount ? 'Win to earn money and rating.' : 'Online, everyone fights with equal stats.'}</p>
+      <p class="tagline">${brawl ? "Up to eight pilots on a random map. It starts 10 seconds after a second pilot joins, or as soon as it's full, and bots take any empty seats." : 'A duel starts as soon as another pilot joins.'} ${hasAccount ? 'Win to earn money and rating.' : 'Online, everyone fights with equal stats.'}</p>
       <button class="btn" data-cancel>Cancel</button>
     </div>`;
   el.querySelector('[data-cancel]')!.addEventListener('click', onCancel);
@@ -181,6 +188,7 @@ export interface GarageActions {
   onOnline: (queue: OnlineQueue) => void;
   onTraining: () => void;
   onName: (name: string) => void;
+  onCheat: (code: string) => void;
   onSettings: () => void;
   onTab: (tab: GarageTab) => void;
   onSide: (side: SideTab) => void;
@@ -240,16 +248,16 @@ function ordinal(place: number): string {
 
 const MEDAL_LABEL: Record<Medal, string> = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold' };
 
-function careerPanel(progress: CareerProgress, paysMoney: boolean): string {
+function careerPanel(progress: CareerProgress): string {
   const cards = CAREER.map((fight, index) => {
     const unlocked = isUnlocked(progress, index);
     const medal = progress[fight.id];
-    const reward = paysMoney && !medal ? ` · $${fight.reward} first medal` : '';
+    const reward = medal ? '' : ` · $${fight.reward} first medal`;
     const status = !unlocked ? 'Locked' : medal ? `${MEDAL_LABEL[medal]} · Replay` : 'Fight';
     return `<button class="card${fight.boss ? ' card-boss' : ''}${medal ? ` medal-${medal}` : ''}${unlocked ? '' : ' card-locked'}" data-fight-id="${fight.id}" ${unlocked ? '' : 'disabled'}>
       <strong>${index + 1}. ${fight.title}</strong><span>${fight.blurb}</span><small>${ARENAS[fight.arena].name} · ${MODES[fight.mode].name}${reward}</small><em>${status}</em></button>`;
   }).join('');
-  return `<section><h3>Career</h3><p class="settings-hint">Fight your way up the ladder with your current robot. Win a medal to unlock the next fight, and win almost untouched for gold.${paysMoney ? '' : ' Career runs in your browser, so it awards medals and achievements rather than money.'}</p><div class="cards">${cards}</div></section>`;
+  return `<section><h3>Career</h3><p class="settings-hint">Fight your way up the ladder with your current robot. Win a medal to unlock the next fight, and win almost untouched for gold.</p><div class="cards">${cards}</div></section>`;
 }
 
 function achievementsPanel(stats: AchievementStats): string {
@@ -544,19 +552,24 @@ function botsPanel(save: Save, options: GarageOptions): string {
     <button class="btn btn-primary" data-fight>Start the fight</button>
     <section><h3>Mode</h3><div class="cards">${modes}</div></section>
     <section><h3>Map</h3><div class="cards">${maps}</div></section>
-    ${careerPanel(options.career, options.account === null)}`;
+    ${careerPanel(options.career)}`;
 }
 
 function pilotPanel(save: Save, options: GarageOptions): string {
   return `<section><h3>Pilot</h3>
       <label class="garage-name">Name <input data-name maxlength="${NAME_MAX}" value="${escapeText(save.name)}" autocomplete="off" spellcheck="false" /></label>
       <p class="settings-hint">${save.wins} wins from ${save.matches} matches.</p></section>
+    <section><h3>Cheat codes</h3>
+      <form class="cheat-form" data-cheat>
+        <input data-cheat-code maxlength="${CHEAT_MAX}" autocomplete="off" spellcheck="false" aria-label="Cheat code" placeholder="Enter a code" />
+        <button class="plate-btn" type="submit">Enter</button>
+      </form></section>
     ${profilePanel(options.account, options.career)}`;
 }
 
 function helpPanel(keys: Bindings): string {
   return `<section><h3>How to play</h3>
-      <p class="settings-hint">Build a robot in the Workshop, then fight another pilot on the roof. A duel ends when one robot is wrecked or knocked over the edge. If time runs out, the most armour left wins. An Online Brawl puts up to six pilots on the roof, and wrecked robots come back: first to 12 kills wins, or the most when time runs out. Every part takes up room, so a bigger chassis fits more.</p>
+      <p class="settings-hint">Build a robot in the Workshop, then fight another pilot on the roof. A duel ends when one robot is wrecked or knocked over the edge. If time runs out, the most armour left wins. An Online Brawl puts up to eight robots on a random map, with bots in any seats no pilot takes, and wrecked robots come back: first to 12 kills wins, or the most when time runs out. Every match you finish pays at least $100, online or offline. Every part takes up room, so a bigger chassis fits more.</p>
       <p class="settings-hint">Robots can only turn while rolling, so a stopped robot has to drive forward or back to change direction. Your main weapon does the real damage. Spinners have to reach speed before they bite, so hold the key on the way in. Strong weapons have a cooldown, shown in red on the panel at the bottom. Guns only fire straight ahead and have few shots per life. Your battery runs your gun and your speed boost, so spend it carefully.</p>
       <p class="settings-hint">A flipper lands you upside down. You can't do anything until your robot rights itself, about three seconds later.</p></section>
     <section><h3>Controls</h3>${controlsTable(keys)}</section>
@@ -627,6 +640,10 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
   el.querySelector<HTMLInputElement>('[data-name]')?.addEventListener('change', (e) => {
     actions.onName((e.target as HTMLInputElement).value);
   });
+  el.querySelector<HTMLFormElement>('[data-cheat]')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    actions.onCheat(el.querySelector<HTMLInputElement>('[data-cheat-code]')!.value);
+  });
   el.querySelector<HTMLSelectElement>('[data-placement]')?.addEventListener('change', (e) => {
     actions.onRear((e.target as HTMLSelectElement).value === '1');
   });
@@ -676,7 +693,7 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
   el.innerHTML = `
     <div class="menu-card results-card">
       <h2>${headline}</h2>
-      ${note ? `<p class="payout"><small>${escapeText(note)}</small></p>` : `<p class="payout">You earned <b>$${mine.total}</b> <small>($${Math.round(mine.bot.earned)} in battle + $${mine.bonus} bonus)${mine.bonus === 0 && !drawn ? `. Matches under ${MIN_PAID_TIME} seconds pay no bonus.` : ''}${mine.total > Math.round(mine.bot.earned + mine.bonus) ? `. Every finished match pays at least $${REWARD.minimum}.` : ''}</small></p>`}
+      ${note ? `<p class="payout"><small>${escapeText(note)}</small></p>` : `<p class="payout">You earned <b>$${mine.total}</b> <small>($${Math.round(mine.bot.earned)} in battle + $${mine.bonus} bonus)${mine.total > Math.round(mine.bot.earned + mine.bonus) ? `. Every finished match pays at least $${REWARD.minimum}.` : ''}</small></p>`}
       <table class="results">
         <thead><tr><th>#</th><th>Robot</th><th>Kills</th><th>Deaths</th><th>Damage</th><th>Payout</th></tr></thead>
         <tbody>${rows}</tbody>

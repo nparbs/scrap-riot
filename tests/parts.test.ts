@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buyOrEquip, newSave, partFits, sellPart, setArmour } from '../src/game/progress';
 import { ARENAS } from '../src/sim/arena';
-import { ARMOUR, buildStats, CHASSIS, MIN_PAID_TIME, REWARD, spaceCapacity, spaceUsed, TOWERS, TURRETS } from '../src/sim/data';
+import { ARMOUR, buildStats, CHASSIS, REWARD, spaceCapacity, spaceUsed, TOWERS, TURRETS } from '../src/sim/data';
 import { Match, type BotSetup, type Loadout } from '../src/sim/match';
 
 const pilot = (name: string, over: Partial<Loadout> = {}): BotSetup => ({ name, color: 0, isAI: false, loadout: { ...newSave().loadout, ...over } });
@@ -73,13 +73,15 @@ describe('robot parts', () => {
     expect(save.loadout.power).toBe('reactor');
   });
 
-  it('a smaller chassis is refused if the parts would not fit', () => {
+  it('a smaller chassis lowers armour if that makes the parts fit', () => {
     const save = newSave();
-    save.money = 99999;
+    save.money = 10000;
     save.owned.chassis.push('scout');
     buyOrEquip(save, 'turret', 'bunkerbuster');
-    expect(buyOrEquip(save, 'chassis', 'scout')).toBe(false);
-    expect(save.loadout.chassis).toBe('brawler');
+    expect(buyOrEquip(save, 'chassis', 'scout')).toBe(true);
+    expect(save.loadout.chassis).toBe('scout');
+    expect(save.loadout.armour).toBeLessThan(ARMOUR.default);
+    expect(spaceUsed(save.loadout)).toBeLessThanOrEqual(spaceCapacity(save.loadout));
   });
 
   it('sells unused parts for half, and nothing else', () => {
@@ -146,24 +148,17 @@ describe('the duel', () => {
     expect(match.standings()[0].bot).toBe(a);
   });
 
-  it('pays the winner more, but nothing extra for a duel over at once', () => {
+  it('pays the winner more, even for a duel over at once', () => {
     const quick = duel();
     quick.forfeit(0);
     run(quick, 3);
-    expect(quick.standings().map((row) => row.bonus)).toEqual([0, 0]);
-
-    const long = duel();
-    long.time = MIN_PAID_TIME + 1;
-    long.forfeit(0);
-    run(long, 3);
-    expect(long.standings().map((row) => row.bonus)).toEqual(REWARD.duel);
+    expect(quick.standings().map((row) => row.bonus)).toEqual(REWARD.duel);
   });
 
   it('someone who walks out of a brawl comes last with no bonus, whatever their score', () => {
     const { loadout } = newSave();
     const setup = (name: string) => ({ name, color: 0, loadout, isAI: false });
     const match = new Match([setup('A'), setup('B')], { seed: 1, arena: 'skyscraper', mode: 'ffa' });
-    match.time = MIN_PAID_TIME + 1;
     match.bots[0].kills = 5;
     match.forfeit(0);
     run(match, 4);
@@ -180,24 +175,42 @@ describe('the duel', () => {
     beaten.bots[0].out = true;
     beaten.bots[0].alive = false;
     beaten.over = true;
-    expect(beaten.standings().map((row) => row.total)).toEqual([REWARD.minimum, REWARD.minimum]);
+    expect(beaten.standings().map((row) => row.total)).toEqual([REWARD.duel[0], REWARD.minimum]);
 
     const walkout = duel();
     walkout.forfeit(0);
     run(walkout, 3);
     const rows = walkout.standings();
-    expect(rows.find((row) => row.bot.name === 'A')!.total).toBe(0);
-    expect(rows.find((row) => row.bot.name === 'B')!.total).toBe(REWARD.minimum);
+    expect(rows.find((row) => row.bot.name === 'A')!.total).toBe(REWARD.duel[1]);
+    expect(rows.find((row) => row.bot.name === 'B')!.total).toBe(REWARD.duel[0]);
 
     const rich = duel();
     rich.bots[0].earned = REWARD.minimum * 3;
     rich.over = true;
-    expect(rich.standings().find((row) => row.bot.name === 'A')!.total).toBe(REWARD.minimum * 3);
+    const richRow = rich.standings().find((row) => row.bot.name === 'A')!;
+    expect(richRow.total).toBe(REWARD.minimum * 3 + richRow.bonus);
+  });
+
+  it('holds everything on the start line through the countdown', () => {
+    const match = new Match([pilot('A'), pilot('B')], { seed: 1, arena: 'skyscraper', mode: 'duel', countdown: 3 });
+    const [a] = match.bots;
+    const start = { x: a.x, z: a.z };
+    a.input.throttle = 1;
+    a.input.melee = true;
+    run(match, 2.9);
+    expect(match.countdown).toBeGreaterThan(0);
+    expect(match.time).toBe(0);
+    expect({ x: a.x, z: a.z }).toEqual(start);
+    match.predict(a, 1, 0, false, 1 / 60);
+    expect({ x: a.x, z: a.z }).toEqual(start);
+    run(match, 0.5);
+    expect(match.countdown).toBe(0);
+    expect(match.time).toBeGreaterThan(0);
+    expect(Math.hypot(a.x - start.x, a.z - start.z)).toBeGreaterThan(0);
   });
 
   it('a draw is a draw: first for both, and no bonus', () => {
     const match = duel();
-    match.time = MIN_PAID_TIME + 1;
     match.drawn = true;
     match.over = true;
     expect(match.standings().map((row) => row.place)).toEqual([1, 1]);

@@ -23,7 +23,9 @@ import type { BotSetup, GameEvent, Loadout } from '../sim/match';
 import type { Save } from '../game/progress';
 import { decodeSkin } from '../game/skin';
 
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
+/** The most a browser can bank for a match it ran itself. */
+export const OFFLINE_PAYOUT_MAX = 10_000;
 export const NAME_MAX = 16;
 export const DEFAULT_NAME = 'Pilot';
 /** Clients send input at this rate; each message covers INPUT_STEPS sim steps. */
@@ -72,6 +74,7 @@ export interface SnapshotMessage {
   /** Steps of input `ack` still to run, or if negative, steps the server has run ahead of the input it has. */
   due?: number;
   time: number;
+  countdown: number;
   bots: number[][];
   proj: number[][];
   mines: number[][];
@@ -177,7 +180,9 @@ export type GarageAction =
   | { type: 'paint'; paint: Partial<Paint> }
   | { type: 'practice'; arena?: ArenaId; mode?: ModeId }
   | { type: 'name'; name: string }
-  | { type: 'rear'; rear: boolean };
+  | { type: 'rear'; rear: boolean }
+  | { type: 'cheat'; code: string }
+  | { type: 'payout'; amount: number };
 
 export interface HistoryEntry {
   arena: ArenaId;

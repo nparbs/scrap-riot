@@ -10,10 +10,15 @@ Where Scrap Riot stands, for picking the work up in a new session. Last updated 
 
 Update the page and server together whenever `PROTOCOL_VERSION` changes.
 
-## Latest work (protocol 7)
+## Latest work (protocol 8)
 
-- **Online Brawl:** a second online queue, set by `BRAWL_ROOM_OPTIONS` in `server/room.ts`. It's a Free-for-All on The Skyscraper for 2 to 6 pilots with no bots, starting 20 seconds after a second pilot joins, or 3 seconds after it fills. Leaving or staying disconnected removes the robot and ranks that pilot last, and the last pilot left wins. Rating runs evenly from +25 for first to -15 for last, and matches under 30 seconds pay no bonus in any mode.
-- **Minimum payout:** anyone still in a match when it ends earns at least `REWARD.minimum` ($100), including losers and draws. Anyone who surrendered or left doesn't get it. Because this ignores match length, two accounts can farm $100 per quick surrender in a duel, which the 30-second bonus rule used to prevent. Worth watching once there are real players.
+- **Online Brawl:** a second online queue, set by `BRAWL_ROOM_OPTIONS` in `server/room.ts`. It's a Free-for-All on a random map for 8 robots, needing at least 2 humans, with bots in the other seats. It starts 10 seconds after a second pilot joins, or 3 seconds after it fills. Leaving or staying disconnected removes the robot and ranks that pilot last, a last human fights on against the bots, and the match ends once every human has gone. The queue screen shows bots fighting on the chosen map, using the same demo match as the title screen.
+- **Cheat codes:** on the Stats page. `money` gives $5,000 each time, and `unlock` owns every part, in `applyCheat` in `src/game/progress.ts`. With an account the server applies them, and money shows in the ledger as `garage: cheat`. They work for anyone, and the codes are readable in the public page and repo, so nothing bought online can be trusted as earned. Worth removing or limiting before sharing widely.
+- **Armour makes room:** switching to a smaller chassis or tower lowers armour as far as needed to fit, in `withPart` in `src/game/progress.ts`. If even the minimum armour doesn't fit, the part still says No room.
+- **Intro:** one second, with the logo slamming down, a flash, a shockwave ring and sparks. It's all CSS, timed around the moment of impact. Rating runs evenly from +25 for first to -15 for last.
+- **Payouts:** anyone still in a match when it ends earns at least `REWARD.minimum` ($100), including losers and draws, however short the match. Anyone who surrendered gets no minimum, and anyone who left gets nothing. With an account, offline and career matches are now banked with a `payout` garage action, capped at `OFFLINE_PAYOUT_MAX`. They used to pay accounts nothing, and every player gets a guest account, so that's why payouts looked broken. The server takes the browser's word for the amount, and two accounts can farm a duel by surrendering. Neither matters while the `money` cheat exists, but both should be closed before wide sharing.
+- **Countdown:** every match starts with 3, 2, 1, GO!, set by `COUNTDOWN`. Nothing moves and the clock doesn't run until it ends. The title screen and queue background matches skip it.
+- **Leaving when out:** in a mode with no respawns, such as Last Robot Standing, someone knocked out while others fight on sees a 10-second countdown, then a Leave button, with a warning that leaving means no payout. Duels end by themselves and Free-for-All has respawns, so it doesn't appear there.
 - **Sound levels matched:** every weapon sound was rendered and measured with A-weighting, then given a level in `MELEE_LEVEL` and `GUN_LEVEL` in `src/audio.ts`. The spinner whine dropped from 45 dB to 24 dB. Weapon families now sit within about 4–5 dB.
 - **Audio settings:** Master, Music and Sound Effects sliders plus Mute, saved per browser.
 - **Queue count:** "N in queue" on the Play Online button, refreshed every 15 seconds.
@@ -41,7 +46,7 @@ Shipped before the latest work, and still true unless it says otherwise above.
 - **Melee first:** 20 main weapons, including spinners that store energy, a flipper, a crusher and forks.
 - **Guns:** fixed forward with no tracking, few shots per life, and a cooldown. The chaingun fires 10 rounds per press.
 - **Battery:** runs guns and the Shift boost.
-- **Look and sound:** BattleBots-style robots, a redrawn logo, synthesized sound and music, a 3-second intro, and a name prompt on first visit.
+- **Look and sound:** BattleBots-style robots, a redrawn logo, synthesized sound and music, a short intro, and a name prompt on first visit.
 - **Netcode:** fixed the online stutter with an input queue on the server and blended prediction on the client.
 - **Graphics:** Auto quality steps down on slower machines.
 

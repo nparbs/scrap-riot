@@ -37,7 +37,7 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] Weapon sounds for each family, including spinners winding up
 - [x] Synthesized music for the menus and for battle
 - [x] Cooldowns on strong weapons, and a 10-round burst for the chaingun
-- [x] A short intro, and asking for a name when the game first opens
+- [x] A one-second animated intro, and asking for a name when the game first opens
 - [x] A paintshop for drawing on the unfolded robot, shown to opponents
 - [x] 1v1 online with no bots, plus separate Offline vs Bots and Training
 - [x] Loudness-matched weapon sounds, with volume settings for master, music and effects
@@ -50,8 +50,13 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] A settings button in the corner, usable at any time, including during a match
 - [x] Preview any part in the workshop before you can afford it
 - [x] The Garage page renamed Stats, and the robot's numbers renamed Specs
-- [x] Online Brawl: a Free-for-All on the roof for up to 6 pilots, with no bots
-- [x] Every finished match pays at least $100
+- [x] Online Brawl: a Free-for-All on a random map for up to 8 robots, with bots in any empty seats
+- [x] The queue screen shows the map you'll fight on
+- [x] Cheat codes on the Stats page
+- [x] A smaller chassis or tower gives up armour to make room
+- [x] Every finished match pays at least $100, including offline and career, however short
+- [x] A 3, 2, 1 countdown before every match
+- [x] Someone knocked out of a match still running can leave after 10 seconds, giving up the payout
 - [ ] Replace the name prompt with Google sign-in, and add a name filter
 - [ ] A report button or a way to hide other players' paint jobs
 - [ ] Sparks and visible damage from spinner hits

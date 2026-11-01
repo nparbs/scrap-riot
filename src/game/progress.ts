@@ -32,6 +32,8 @@ import {
   type TurretId,
   type UpgradeId,
   type WheelsId,
+  installedParts,
+  type PartsChoice,
 } from '../sim/data';
 import type { BotSetup, Loadout } from '../sim/match';
 import { makeRng } from '../sim/rng';
@@ -117,14 +119,44 @@ export interface PartPreview {
   id: string;
 }
 
+/** The robot with this part changed. A smaller chassis or tower gives up armour to make room, if that's enough. */
+function withPart<T extends PartsChoice>(loadout: T, slot: Slot, id: string): T {
+  const swapped: T = { ...loadout, [slot]: id };
+  if (slot !== 'chassis' && slot !== 'tower') return swapped;
+  const next = { ...swapped };
+  let { armour } = installedParts(next);
+  while (spaceUsed(next) > spaceCapacity(next) && armour > ARMOUR.min) {
+    armour = Math.max(ARMOUR.min, armour - ARMOUR.step);
+    next.armour = armour;
+  }
+  return spaceUsed(next) <= spaceCapacity(next) ? next : swapped;
+}
+
 export function partFits(save: Save, slot: Slot, id: string): boolean {
-  const next = { ...save.loadout, [slot]: id };
+  const next = withPart(save.loadout, slot, id);
   return spaceUsed(next) <= spaceCapacity(next);
 }
 
 /** The robot as it would be with this part, for trying one out without buying or fitting it. */
-export function previewLoadout<T extends object>(loadout: T, part: PartPreview | null): T {
-  return part ? { ...loadout, [part.slot]: part.id } : loadout;
+export function previewLoadout<T extends PartsChoice>(loadout: T, part: PartPreview | null): T {
+  return part ? withPart(loadout, part.slot, part.id) : loadout;
+}
+
+const CHEAT_MONEY = 5000;
+export const CHEAT_MAX = 16;
+
+/** What each cheat code does, and what to tell the player. Null if there's no such code. */
+export function applyCheat(save: Save, code: string): string | null {
+  switch (code.trim().toLowerCase()) {
+    case 'money':
+      save.money += CHEAT_MONEY;
+      return `+$${CHEAT_MONEY}`;
+    case 'unlock':
+      for (const slot of Object.keys(CATALOG) as Slot[]) (save.owned[slot] as string[]) = Object.keys(CATALOG[slot]);
+      return 'Every part unlocked';
+    default:
+      return null;
+  }
 }
 
 /** Buys the part if needed, then fits it. A part with no room goes on the shelf until there is. */
@@ -138,7 +170,7 @@ export function buyOrEquip(save: Save, slot: Slot, id: string): boolean {
     owned.push(id);
   }
   if (!partFits(save, slot, id)) return buying;
-  (save.loadout as unknown as Record<Slot, string>)[slot] = id;
+  Object.assign(save.loadout, withPart(save.loadout, slot, id));
   return true;
 }
 

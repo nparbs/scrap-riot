@@ -24,7 +24,14 @@ export interface HudActions {
   onChat: (id: number) => void;
   onSurrender: () => void;
   onDraw: () => void;
+  /** Giving up after being knocked out of a match that's still going. */
+  onLeave: () => void;
+  onCountdown: (go: boolean) => void;
 }
+
+/** How long someone who's out has to watch before they can go. */
+const LEAVE_WAIT = 10;
+const GO_SHOWN = 0.7;
 
 const SURRENDER_CONFIRM_MS = 3000;
 const DRAW_OFFER_MS = 15000;
@@ -49,6 +56,13 @@ export class Hud {
   private lastCenter = '';
   /** Takes priority over the respawn message. */
   notice = '';
+  private lastCount = '';
+  private goLeft = 0;
+  private outFor = 0;
+  private readonly leavePanel: HTMLElement;
+  private readonly leaveText: HTMLElement;
+  private readonly leaveBtn: HTMLButtonElement;
+  private readonly onCountdown: (go: boolean) => void;
   private readonly ping: HTMLElement;
   private readonly blind: HTMLElement;
   private readonly battery: HTMLElement;
@@ -88,6 +102,11 @@ export class Hud {
       <div class="hud-blind"></div>
       <div class="hud-damage"></div>
       <div class="hud-center"></div>
+      <div class="hud-leave" hidden>
+        <p data-leave-text></p>
+        <small>Leaving now will result in no payout.</small>
+        <button class="dock-btn" tabindex="-1" data-leave disabled>Leave match</button>
+      </div>
       <div class="hud-tutorial" role="status"></div>
       <canvas class="hud-map" width="180" height="180"></canvas>
       <div class="hud-powers">
@@ -150,6 +169,11 @@ export class Hud {
       this.surrenderBtn.disabled = true;
       this.drawBtn.disabled = true;
     }
+    this.leavePanel = q('.hud-leave');
+    this.leaveText = q('[data-leave-text]');
+    this.leaveBtn = q('[data-leave]') as HTMLButtonElement;
+    this.leaveBtn.addEventListener('click', () => actions.onLeave());
+    this.onCountdown = actions.onCountdown;
     this.bindDock(actions);
   }
 
@@ -180,6 +204,38 @@ export class Hud {
         actions.onDraw();
       }
     });
+  }
+
+  /** 3, 2, 1, GO! Empty once the match is under way. */
+  private countdownText(dt: number): string {
+    const { countdown } = this.match;
+    let text = '';
+    if (countdown > 0) {
+      text = String(Math.ceil(countdown));
+    } else if (this.lastCount && this.lastCount !== 'GO!') {
+      this.goLeft = GO_SHOWN;
+      text = 'GO!';
+    } else if (this.goLeft > 0) {
+      this.goLeft -= dt;
+      text = 'GO!';
+    }
+    if (text && text !== this.lastCount) this.onCountdown(text === 'GO!');
+    this.lastCount = text;
+    return text;
+  }
+
+  /** Once someone's out for good they may go, after a wait, if the match is still running without them. */
+  private updateLeave(dt: number): void {
+    const waiting = this.player.out && !this.match.over && !this.duel;
+    if (this.leavePanel.hidden === waiting) this.leavePanel.hidden = !waiting;
+    if (!waiting) return;
+    this.outFor += dt;
+    const left = Math.ceil(LEAVE_WAIT - this.outFor);
+    const text = left > 0 ? `You can leave in ${left}` : 'You can leave now';
+    if (this.leaveText.textContent !== text) {
+      this.leaveText.textContent = text;
+      this.leaveBtn.disabled = left > 0;
+    }
   }
 
   /** A quick-chat line from a pilot. */
@@ -331,10 +387,16 @@ export class Hud {
 
     const dead = this.duel ? 'SCRAPPED' : player.out ? 'ELIMINATED — spectating' : `SCRAPPED — rebuilding in ${Math.ceil(player.respawnT)}`;
     const won = this.duel && player.alive && this.rival.out ? 'VICTORY!' : '';
-    const centerText = this.notice || (player.alive ? won : dead);
+    const count = this.countdownText(dt);
+    const centerText = this.notice || count || (player.alive ? won : dead);
+    this.updateLeave(dt);
     if (centerText !== this.lastCenter) {
       this.lastCenter = centerText;
       this.center.textContent = centerText;
+      this.center.classList.toggle('hud-count', count !== '' && centerText === count);
+      if (count && centerText === count) {
+        this.center.animate([{ transform: 'scale(2.4)', opacity: 0.2 }, { transform: 'scale(1)', opacity: 1 }], { duration: 260, easing: 'ease-out' });
+      }
     }
 
     this.boardTimer -= dt;

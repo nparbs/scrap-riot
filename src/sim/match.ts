@@ -41,7 +41,6 @@ import {
   MEGA_ABSORB,
   MEGA_TIME,
   MELEE,
-  MIN_PAID_TIME,
   MODES,
   RAGE_MULT,
   RAGE_TIME,
@@ -295,6 +294,8 @@ export interface MatchOptions {
   duration?: number;
   killTarget?: number;
   hillTarget?: number;
+  /** Seconds everyone waits on the start line. */
+  countdown?: number;
 }
 
 export interface Standing {
@@ -348,12 +349,15 @@ export class Match {
   private events: GameEvent[] = [];
   private brains = new Map<number, BotBrain>();
   private nextId = 1;
+  /** Seconds left before anything moves. */
+  countdown: number;
   private repairTimer: number = MATCH.repairInterval / 2;
 
   constructor(setups: BotSetup[], options: MatchOptions) {
     this.rng = makeRng(options.seed);
     this.arena = ARENAS[options.arena ?? 'pit'];
     this.mode = options.mode ?? 'ffa';
+    this.countdown = options.countdown ?? 0;
     this.duration = options.duration ?? MODES[this.mode].duration;
     this.killTarget = options.killTarget ?? MATCH.killTarget;
     this.hillTarget = options.hillTarget ?? HILL_TARGET;
@@ -468,6 +472,10 @@ export class Match {
 
   step(dt: number = STEP): void {
     if (this.over) return;
+    if (this.countdown > 0) {
+      this.countdown = Math.max(0, this.countdown - dt);
+      return;
+    }
     this.time += dt;
 
     for (const bot of this.bots) {
@@ -649,6 +657,7 @@ export class Match {
 
   /** Client-side prediction: moves one robot as the server would, ignoring other robots. */
   predict(bot: Bot, throttle: number, steer: number, boost: boolean, dt: number): void {
+    if (this.countdown > 0) return;
     bot.input.throttle = throttle;
     bot.input.steer = steer;
     bot.input.boost = boost;
@@ -1629,7 +1638,7 @@ export class Match {
   }
 
   private bonusFor(index: number): number {
-    if (this.drawn || this.time < MIN_PAID_TIME) return 0;
+    if (this.drawn) return 0;
     return (this.mode === 'duel' ? REWARD.duel : REWARD.placement)[index] ?? 0;
   }
 
