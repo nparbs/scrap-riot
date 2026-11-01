@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RAGDOLL_TIME } from '../sim/data';
+import type { Ledge } from './arenaScene';
 
 const GRAVITY = 26;
 const REST_HEIGHT = 0.45;
@@ -22,6 +23,7 @@ export interface RagdollWorld {
   scene: THREE.Scene;
   half: number;
   walled: boolean;
+  ledges: Ledge[];
 }
 
 /**
@@ -80,6 +82,7 @@ export class Ragdoll {
     if (this.blown) return this.updateDebris(dt);
 
     const { root, velocity, spin, world } = this;
+    const fromY = root.position.y;
     velocity.y -= GRAVITY * dt;
     root.position.addScaledVector(velocity, dt);
     root.rotation.x += spin.x * dt;
@@ -96,9 +99,9 @@ export class Ragdoll {
         velocity.z *= -0.4;
       }
     }
-    const overFloor = !this.fell && Math.abs(root.position.x) < world.half && Math.abs(root.position.z) < world.half;
-    if (overFloor && root.position.y < REST_HEIGHT) {
-      root.position.y = REST_HEIGHT;
+    const ground = this.groundBelow(fromY);
+    if (root.position.y < ground) {
+      root.position.y = ground;
       velocity.y = Math.abs(velocity.y) * BOUNCE;
       velocity.x *= FLOOR_DRAG;
       velocity.z *= FLOOR_DRAG;
@@ -117,6 +120,18 @@ export class Ragdoll {
 
     if (this.time >= RAGDOLL_TIME) this.blow();
     return true;
+  }
+
+  /** What the robot would come to rest on, given how high it was a moment ago. */
+  private groundBelow(fromY: number): number {
+    const { x, z } = this.root.position;
+    const { half, ledges } = this.world;
+    if (!this.fell && Math.abs(x) < half && Math.abs(z) < half) return REST_HEIGHT;
+    for (const ledge of ledges) {
+      const rest = ledge.top + REST_HEIGHT;
+      if (fromY >= rest && Math.abs(x - ledge.x) < ledge.w / 2 && Math.abs(z - ledge.z) < ledge.d / 2) return rest;
+    }
+    return -Infinity;
   }
 
   private blow(): void {

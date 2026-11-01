@@ -11,6 +11,7 @@ const CAM_DISTANCE = 9;
 const CAM_HEIGHT = 4.6;
 /** How far the chase camera stays from a wall, so it never ends up behind one. */
 const CAM_WALL_GAP = 0.6;
+const CAM_PAST_EDGE = 1.5;
 const CAM_FOV = 60;
 /** The view opens up a little under boost, which sells the speed. */
 const CAM_BOOST_FOV = 67;
@@ -209,6 +210,7 @@ export class MatchView {
     this.clearMatch();
     this.arena = this.sceneFor(match.arena.id);
     this.arena.scene.add(this.particles.mesh, this.bolts.group, this.flash);
+    this.particles.floorHalf = match.arena.walled ? Infinity : match.arena.half;
     this.arena.hill.visible = match.mode === 'koth';
     this.match = match;
     this.followId = followId;
@@ -271,7 +273,6 @@ export class MatchView {
     this.particles.density = density;
   }
 
-  /** A scorch mark and scattered scrap where a robot died, fading after a while. */
   /** The marker a spectator steers, and whatever their traps are doing, which everyone can see. */
   private syncTraps(match: Match, dt: number): void {
     const { scene } = this.arena;
@@ -327,6 +328,7 @@ export class MatchView {
     }
   }
 
+  /** A scorch mark and scattered scrap where a robot died, fading after a while. */
   private addWreck(x: number, z: number): void {
     if (this.wrecks.length >= MAX_WRECKS) this.removeWreck(this.wrecks.shift()!);
     const group = new THREE.Group();
@@ -489,7 +491,8 @@ export class MatchView {
     this.particles.burst(x, z, { count: 16 * n, color: 0x3a3a3a, speed: 5, size: 0.8, life: 1.1, y, gravity: -3 });
     if (big) {
       this.particles.burst(x, z, { count: 14, color: 0x6d7379, speed: 16, size: 0.4, life: 1.4, y });
-      this.addPulse(x, z, SHOCKWAVE_RADIUS, 0xffb070, Math.max(0.3, y - 0.7));
+      // Sits on the floor, unless the blast is down below it.
+      this.addPulse(x, z, SHOCKWAVE_RADIUS, 0xffb070, y < 0 ? y - 0.4 : Math.max(0.3, y - 0.7));
     }
     if (wreck) this.addWreck(x, z);
     this.flash.position.set(x, y + 2, z);
@@ -507,11 +510,11 @@ export class MatchView {
     this.showDamage(bot, v, 0);
     this.ragdolls.get(id)?.dispose();
     const { half, walled } = this.arena.def;
-    this.ragdolls.set(id, new Ragdoll(v.model.root, x, z, v.model.root.rotation.y, vx, vz, fell, { scene: this.arena.scene, half, walled }, (position, overEdge) => {
+    this.ragdolls.set(id, new Ragdoll(v.model.root, x, z, v.model.root.rotation.y, vx, vz, fell, { scene: this.arena.scene, half, walled, ledges: this.arena.ledges }, (position, overEdge) => {
       // Over a pit the robot has sunk out of sight, so the blast comes up out of the hole.
-      const underFloor = overEdge && Math.abs(position.x) < half && Math.abs(position.z) < half;
-      const y = underFloor ? 0.6 : position.y;
-      this.explosionFx(position.x, y, position.z, true, !overEdge);
+      const overFloor = Math.abs(position.x) < half && Math.abs(position.z) < half;
+      const y = overEdge && overFloor ? 0.6 : position.y;
+      this.explosionFx(position.x, y, position.z, true, !overEdge && overFloor);
       // The sound comes from the same place as every other explosion.
       this.onEvent?.({ type: 'explosion', x: position.x, z: position.z, big: true });
       const follow = this.match!.bots[this.followId];
@@ -934,6 +937,14 @@ export class MatchView {
     this.camera.lookAt(this.camLook);
   }
 
+  /** The floor would hide a robot falling past the edge, so the camera leans out after it. */
+  private leanPastEdge(position: THREE.Vector3, doll: THREE.Vector3): void {
+    const { walled, half } = this.arena.def;
+    if (walled) return;
+    if (Math.abs(doll.x) > half) position.x = Math.sign(doll.x) * (half + CAM_PAST_EDGE);
+    if (Math.abs(doll.z) > half) position.z = Math.sign(doll.z) * (half + CAM_PAST_EDGE);
+  }
+
   private updateCamera(match: Match, dt: number, alpha: number): void {
     const bot = match.bots[this.followId];
     if (bot.out && match.mode === 'lms' && this.deathHold <= 0) {
@@ -955,9 +966,10 @@ export class MatchView {
     const fx = Math.sin(this.camHeading);
     const fz = Math.cos(this.camHeading);
     const target = this.keepInsideWalls(new THREE.Vector3(x - fx * CAM_DISTANCE, CAM_HEIGHT, z - fz * CAM_DISTANCE));
-    this.camPos.lerp(target, Math.min(1, dt * 9));
     // A robot that's just died gets watched all the way down.
     const doll = this.ragdolls.get(this.followId);
+    if (doll) this.leanPastEdge(target, doll.position);
+    this.camPos.lerp(target, Math.min(1, dt * 9));
     if (doll) this.camLook.lerp(doll.position, Math.min(1, dt * 7));
     else this.camLook.lerp(new THREE.Vector3(x + fx * 5, 1.6, z + fz * 5), Math.min(1, dt * 12));
 
