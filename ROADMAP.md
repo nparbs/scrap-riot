@@ -56,6 +56,10 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] A smaller chassis or tower gives up armour to make room
 - [x] Every finished match pays at least $100, including offline and career, however short
 - [x] A 3, 2, 1 countdown before every match
+- [x] Quicker, more arcade-style weapons, with bigger hits, recoil and muzzle flashes
+- [x] Every weapon remodelled with realistic shapes
+- [x] Spectating after being knocked out, with money for staying and a leave timer that scales with how long you lasted
+- [x] Traps spectators can control, themed for each map
 - [x] Someone knocked out of a match still running can leave after 10 seconds, giving up the payout
 - [ ] Replace the name prompt with Google sign-in, and add a name filter
 - [ ] A report button or a way to hide other players' paint jobs
@@ -123,7 +127,7 @@ The original was built around online play, so this was moved to the front of the
 ## v1.0: Release
 
 - [ ] Touch controls for phones and tablets
-- [x] Music
+- [x] Music, with four battle songs and three menu songs in rotation
 - [ ] Accessibility: color-blind palette, reduced screen shake
 - [ ] Trademark and name check before wide release
 - [ ] Launch on the web and itch.io

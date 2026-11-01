@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { ARENAS, PISTON_REACH, pistonExtension, sawPos, shockerActive, type ArenaId } from '../sim/arena';
-import { BOOST_SPEED, legibleColor, MELEE, TURRETS } from '../sim/data';
-import { lerpAngle, type Bot, type GameEvent, type Match } from '../sim/match';
+import { ARENAS, PISTON_REACH, pistonExtension, sawPos, shockerActive, TRAP_NAMES, type ArenaId } from '../sim/arena';
+import { BOOST_SPEED, legibleColor, MELEE, TRAP, TURRETS } from '../sim/data';
+import { lerpAngle, type Bot, type GameEvent, type Match, type Trap } from '../sim/match';
 import { buildArena, type ArenaScene } from './arenaScene';
 import { ArcBolts, Particles } from './fx';
 import { buildRobot, disposeRobot, type RobotModel } from './robots';
@@ -15,6 +15,12 @@ const WRECK_LIFE = 12;
 const FALL_TIME = 1;
 const ENVIRONMENT_INTENSITY = 0.55;
 const THROW_HEIGHT = 3.2;
+const SPECTATE_HEIGHT = 25;
+const SPECTATE_BACK = 18;
+const DROP_HEIGHT = 34;
+/** A hit this hard gets the big sparks and a kick of the camera. */
+const BIG_HIT = 12;
+const GUN_RECOIL = 0.16;
 /** How long a flipped robot takes to roll onto its back, and to roll back onto its wheels. */
 const ROLL_OVER_TIME = 0.4;
 const RIGHTING_TIME = 0.5;
@@ -32,6 +38,11 @@ interface BotVisual {
   fallT: number;
   /** The longest it has been thrown for in this flight, to shape the arc. */
   airPeak: number;
+  /** 1 just after firing, falling to 0. Drives the gun's recoil. */
+  gunKick: number;
+  /** Where the gun sits at rest. */
+  gunZ: number;
+  chainTravel: number;
   flipPeak: number;
   /** How far round the robot has rolled: half a turn is upside down, and a full turn is back on its wheels. */
   roll: number;
@@ -68,6 +79,41 @@ function nameSprite(name: string, color: number): THREE.Sprite {
 }
 
 /** Everything cosmetic for one match. It reads the sim and never writes to it. */
+/** A warning on the ground, and for a strike the thing that's about to land on it. */
+function trapVisual(trap: Trap, arena: ArenaId): { group: THREE.Group; drop: THREE.Object3D | null } {
+  const group = new THREE.Group();
+  const radius = trap.kind === 'strike' ? TRAP.strike.radius : TRAP.pull.radius;
+  const warning = new THREE.Mesh(
+    new THREE.RingGeometry(radius - 0.35, radius, 40),
+    new THREE.MeshBasicMaterial({ color: trap.kind === 'strike' ? 0xff3a1a : 0x8fdcff, transparent: true, opacity: 0.85, side: THREE.DoubleSide, toneMapped: false }),
+  );
+  warning.rotation.x = -Math.PI / 2;
+  group.add(warning);
+  if (trap.kind !== 'strike') return { group, drop: null };
+  const look = TRAP_NAMES[arena].drop;
+  const material = new THREE.MeshStandardMaterial({
+    color: { anvil: 0x2a2c30, rock: 0x8c5a38, icicle: 0xcfeeff, hammer: 0x55595f, bolt: 0xbfe6ff, lava: 0xff6a1a }[look],
+    emissive: look === 'bolt' || look === 'lava' ? (look === 'bolt' ? 0x7fd0ff : 0xd03a00) : 0x000000,
+    emissiveIntensity: 1.4,
+    metalness: look === 'anvil' || look === 'hammer' ? 0.7 : 0.1,
+    roughness: 0.5,
+  });
+  const geometry = {
+    // Wide top, narrow waist and a broad foot.
+    anvil: () => new THREE.LatheGeometry([[0, 0], [1.5, 0], [1.5, 0.5], [0.7, 0.9], [0.7, 1.3], [1.8, 1.8], [1.8, 2.3], [0, 2.3]].map(([r, h]) => new THREE.Vector2(r, h)), 6),
+    rock: () => new THREE.IcosahedronGeometry(2.2, 0),
+    icicle: () => new THREE.ConeGeometry(1.5, 7, 8).rotateX(Math.PI).translate(0, 3.5, 0),
+    hammer: () => new THREE.CylinderGeometry(2.3, 2.3, 2.6, 16).translate(0, 1.3, 0),
+    bolt: () => new THREE.CylinderGeometry(0.35, 0.1, 30, 6).translate(0, 15, 0),
+    lava: () => new THREE.SphereGeometry(1.7, 14, 10),
+  }[look]();
+  const drop = new THREE.Mesh(geometry, material);
+  drop.position.y = DROP_HEIGHT;
+  drop.castShadow = true;
+  group.add(drop);
+  return { group, drop };
+}
+
 export class MatchView {
   readonly camera = new THREE.PerspectiveCamera(60, 1, 0.1, 300);
   arena: ArenaScene;
@@ -95,6 +141,8 @@ export class MatchView {
   private camPos = new THREE.Vector3(0, 40, 40);
   private camLook = new THREE.Vector3();
   private shake = 0;
+  private trapMarker: THREE.Group | null = null;
+  private readonly trapVisuals = new Map<number, { group: THREE.Group; drop: THREE.Object3D | null }>();
   private spin = 0;
 
   private readonly bulletGeo = new THREE.BoxGeometry(0.1, 0.1, 0.6);
@@ -187,7 +235,7 @@ export class MatchView {
     const label = nameSprite(bot.name, bot.color);
     label.renderOrder = 12;
     this.arena.scene.add(model.root, barBack, barFront, label);
-    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, fallT: 0, airPeak: 0, flipPeak: 0, roll: 0, platesLost: 0 });
+    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, fallT: 0, airPeak: 0, gunKick: 0, gunZ: model.turretPivot.position.z, chainTravel: 0, flipPeak: 0, roll: 0, platesLost: 0 });
   }
 
   private clearMatch(): void {
@@ -213,6 +261,61 @@ export class MatchView {
   }
 
   /** A scorch mark and scattered scrap where a robot died, fading after a while. */
+  /** The marker a spectator steers, and whatever their traps are doing, which everyone can see. */
+  private syncTraps(match: Match, dt: number): void {
+    const { scene } = this.arena;
+    const viewer = match.bots[this.followId];
+    const spectating = viewer.out && match.mode === 'lms';
+    if (spectating && this.trapMarker?.parent !== scene) {
+      this.trapMarker = new THREE.Group();
+      const ring = new THREE.Mesh(new THREE.RingGeometry(TRAP.strike.radius - 0.2, TRAP.strike.radius, 40), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.9, side: THREE.DoubleSide, toneMapped: false }));
+      ring.rotation.x = -Math.PI / 2;
+      const dot = new THREE.Mesh(new THREE.CircleGeometry(0.35, 16), ring.material);
+      dot.rotation.x = -Math.PI / 2;
+      this.trapMarker.add(ring, dot);
+      this.trapMarker.position.set(viewer.trapX, 0.14, viewer.trapZ);
+      scene.add(this.trapMarker);
+    }
+    if (this.trapMarker) {
+      this.trapMarker.visible = spectating;
+      this.trapMarker.position.x += (viewer.trapX - this.trapMarker.position.x) * Math.min(1, dt * 22);
+      this.trapMarker.position.z += (viewer.trapZ - this.trapMarker.position.z) * Math.min(1, dt * 22);
+    }
+
+    const seen = new Set<number>();
+    for (const trap of match.traps) {
+      seen.add(trap.id);
+      let visual = this.trapVisuals.get(trap.id);
+      if (visual && visual.group.parent !== scene) visual = undefined;
+      if (!visual) {
+        visual = trapVisual(trap, match.arena.id);
+        visual.group.position.set(trap.x, 0.12, trap.z);
+        scene.add(visual.group);
+        this.trapVisuals.set(trap.id, visual);
+      }
+      if (trap.kind === 'strike') {
+        // Falls faster and faster, landing just as the warning runs out.
+        if (visual.drop) visual.drop.position.y = DROP_HEIGHT * (trap.t / TRAP.strike.warning) ** 2;
+      } else {
+        visual.group.rotation.y += dt * 6;
+        const a = Math.random() * Math.PI * 2;
+        const r = TRAP.pull.radius * Math.random();
+        this.particles.burst(trap.x + Math.cos(a) * r, trap.z + Math.sin(a) * r, { count: 1, color: 0xcfe6ff, speed: 3, size: 0.22, life: 0.4, y: 0.8, gravity: 0 });
+      }
+    }
+    for (const [id, visual] of this.trapVisuals) {
+      if (seen.has(id)) continue;
+      visual.group.removeFromParent();
+      visual.group.traverse((node) => {
+        if (node instanceof THREE.Mesh) {
+          node.geometry.dispose();
+          (node.material as THREE.Material).dispose();
+        }
+      });
+      this.trapVisuals.delete(id);
+    }
+  }
+
   private addWreck(x: number, z: number): void {
     if (this.wrecks.length >= MAX_WRECKS) this.removeWreck(this.wrecks.shift()!);
     const group = new THREE.Group();
@@ -277,6 +380,7 @@ export class MatchView {
     this.syncMines(match);
     this.syncOil(match);
     this.syncDrones(match);
+    this.syncTraps(match, frameDt);
     this.updateTransients(frameDt);
     this.syncPickups(match);
     this.particles.update(frameDt);
@@ -300,6 +404,14 @@ export class MatchView {
       case 'hit':
         if (event.source < 0) {
           this.particles.burst(event.x, event.z, { count: 2, color: 0xffc040, speed: 10, size: 0.14, life: 0.3 });
+        } else if (event.amount >= BIG_HIT) {
+          // A weapon landing properly should feel like an event, for both robots.
+          const color = event.shielded ? 0x7fe8ff : 0xffb040;
+          this.particles.burst(event.x, event.z, { count: 18, color, speed: 17, size: 0.2, life: 0.4, y: 1 });
+          this.particles.burst(event.x, event.z, { count: 8, color: 0xfff4c8, speed: 24, size: 0.12, life: 0.22, y: 1 });
+          this.flash.position.set(event.x, 2, event.z);
+          this.flash.intensity = Math.max(this.flash.intensity, 90);
+          if (event.source === this.followId) this.shake = Math.min(1, this.shake + 0.35);
         } else if (event.amount >= 1 || Math.random() < 0.25) {
           const color = event.shielded ? 0x7fe8ff : 0xffb040;
           this.particles.burst(event.x, event.z, { count: 5, color, speed: 11, size: 0.16, life: 0.35, y: 1 });
@@ -321,14 +433,19 @@ export class MatchView {
         this.shake = Math.min(1, this.shake + Math.max(0, 1 - dist / 22) * (event.big ? 0.8 : 0.4));
         break;
       }
-      case 'shot':
-        this.particles.burst(event.x, event.z, { count: 1, color: 0xffe08a, speed: 4, size: 0.2, life: 0.08, y: 1.5 });
+      case 'shot': {
+        this.particles.burst(event.x, event.z, { count: 4, color: 0xffe08a, speed: 7, size: 0.26, life: 0.1, y: 1.3 });
+        const shooter = this.visuals.get(event.owner);
+        if (shooter) shooter.gunKick = 1;
+        if (event.owner === this.followId) this.shake = Math.min(1, this.shake + 0.04);
         break;
+      }
       case 'arc':
         this.bolts.add(event.points);
         break;
       case 'strike':
-        this.particles.burst(event.x, event.z, { count: 10, color: 0xdfe5ea, speed: 9, size: 0.2, life: 0.3, y: 0.6 });
+        this.particles.burst(event.x, event.z, { count: 16, color: 0xdfe5ea, speed: 13, size: 0.2, life: 0.3, y: 0.6 });
+        if (event.owner === this.followId) this.shake = Math.min(1, this.shake + 0.1);
         break;
       case 'pickup':
         this.particles.burst(event.x, event.z, {
@@ -426,6 +543,13 @@ export class MatchView {
       const rate = melee.kind === 'spinner' ? 2 + bot.meleeCharge * 70 : bot.meleeActive ? 38 : 2;
       model.spinner.rotation[model.spinAxis] += rate * dt;
     }
+    if (model.chain && (bot.meleeActive || bot.meleeCd > 0)) {
+      v.chainTravel += (bot.meleeActive ? 9 : 1) * dt;
+      model.chain(v.chainTravel);
+    }
+    v.gunKick = Math.max(0, v.gunKick - dt * 7);
+    model.turretPivot.position.z = v.gunZ - v.gunKick * GUN_RECOIL;
+    if (model.gunSpinner) model.gunSpinner.rotation.z += v.gunKick * 45 * dt;
     if (model.blades && bot.bladesT > 0) {
       for (const disc of model.blades.children) disc.rotation.x += 30 * dt;
       this.particles.burst(bot.x, bot.z, { count: 1, color: 0xffc860, speed: 8, size: 0.08, life: 0.2, y: 0.6 });
@@ -461,7 +585,7 @@ export class MatchView {
       // Raise during the windup, slam on the strike, then ease back to rest.
       const raised = bot.meleeWindup > 0 ? -1.15 : -0.3;
       const slam = bot.meleeSwing < 0.1 ? 0.25 : raised;
-      model.meleePivot.rotation.x += (slam - model.meleePivot.rotation.x) * Math.min(1, dt * (bot.meleeSwing < 0.1 ? 40 : 10));
+      model.meleePivot.rotation.x += (slam - model.meleePivot.rotation.x) * Math.min(1, dt * (bot.meleeSwing < 0.1 ? 60 : 24));
     } else if (bot.loadout.melee === 'ram') {
       const reach = bot.chassis.radius * 0.8 + (bot.lungeT > 0 ? 0.5 : 0);
       model.meleePivot.position.z = bot.loadout.rearMelee ? -reach : reach;
@@ -808,8 +932,26 @@ export class MatchView {
     }
   }
 
+  /** Whoever's out watches from above, with the marker they steer in the middle of the view. */
+  private spectateCamera(match: Match, bot: Bot, dt: number): void {
+    const { half, walled } = match.arena;
+    // Scenery stands outside a walled map, so the camera stays in.
+    const back = bot.trapZ - SPECTATE_BACK;
+    const target = new THREE.Vector3(bot.trapX, SPECTATE_HEIGHT, walled ? Math.max(back, -half + 1) : back);
+    this.camPos.lerp(target, Math.min(1, dt * 5));
+    this.camLook.lerp(new THREE.Vector3(bot.trapX, 0, bot.trapZ + 2), Math.min(1, dt * 7));
+    this.shake = Math.max(0, this.shake - dt * 2.4);
+    const kick = this.shake * this.shake * 0.8;
+    this.camera.position.set(this.camPos.x + (Math.random() - 0.5) * kick, this.camPos.y + (Math.random() - 0.5) * kick, this.camPos.z + (Math.random() - 0.5) * kick);
+    this.camera.lookAt(this.camLook);
+  }
+
   private updateCamera(match: Match, dt: number, alpha: number): void {
     const bot = match.bots[this.followId];
+    if (bot.out && match.mode === 'lms') {
+      this.spectateCamera(match, bot, dt);
+      return;
+    }
     const x = bot.prevX + (bot.x - bot.prevX) * alpha;
     const z = bot.prevZ + (bot.z - bot.prevZ) * alpha;
     const facing = this.rearView ? bot.heading + Math.PI : bot.heading;

@@ -1,7 +1,7 @@
-import { sawPos } from '../sim/arena';
+import { sawPos, TRAP_NAMES } from '../sim/arena';
 import { keyLabel, type Action, type Bindings } from '../game/settings';
 import { QUICK_CHAT } from '../net/protocol';
-import { DEFENSES, legibleColor, MELEE, MODES, POWERUPS, POWERUP_ORDER, TURRETS, UPGRADES } from '../sim/data';
+import { DEFENSES, leaveWait, legibleColor, MELEE, MODES, POWERUPS, POWERUP_ORDER, SPECTATE, TURRETS, UPGRADES } from '../sim/data';
 import { relativeBearing, type Bot, type GameEvent, type Match } from '../sim/match';
 
 const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
@@ -29,8 +29,8 @@ export interface HudActions {
   onCountdown: (go: boolean) => void;
 }
 
-/** How long someone who's out has to watch before they can go. */
-const LEAVE_WAIT = 10;
+/** How long "Eliminated" stays up before it gets out of the way of the view. */
+const ELIMINATED_SHOWN = 2;
 const GO_SHOWN = 0.7;
 
 const SURRENDER_CONFIRM_MS = 3000;
@@ -60,6 +60,8 @@ export class Hud {
   private goLeft = 0;
   private outFor = 0;
   private readonly leavePanel: HTMLElement;
+  private readonly spectateEarn: HTMLElement;
+  private readonly trapReady: Record<'strike' | 'slick' | 'pull', HTMLElement>;
   private readonly leaveText: HTMLElement;
   private readonly leaveBtn: HTMLButtonElement;
   private readonly onCountdown: (go: boolean) => void;
@@ -102,10 +104,18 @@ export class Hud {
       <div class="hud-blind"></div>
       <div class="hud-damage"></div>
       <div class="hud-center"></div>
-      <div class="hud-leave" hidden>
-        <p data-leave-text></p>
-        <small>Leaving now will result in no payout.</small>
-        <button class="dock-btn" tabindex="-1" data-leave disabled>Leave match</button>
+      <div class="hud-spectate" hidden>
+        <h3>Spectating</h3>
+        <p class="spectate-earn" data-spectate-earn></p>
+        <p class="spectate-hint"><kbd>${keyLabel(keys.forward)}</kbd><kbd>${keyLabel(keys.left)}</kbd><kbd>${keyLabel(keys.back)}</kbd><kbd>${keyLabel(keys.right)}</kbd> move the marker</p>
+        ${this.trapRow(keyLabel(keys.melee), TRAP_NAMES[match.arena.id].strike, 'strike')}
+        ${this.trapRow(keyLabel(keys.turret), TRAP_NAMES[match.arena.id].slick, 'slick')}
+        ${this.trapRow(keyLabel(keys.defense), TRAP_NAMES[match.arena.id].pull, 'pull')}
+        <div class="spectate-leave">
+          <p data-leave-text></p>
+          <small>Leaving now will result in no payout.</small>
+          <button class="dock-btn" tabindex="-1" data-leave disabled>Leave match</button>
+        </div>
       </div>
       <div class="hud-tutorial" role="status"></div>
       <canvas class="hud-map" width="180" height="180"></canvas>
@@ -169,7 +179,9 @@ export class Hud {
       this.surrenderBtn.disabled = true;
       this.drawBtn.disabled = true;
     }
-    this.leavePanel = q('.hud-leave');
+    this.leavePanel = q('.hud-spectate');
+    this.spectateEarn = q('[data-spectate-earn]');
+    this.trapReady = { strike: q('[data-trap="strike"]'), slick: q('[data-trap="slick"]'), pull: q('[data-trap="pull"]') };
     this.leaveText = q('[data-leave-text]');
     this.leaveBtn = q('[data-leave]') as HTMLButtonElement;
     this.leaveBtn.addEventListener('click', () => actions.onLeave());
@@ -206,6 +218,10 @@ export class Hud {
     });
   }
 
+  private trapRow(key: string, name: string, id: string): string {
+    return `<div class="spectate-trap"><kbd>${escapeText(key)}</kbd><span>${escapeText(name)}</span><b class="trap-ready" data-trap="${id}">Ready</b></div>`;
+  }
+
   /** 3, 2, 1, GO! Empty once the match is under way. */
   private countdownText(dt: number): string {
     const { countdown } = this.match;
@@ -230,7 +246,20 @@ export class Hud {
     if (this.leavePanel.hidden === waiting) this.leavePanel.hidden = !waiting;
     if (!waiting) return;
     this.outFor += dt;
-    const left = Math.ceil(LEAVE_WAIT - this.outFor);
+    const earned = `+$${Math.floor(this.outFor * SPECTATE.payPerSecond)} for staying`;
+    if (this.spectateEarn.textContent !== earned) this.spectateEarn.textContent = earned;
+    const { strikeCd, slickCd, pullCd } = this.player;
+    const ready = (el: HTMLElement, cd: number) => {
+      const text = cd > 0 ? `${Math.ceil(cd)}s` : 'Ready';
+      if (el.textContent !== text) {
+        el.textContent = text;
+        el.classList.toggle('trap-ready', cd <= 0);
+      }
+    };
+    ready(this.trapReady.strike, strikeCd);
+    ready(this.trapReady.slick, slickCd);
+    ready(this.trapReady.pull, pullCd);
+    const left = Math.ceil(leaveWait(this.player.eliminatedAt) - this.outFor);
     const text = left > 0 ? `You can leave in ${left}` : 'You can leave now';
     if (this.leaveText.textContent !== text) {
       this.leaveText.textContent = text;
@@ -385,7 +414,7 @@ export class Hud {
     const effectText = tags.join(' · ');
     if (this.effects.textContent !== effectText) this.effects.textContent = effectText;
 
-    const dead = this.duel ? 'SCRAPPED' : player.out ? 'ELIMINATED — spectating' : `SCRAPPED — rebuilding in ${Math.ceil(player.respawnT)}`;
+    const dead = this.duel ? 'SCRAPPED' : player.out ? (this.outFor < ELIMINATED_SHOWN ? 'ELIMINATED' : '') : `SCRAPPED — rebuilding in ${Math.ceil(player.respawnT)}`;
     const won = this.duel && player.alive && this.rival.out ? 'VICTORY!' : '';
     const count = this.countdownText(dt);
     const centerText = this.notice || count || (player.alive ? won : dead);

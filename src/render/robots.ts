@@ -19,6 +19,10 @@ export interface RobotBuild {
 export interface RobotModel {
   root: THREE.Group;
   turretPivot: THREE.Group;
+  /** Barrels that spin while firing. */
+  gunSpinner: THREE.Object3D | null;
+  /** Runs a chainsaw's teeth around its bar. */
+  chain: ((travel: number) => void) | null;
   meleePivot: THREE.Group;
   /** Spins while the front weapon is active. */
   spinner: THREE.Object3D | null;
@@ -41,9 +45,12 @@ const steel = new THREE.MeshStandardMaterial({ color: 0x6d7379, metalness: 0.75,
 const dark = new THREE.MeshStandardMaterial({ color: 0x24272b, metalness: 0.4, roughness: 0.8 });
 const blade = new THREE.MeshStandardMaterial({ color: 0xcfd6dc, metalness: 0.95, roughness: 0.2 });
 const hot = new THREE.MeshStandardMaterial({ color: 0xff7a2a, emissive: 0x662200 });
+const copper = new THREE.MeshStandardMaterial({ color: 0xc27a3f, metalness: 0.85, roughness: 0.35 });
+const paintRed = new THREE.MeshStandardMaterial({ color: 0xc8261c, metalness: 0.3, roughness: 0.45 });
+const warhead = new THREE.MeshStandardMaterial({ color: 0xd8c23a, metalness: 0.35, roughness: 0.5 });
 const glowBlue = new THREE.MeshStandardMaterial({ color: 0x8fdcff, emissive: 0x2a9fe8, emissiveIntensity: 1.5 });
 const glowRed = new THREE.MeshStandardMaterial({ color: 0xff5a4a, emissive: 0xd01a10, emissiveIntensity: 1.5 });
-const shared = new Set<THREE.Material>([steel, dark, blade, hot, glowBlue, glowRed]);
+const shared = new Set<THREE.Material>([steel, dark, blade, hot, copper, paintRed, warhead, glowBlue, glowRed]);
 
 function box(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -74,14 +81,6 @@ function cone(r: number, h: number, mat: THREE.Material, sides = 8): THREE.Mesh 
   const geometry = new THREE.ConeGeometry(r, h, sides > 6 ? ROUND_SIDES : sides);
   const mesh = new THREE.Mesh(sides > 6 ? geometry : faceted(geometry), mat);
   mesh.castShadow = true;
-  return mesh;
-}
-
-/** A barrel lying along +z. */
-function barrel(r: number, length: number, mat: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
-  const mesh = cylinder(r, length, mat, 8);
-  mesh.rotation.x = Math.PI / 2;
-  mesh.position.set(x, y, z);
   return mesh;
 }
 
@@ -377,339 +376,670 @@ function towerSeat(s: HullSpec, body: BodyId, z: number, radius: number): number
   return s.wheelRadius * 0.7 + s.height * lowest;
 }
 
-/** The tower is a low armoured drum, with the gun fixed to it pointing straight ahead. */
-function buildTurret(pivot: THREE.Group, id: TurretId, head: THREE.Material): void {
+// ---------- Shapes for building weapons. Coordinates are [along, up] in the plane they're drawn in.
+type Pt = [number, number];
+type Vec = [number, number, number];
+
+/** Keeps real edges sharp and blends the rest, as Blender's smooth by angle does. */
+function smoothed(geometry: THREE.BufferGeometry, angle = 0.6): THREE.BufferGeometry {
+  const result = toCreasedNormals(geometry, angle);
+  geometry.dispose();
+  return result;
+}
+
+function outline(points: Pt[]): THREE.Shape {
+  return new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, y)));
+}
+
+/** A flat shape given thickness, centered on z, with its edges slightly rounded off. */
+function plate(shape: THREE.Shape, thickness: number, bevel: number, curve: number): THREE.BufferGeometry {
+  const depth = Math.max(0.001, thickness - bevel * 2);
+  const geometry = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: bevel > 0, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 1, curveSegments: curve, steps: 1 });
+  geometry.translate(0, 0, -depth / 2);
+  return geometry;
+}
+
+function finish(geometry: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
+  const mesh = new THREE.Mesh(smoothed(geometry), mat);
+  mesh.position.set(x, y, z);
+  mesh.castShadow = true;
+  return mesh;
+}
+
+/** Seen from the side: the shape's x runs forward along z, and its thickness runs across x. */
+function sideOn(shape: THREE.Shape | Pt[], thickness: number, mat: THREE.Material, bevel = 0.015, curve = 8): THREE.Mesh {
+  const geometry = plate(Array.isArray(shape) ? outline(shape) : shape, thickness, bevel, curve);
+  geometry.rotateY(-Math.PI / 2);
+  return finish(geometry, mat);
+}
+
+/** Seen from above: the shape's x runs across x, its y runs forward along z, and its thickness runs up. */
+function topOn(shape: THREE.Shape | Pt[], thickness: number, mat: THREE.Material, bevel = 0.015, curve = 8): THREE.Mesh {
+  const geometry = plate(Array.isArray(shape) ? outline(shape) : shape, thickness, bevel, curve);
+  geometry.rotateX(Math.PI / 2);
+  return finish(geometry, mat);
+}
+
+/** Seen from the front: the shape's x and y are x and y, and its thickness runs along z. */
+function frontOn(points: Pt[], thickness: number, mat: THREE.Material, bevel = 0.015): THREE.Mesh {
+  return finish(plate(outline(points), thickness, bevel, 4), mat);
+}
+
+/** Turned on a lathe around z. Points are [radius, along], from the back to the front. */
+function turned(points: Pt[], mat: THREE.Material, z = 0, y = 0, x = 0, sides = ROUND_SIDES): THREE.Mesh {
+  const geometry = new THREE.LatheGeometry(points.map(([r, along]) => new THREE.Vector2(Math.max(r, 0.0001), along)), sides);
+  geometry.rotateX(Math.PI / 2);
+  return finish(geometry, mat, x, y, z);
+}
+
+/** A round bar between two points. */
+function rod(a: Vec, b: Vec, r: number, mat: THREE.Material, sides = 12): THREE.Mesh {
+  const from = new THREE.Vector3(...a);
+  const to = new THREE.Vector3(...b);
+  const length = from.distanceTo(to);
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, length, sides), mat);
+  mesh.position.copy(from).add(to).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), to.sub(from).normalize());
+  mesh.castShadow = true;
+  return mesh;
+}
+
+/** A hydraulic ram: a dark cylinder with a polished rod coming out of it. */
+function piston(parent: THREE.Object3D, a: Vec, b: Vec, r: number): void {
+  const mid: Vec = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+  parent.add(rod(a, mid, r, dark), rod(mid, b, r * 0.55, blade));
+}
+
+/** A round bar across the robot, such as an axle or a hinge pin. */
+function axle(r: number, width: number, mat: THREE.Material, y = 0, z = 0): THREE.Mesh {
+  return rod([-width / 2, y, z], [width / 2, y, z], r, mat, ROUND_SIDES);
+}
+
+function tube(points: Vec[], r: number, mat: THREE.Material, closed = false, segments = 40): THREE.Mesh {
+  const curve = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p)), closed);
+  const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, segments, r, 8, closed), mat);
+  mesh.castShadow = true;
+  return mesh;
+}
+
+/** A saw blade with hooked teeth, and holes cut to lighten it. Its flat faces look along z. */
+function sawBlade(radius: number, thickness: number, teeth: number, tooth: number, ports = 0): THREE.BufferGeometry {
+  const shape = new THREE.Shape();
+  const step = (Math.PI * 2) / teeth;
+  shape.moveTo(radius, 0);
+  for (let i = 0; i < teeth; i++) {
+    const a = i * step;
+    // Straight up to the tip, then a slope back down to the rim.
+    shape.lineTo(Math.cos(a + step * 0.04) * (radius + tooth), Math.sin(a + step * 0.04) * (radius + tooth));
+    const land = a + Math.min(step * 0.8, 0.5);
+    shape.lineTo(Math.cos(land) * radius, Math.sin(land) * radius);
+    if (land < a + step) shape.absarc(0, 0, radius, land, a + step, false);
+  }
+  shape.closePath();
+  const hole = (x: number, y: number, r: number) => {
+    const path = new THREE.Path();
+    path.absarc(x, y, r, 0, Math.PI * 2, true);
+    shape.holes.push(path);
+  };
+  hole(0, 0, radius * 0.14);
+  for (let i = 0; i < ports; i++) {
+    const a = (i / ports) * Math.PI * 2;
+    hole(Math.cos(a) * radius * 0.58, Math.sin(a) * radius * 0.58, radius * 0.13);
+  }
+  return plate(shape, thickness, 0.008, Math.max(2, Math.ceil(16 / teeth)));
+}
+
+/** A spinning blade on its hub, turning around x (upright) or y (flat). */
+function sawOnHub(axis: 'x' | 'y', radius: number, thickness: number, teeth: number, tooth: number, ports = 0): THREE.Group {
+  const group = new THREE.Group();
+  const geometry = sawBlade(radius, thickness, teeth, tooth, ports);
+  if (axis === 'x') geometry.rotateY(Math.PI / 2);
+  else geometry.rotateX(Math.PI / 2);
+  group.add(finish(geometry, blade));
+  const hub = rod(axis === 'x' ? [-thickness - 0.05, 0, 0] : [0, -thickness - 0.05, 0], axis === 'x' ? [thickness + 0.05, 0, 0] : [0, thickness + 0.05, 0], radius * 0.2, dark, ROUND_SIDES);
+  group.add(hub);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const u = Math.cos(a) * radius * 0.14;
+    const v = Math.sin(a) * radius * 0.14;
+    const end = thickness + 0.07;
+    group.add(axis === 'x' ? rod([-end, u, v], [end, u, v], 0.018, steel, 6) : rod([u, -end, v], [u, end, v], 0.018, steel, 6));
+  }
+  return group;
+}
+
+/** Two tapered arms reaching forward either side of a weapon, with a bearing at the end. */
+function forkArms(pivot: THREE.Group, spread: number, length: number, y = 0): void {
+  for (const side of [-1, 1]) {
+    const arm = sideOn([[-0.08, -0.15], [length * 0.55, -0.11], [length + 0.08, -0.08], [length + 0.1, 0.08], [length * 0.55, 0.11], [-0.08, 0.15]], 0.12, dark, 0.012);
+    arm.position.set(side * spread, y, 0);
+    pivot.add(arm);
+    const bearing = rod([side * spread - 0.09, y, length], [side * spread + 0.09, y, length], 0.1, steel, ROUND_SIDES);
+    pivot.add(bearing);
+  }
+}
+
+/** A hinge at the nose, and the rams that drive a swinging arm. */
+function swingMount(pivot: THREE.Group, width: number): void {
+  pivot.add(axle(0.09, width, dark, 0, 0.04));
+  for (const side of [-1, 1]) pivot.add(rod([side * (width / 2 + 0.02), 0, 0.04], [side * (width / 2 + 0.04), 0, 0.04], 0.12, steel, ROUND_SIDES));
+}
+
+/** The tower is a low armoured drum, with the gun fixed to it pointing straight ahead. Returns barrels that spin when firing. */
+function buildTurret(pivot: THREE.Group, id: TurretId, head: THREE.Material): THREE.Object3D | null {
   const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.5, 0.26, ROUND_SIDES * 2), head);
   tower.position.y = 0.13;
   tower.castShadow = true;
   pivot.add(tower);
+  const y = 0.26;
 
   switch (id) {
-    case 'minigun':
-      for (let i = 0; i < 4; i++) {
-        const a = (i / 4) * Math.PI * 2;
-        pivot.add(barrel(0.05, 1.2, dark, Math.cos(a) * 0.1, 0.2 + Math.sin(a) * 0.1, 0.9));
+    case 'minigun': {
+      // Six barrels held in clamps, spun by a motor at the back, fed from a drum on the side.
+      pivot.add(turned([[0, -0.15], [0.14, -0.15], [0.16, -0.1], [0.16, 0.22], [0.12, 0.3], [0, 0.3]], dark, 0, y));
+      pivot.add(box(0.2, 0.05, 0.16, steel, 0, y - 0.16, 0.08));
+      const drum = cylinder(0.14, 0.12, steel);
+      drum.rotation.z = Math.PI / 2;
+      drum.position.set(0.24, y, 0.02);
+      pivot.add(drum);
+      const barrels = new THREE.Group();
+      barrels.position.set(0, y, 0.3);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        barrels.add(rod([Math.cos(a) * 0.075, Math.sin(a) * 0.075, 0], [Math.cos(a) * 0.075, Math.sin(a) * 0.075, 1.05], 0.024, steel, 8));
       }
-      break;
-    case 'rockets':
-      pivot.add(box(0.8, 0.45, 0.9, dark, 0, 0.25, 0.45));
+      for (const z of [0.05, 0.55, 1.0]) barrels.add(turned([[0, z - 0.03], [0.115, z - 0.03], [0.115, z + 0.03], [0, z + 0.03]], dark, 0));
+      pivot.add(barrels);
+      return barrels;
+    }
+    case 'rockets': {
+      const pod = sideOn([[-0.1, y - 0.18], [0.75, y - 0.18], [0.9, y - 0.08], [0.9, y + 0.28], [0.72, y + 0.34], [-0.1, y + 0.34]], 0.82, dark, 0.03);
+      pivot.add(pod);
       for (const x of [-0.2, 0.2]) {
-        for (const y of [0.15, 0.36]) pivot.add(barrel(0.08, 0.1, hot, x, y, 0.92));
+        for (const up of [y - 0.02, y + 0.2]) {
+          pivot.add(turned([[0.1, 0.88], [0.12, 0.88], [0.12, 0.93], [0.1, 0.93]], steel, 0, up, x));
+          pivot.add(turned([[0.08, 0.84], [0.08, 0.92], [0.05, 0.98], [0, 1.02]], hot, 0, up, x));
+        }
       }
-      break;
+      return null;
+    }
     case 'heavyrocket':
-      pivot.add(box(0.5, 0.42, 1.1, dark, 0, 0.26, 0.5));
-      pivot.add(barrel(0.15, 0.1, glowRed, 0, 0.26, 1.07));
-      break;
+      // A single launch tube with a flared back, and the warhead poking out of the front.
+      pivot.add(turned([[0.24, -0.25], [0.16, -0.08], [0.17, 0.05], [0.17, 0.85], [0.2, 0.88], [0.2, 0.96], [0.15, 0.96]], dark, 0, y + 0.1));
+      pivot.add(turned([[0.14, 0.9], [0.14, 1.02], [0.1, 1.16], [0.04, 1.28], [0, 1.31]], warhead, 0, y + 0.1));
+      pivot.add(box(0.1, 0.1, 0.5, steel, 0, y - 0.07, 0.2));
+      return null;
     case 'bunkerbuster':
-      for (const x of [-0.3, 0.3]) {
-        pivot.add(barrel(0.15, 1.2, dark, x, 0.24, 0.5));
-        const tip = cone(0.15, 0.3, glowRed);
-        tip.rotation.x = Math.PI / 2;
-        tip.position.set(x, 0.24, 1.2);
-        pivot.add(tip);
+      for (const x of [-0.27, 0.27]) {
+        pivot.add(turned([[0.19, -0.2], [0.15, -0.05], [0.15, 0.88], [0.17, 0.92], [0.13, 0.92]], dark, 0, y, x));
+        pivot.add(turned([[0.12, 0.88], [0.12, 1.02], [0.09, 1.22], [0.03, 1.38], [0, 1.4]], warhead, 0, y, x));
+        for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+          const fin = box(0.015, 0.1, 0.16, steel, x + Math.cos(a) * 0.2, y + Math.sin(a) * 0.2, -0.12);
+          fin.rotation.z = a - Math.PI / 2;
+          pivot.add(fin);
+        }
       }
-      break;
+      pivot.add(box(0.5, 0.08, 0.34, steel, 0, y - 0.1, 0.32));
+      return null;
     case 'mortar': {
-      const tube = cylinder(0.24, 1.1, dark, 10);
-      tube.rotation.x = 0.85;
-      tube.position.set(0, 0.5, 0.35);
-      pivot.add(tube);
-      break;
+      // A short, fat tube on a round base, propped up by a bipod.
+      pivot.add(turned([[0, 0], [0.3, 0], [0.33, 0.05], [0, 0.05]], steel, 0, y - 0.02));
+      const tube3d = turned([[0.17, 0], [0.17, 0.92], [0.21, 0.95], [0.21, 1.02], [0.15, 1.02]], dark);
+      tube3d.rotation.x = -0.72;
+      tube3d.position.set(0, y + 0.02, -0.02);
+      pivot.add(tube3d);
+      pivot.add(rod([-0.28, y - 0.02, 0.5], [-0.05, y + 0.42, 0.42], 0.022, steel, 8), rod([0.28, y - 0.02, 0.5], [0.05, y + 0.42, 0.42], 0.022, steel, 8));
+      return null;
     }
     case 'grenade':
-      pivot.add(barrel(0.2, 1.1, steel, 0, 0.22, 0.7));
-      pivot.add(cylinder(0.3, 0.32, dark, 8));
-      break;
+      // A revolving cylinder of chambers behind a short, stepped barrel.
+      pivot.add(turned([[0, -0.1], [0.23, -0.1], [0.25, -0.07], [0.25, 0.3], [0.2, 0.34], [0, 0.34]], steel, 0, y + 0.03));
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        pivot.add(rod([Math.cos(a) * 0.15, y + 0.03 + Math.sin(a) * 0.15, 0.3], [Math.cos(a) * 0.15, y + 0.03 + Math.sin(a) * 0.15, 0.35], 0.05, dark, 10));
+      }
+      pivot.add(turned([[0.13, 0.32], [0.13, 0.85], [0.16, 0.88], [0.16, 1.02], [0.12, 1.02]], dark, 0, y + 0.03));
+      return null;
     case 'flamethrower':
-      pivot.add(barrel(0.1, 1, dark, 0, 0.22, 0.75));
-      pivot.add(barrel(0.15, 0.16, hot, 0, 0.22, 1.25));
-      break;
+      // A nozzle flaring at the end of a pipe, with a fuel line and a pilot light beneath it.
+      pivot.add(turned([[0.08, 0], [0.08, 0.85], [0.1, 0.92], [0.17, 1.15], [0.17, 1.2], [0.12, 1.2]], dark, 0, y));
+      pivot.add(turned([[0.11, 0.28], [0.11, 0.36], [0, 0.36]], steel, 0, y), turned([[0.11, 0.62], [0.11, 0.7], [0, 0.7]], steel, 0, y));
+      pivot.add(tube([[0.14, y - 0.12, -0.1], [0.14, y - 0.1, 0.4], [0.05, y - 0.08, 0.8]], 0.022, copper, false, 12));
+      pivot.add(turned([[0.03, 0.8], [0.03, 1.1], [0.016, 1.16], [0, 1.18]], hot, 0, y - 0.09));
+      return null;
     case 'laser':
-      pivot.add(box(0.2, 0.2, 1.5, steel, 0, 0.26, 0.85));
-      for (const z of [0.5, 0.95, 1.4]) pivot.add(box(0.32, 0.32, 0.07, glowBlue, 0, 0.26, z));
-      break;
+      // A barrel lined with cooling fins, ending in a lens.
+      pivot.add(turned([[0, -0.15], [0.13, -0.15], [0.15, -0.1], [0.15, 0.25], [0.1, 0.3], [0.08, 0.3], [0.08, 1.2], [0.12, 1.25], [0.12, 1.36], [0.09, 1.38]], steel, 0, y));
+      for (let i = 0; i < 6; i++) {
+        const z = 0.38 + i * 0.13;
+        pivot.add(turned([[0.08, z], [0.15, z + 0.01], [0.15, z + 0.03], [0.08, z + 0.04]], dark, 0, y));
+      }
+      pivot.add(turned([[0.09, 1.34], [0.07, 1.39], [0.03, 1.42], [0, 1.43]], glowBlue, 0, y));
+      return null;
     case 'discs': {
-      pivot.add(box(0.75, 0.2, 0.9, dark, 0, 0.26, 0.5));
-      const disc = cylinder(0.32, 0.05, blade, 12);
-      disc.position.set(0, 0.4, 0.55);
-      pivot.add(disc);
-      break;
+      // A flat launcher with the next blade sitting in its slot.
+      for (const up of [y - 0.05, y + 0.1]) {
+        const jaw = topOn([[-0.34, -0.1], [0.34, -0.1], [0.4, 0.45], [0.26, 0.95], [-0.26, 0.95], [-0.4, 0.45]], 0.05, dark, 0.012);
+        jaw.position.y = up;
+        pivot.add(jaw);
+      }
+      const saw = sawOnHub('y', 0.3, 0.035, 12, 0.05);
+      saw.position.set(0, y + 0.025, 0.72);
+      pivot.add(saw);
+      return null;
     }
     case 'spear': {
-      for (const side of [-1, 1]) {
-        const arm = box(0.55, 0.06, 0.08, steel, side * 0.3, 0.26, 0.8);
-        arm.rotation.y = side * 0.5;
-        pivot.add(arm);
-      }
-      pivot.add(barrel(0.04, 1.5, blade, 0, 0.26, 0.85));
-      break;
+      // A crossbow: a rail, a sprung bow, a string, and a barbed bolt ready to go.
+      pivot.add(sideOn([[-0.1, y - 0.1], [1.1, y - 0.06], [1.15, y], [-0.1, y + 0.03]], 0.13, dark, 0.012));
+      pivot.add(tube([[-0.62, y, 0.68], [-0.32, y, 0.9], [0, y, 0.98], [0.32, y, 0.9], [0.62, y, 0.68]], 0.024, steel, false, 16));
+      pivot.add(rod([-0.62, y, 0.68], [0, y, 0.25], 0.006, dark, 4), rod([0.62, y, 0.68], [0, y, 0.25], 0.006, dark, 4));
+      pivot.add(rod([0, y + 0.05, 0.2], [0, y + 0.05, 1.25], 0.018, steel, 8));
+      const head = topOn([[0, 1.55], [0.07, 1.27], [0.03, 1.3], [0.02, 1.22], [-0.02, 1.22], [-0.03, 1.3], [-0.07, 1.27]], 0.02, blade, 0.005);
+      head.position.y = y + 0.05;
+      pivot.add(head);
+      return null;
     }
     case 'arc': {
-      const post = cylinder(0.07, 0.4, steel, 6);
-      post.position.set(0, 0.4, 0);
-      pivot.add(post);
-      for (const y of [0.34, 0.47, 0.6]) {
-        const coil = new THREE.Mesh(new THREE.TorusGeometry(0.22 - (y - 0.34) * 0.4, 0.05, 6, 14), glowBlue);
-        coil.rotation.x = Math.PI / 2;
-        coil.position.y = y;
-        pivot.add(coil);
+      // A short Tesla coil: an insulated stack with a polished ring on top.
+      pivot.add(turned([[0, 0], [0.16, 0], [0.12, 0.08], [0.12, 0.34], [0, 0.34]], dark, 0, 0));
+      const stack = new THREE.Group();
+      stack.position.y = y;
+      for (let i = 0; i < 4; i++) {
+        const r = 0.15 - i * 0.015;
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.03, 8, ROUND_SIDES), copper);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = i * 0.07;
+        stack.add(ring);
       }
-      break;
+      const post = cylinder(0.06, 0.34, steel);
+      post.position.y = 0.14;
+      stack.add(post);
+      const crown = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.055, 10, ROUND_SIDES), glowBlue);
+      crown.rotation.x = Math.PI / 2;
+      crown.position.y = 0.34;
+      stack.add(crown);
+      pivot.add(stack);
+      return null;
     }
   }
 }
 
-/** A disc standing upright, with teeth, centered on its own group. Spins around x. */
-function verticalDisc(radius: number, thickness: number, teeth: number, toothSize: number): THREE.Group {
-  const disc = new THREE.Group();
-  const plate = cylinder(radius, thickness, blade, 22);
-  plate.rotation.z = Math.PI / 2;
-  disc.add(plate);
-  const hub = cylinder(radius * 0.28, thickness + 0.1, dark, 8);
-  hub.rotation.z = Math.PI / 2;
-  disc.add(hub);
-  for (let i = 0; i < teeth; i++) {
-    const a = (i / teeth) * Math.PI * 2;
-    const tooth = box(thickness + 0.03, toothSize, toothSize * 0.7, steel, 0, Math.cos(a) * (radius + toothSize * 0.25), Math.sin(a) * (radius + toothSize * 0.25));
-    tooth.rotation.x = -a;
-    disc.add(tooth);
-  }
-  return disc;
+interface BuiltMelee {
+  spinner: THREE.Object3D | null;
+  axis: 'x' | 'y' | 'z';
+  /** Runs a chainsaw's teeth around its bar. */
+  chain?: (travel: number) => void;
 }
 
-/** The two upright arms that carry a spinning weapon out in front of the robot. */
-function weaponArms(pivot: THREE.Group, spread: number, length: number, y = 0): void {
-  for (const side of [-1, 1]) pivot.add(box(0.14, 0.22, length, dark, side * spread, y, length / 2 - 0.05));
+function buildChainsaw(pivot: THREE.Group): BuiltMelee {
+  // The motor, with a guard on top and a tapered guide bar running out of it.
+  pivot.add(sideOn([[-0.08, -0.17], [0.4, -0.17], [0.52, -0.08], [0.52, 0.14], [0.34, 0.24], [-0.08, 0.2]], 0.34, dark, 0.03));
+  pivot.add(rod([0, 0.26, -0.02], [0.0, 0.26, 0.3], 0.025, steel, 8));
+  const low = -0.05;
+  const start = 0.45;
+  const end = 2.08;
+  const rear = 0.14;
+  const tip = 0.09;
+  const bar = new THREE.Shape();
+  bar.moveTo(start, low - rear);
+  bar.lineTo(end, low - tip);
+  bar.absarc(end, low, tip, -Math.PI / 2, Math.PI / 2, false);
+  bar.lineTo(start, low + rear);
+  bar.absarc(start, low, rear, Math.PI / 2, Math.PI * 1.5, false);
+  pivot.add(sideOn(bar, 0.05, steel, 0.008, 10));
+
+  // Teeth run on a loop just outside the bar, so they're worked out rather than spun.
+  const teeth = new THREE.InstancedMesh(new THREE.BoxGeometry(0.075, 0.07, 0.1), blade, 30);
+  teeth.castShadow = true;
+  teeth.frustumCulled = false;
+  const length = end - start;
+  const slope = (rear - tip) / length;
+  const r1 = tip + 0.03;
+  const r2 = rear + 0.03;
+  const sides = Math.hypot(length, rear - tip);
+  const total = sides * 2 + Math.PI * (r1 + r2);
+  const dummy = new THREE.Object3D();
+  const place = (distance: number) => {
+    let d = ((distance % total) + total) % total;
+    let z: number;
+    let y: number;
+    let angle: number;
+    if (d < sides) {
+      const t = d / sides;
+      z = start + t * length;
+      y = low - (rear + 0.03) + t * (rear - tip);
+      angle = Math.atan(slope);
+    } else if ((d -= sides) < Math.PI * r1) {
+      const a = d / r1 - Math.PI / 2;
+      z = end + Math.cos(a) * r1;
+      y = low + Math.sin(a) * r1;
+      angle = a + Math.PI / 2;
+    } else if ((d -= Math.PI * r1) < sides) {
+      const t = d / sides;
+      z = end - t * length;
+      y = low + (tip + 0.03) + t * (rear - tip);
+      angle = Math.PI - Math.atan(slope);
+    } else {
+      d -= sides;
+      const a = d / r2 + Math.PI / 2;
+      z = start + Math.cos(a) * r2;
+      y = low + Math.sin(a) * r2;
+      angle = a + Math.PI / 2;
+    }
+    dummy.position.set(0, y, z);
+    dummy.rotation.set(-angle, 0, 0);
+    dummy.updateMatrix();
+  };
+  const chain = (travel: number) => {
+    for (let i = 0; i < teeth.count; i++) {
+      place(travel + (i / teeth.count) * total);
+      teeth.setMatrixAt(i, dummy.matrix);
+    }
+    teeth.instanceMatrix.needsUpdate = true;
+  };
+  chain(0);
+  pivot.add(teeth);
+  return { spinner: null, axis: 'x', chain };
 }
 
-function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec): { spinner: THREE.Object3D | null; axis: 'x' | 'y' | 'z' } {
+function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec): BuiltMelee {
   switch (id) {
-    case 'vertdisc': {
-      weaponArms(pivot, 0.2, 0.95);
-      const disc = verticalDisc(0.72, 0.14, 2, 0.32);
-      disc.position.set(0, 0.28, 0.95);
-      pivot.add(disc);
-      return { spinner: disc, axis: 'x' };
-    }
-    case 'vertbar': {
-      weaponArms(pivot, 0.22, 1);
-      const bar = new THREE.Group();
-      bar.position.set(0, 0.3, 1);
-      bar.add(box(0.2, 1.95, 0.3, blade));
-      for (const end of [-1, 1]) bar.add(box(0.26, 0.26, 0.42, steel, 0, end * 0.92, end * 0.06));
-      const hub = cylinder(0.22, 0.34, dark, 8);
-      hub.rotation.z = Math.PI / 2;
-      bar.add(hub);
-      pivot.add(bar);
-      return { spinner: bar, axis: 'x' };
-    }
-    case 'horizbar': {
-      pivot.add(box(0.5, 0.18, 0.75, dark, 0, 0.12, 0.3));
-      const bar = new THREE.Group();
-      bar.position.set(0, 0.28, 0.72);
-      bar.add(box(3, 0.12, 0.34, blade));
-      for (const end of [-1, 1]) bar.add(box(0.5, 0.16, 0.42, steel, end * 1.3, 0, end * 0.03));
-      bar.add(cylinder(0.26, 0.24, dark, 8));
-      pivot.add(bar);
-      return { spinner: bar, axis: 'y' };
-    }
-    case 'undercutter': {
-      pivot.add(box(0.5, 0.14, 0.6, dark, 0, -0.08, 0.28));
-      const saw = new THREE.Group();
-      saw.position.set(0, -0.18, 0.8);
-      saw.add(cylinder(0.85, 0.06, blade, 22));
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        const tooth = box(0.26, 0.08, 0.16, steel, Math.cos(a) * 0.92, 0, Math.sin(a) * 0.92);
-        tooth.rotation.y = -a;
-        saw.add(tooth);
-      }
-      pivot.add(saw);
-      return { spinner: saw, axis: 'y' };
-    }
-    case 'drum': {
-      weaponArms(pivot, spec.width * 0.42, 0.72, -0.05);
-      const drum = new THREE.Group();
-      drum.position.set(0, 0.02, 0.68);
-      const barrelBody = cylinder(0.38, spec.width * 0.74, steel, 12);
-      barrelBody.rotation.z = Math.PI / 2;
-      drum.add(barrelBody);
-      for (let i = 0; i < 3; i++) {
-        const a = (i / 3) * Math.PI * 2;
-        const ridge = box(spec.width * 0.74, 0.16, 0.14, blade, 0, Math.cos(a) * 0.42, Math.sin(a) * 0.42);
-        ridge.rotation.x = -a;
-        drum.add(ridge);
-      }
-      pivot.add(drum);
-      return { spinner: drum, axis: 'x' };
-    }
-    case 'eggbeater': {
-      weaponArms(pivot, spec.width * 0.36, 0.78, 0);
-      const beater = new THREE.Group();
-      beater.position.set(0, 0.04, 0.76);
-      const axle = cylinder(0.08, spec.width * 0.66, dark, 8);
-      axle.rotation.z = Math.PI / 2;
-      beater.add(axle);
-      for (const turn of [0, Math.PI / 2]) {
-        const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.07, 6, 14), blade);
-        hoop.scale.set(spec.width * 0.66, 1, 1);
-        hoop.rotation.set(turn, Math.PI / 2, 0);
-        hoop.castShadow = true;
-        beater.add(hoop);
-      }
-      pivot.add(beater);
-      return { spinner: beater, axis: 'x' };
-    }
-    case 'shell': {
-      // A heavy ring around the whole robot, centered on the hull rather than the nose.
-      const ring = new THREE.Group();
-      ring.position.set(0, 0, -spec.length / 2);
-      const radius = Math.hypot(spec.width / 2 + spec.trackWidth, spec.length / 2) + 0.14;
-      const hoop = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.13, 6, 28), steel);
-      hoop.rotation.x = Math.PI / 2;
-      hoop.castShadow = true;
-      ring.add(hoop);
-      for (const end of [-1, 1]) {
-        ring.add(box(0.4, 0.28, 0.32, blade, end * (radius + 0.08), 0, 0));
-        ring.add(box(0.3, 0.1, radius * 2, dark, end * 0.0, 0, 0));
-      }
-      pivot.add(ring);
-      return { spinner: ring, axis: 'y' };
-    }
-    case 'hammersaw': {
-      pivot.add(box(0.16, 0.16, 1.5, steel, 0, 0, 0.75));
-      pivot.add(box(0.3, 0.3, 0.3, dark, 0, 0, 0.12));
-      const saw = verticalDisc(0.6, 0.06, 10, 0.16);
-      saw.position.set(0, -0.08, 1.5);
-      pivot.add(saw);
-      return { spinner: saw, axis: 'x' };
-    }
-    case 'flipper': {
-      const plate = box(spec.width * 0.82, 0.07, 1.25, steel, 0, -0.14, 0.62);
-      plate.rotation.x = 0.1;
-      pivot.add(plate);
-      pivot.add(box(spec.width * 0.82, 0.12, 0.14, dark, 0, -0.08, 0.02));
-      for (const side of [-1, 1]) pivot.add(box(0.1, 0.22, 0.9, dark, side * spec.width * 0.34, -0.03, 0.5));
-      return { spinner: null, axis: 'x' };
-    }
-    case 'crusher': {
-      pivot.add(box(0.46, 0.34, 0.5, dark, 0, 0.02, 0.2));
-      // A beak on a heavy arm, closing down onto a low fork.
-      const arm = box(0.28, 0.2, 1.25, steel, 0, 0.42, 0.72);
-      arm.rotation.x = -0.28;
-      pivot.add(arm);
-      const beak = cone(0.2, 0.6, blade, 5);
-      beak.rotation.x = Math.PI;
-      beak.position.set(0, 0.42, 1.4);
-      pivot.add(beak);
-      for (const side of [-1, 1]) pivot.add(box(0.14, 0.08, 1.1, steel, side * 0.26, -0.2, 0.9));
-      return { spinner: null, axis: 'x' };
-    }
-    case 'forks': {
-      pivot.add(box(spec.width * 0.7, 0.3, 0.14, dark, 0, -0.04, 0.05));
-      for (const side of [-1, 1]) {
-        const tine = box(0.2, 0.06, 1.35, steel, side * spec.width * 0.25, -0.2, 0.72);
-        tine.rotation.x = 0.04;
-        pivot.add(tine);
-      }
-      return { spinner: null, axis: 'x' };
-    }
-    case 'chainsaw': {
-      pivot.add(box(0.26, 0.26, 0.5, dark, 0, 0, 0.2));
-      const disc = new THREE.Group();
-      disc.position.set(0, 0, 1.3);
-      const plate = cylinder(0.85, 0.06, blade, 18);
-      plate.rotation.z = Math.PI / 2;
-      disc.add(plate);
-      for (let i = 0; i < 12; i++) {
-        const a = (i / 12) * Math.PI * 2;
-        const tooth = box(0.06, 0.26, 0.14, blade, 0, Math.cos(a) * 0.92, Math.sin(a) * 0.92);
-        tooth.rotation.x = -a;
-        disc.add(tooth);
-      }
-      pivot.add(disc);
-      return { spinner: disc, axis: 'x' };
-    }
+    case 'chainsaw':
+      return buildChainsaw(pivot);
     case 'drill': {
-      pivot.add(box(0.5, 0.5, 0.4, dark, 0, 0, 0.1));
+      // A motor and chuck, then a tapered bit with two flutes winding down it to the point.
+      pivot.add(turned([[0, -0.05], [0.3, -0.05], [0.34, 0], [0.34, 0.3], [0.27, 0.36], [0.27, 0.42], [0.2, 0.48], [0, 0.48]], dark));
       const bit = new THREE.Group();
-      bit.position.z = 0.3;
-      const tip = cone(0.34, 1.5, steel, 6);
-      tip.rotation.x = Math.PI / 2;
-      tip.position.z = 0.75;
-      bit.add(tip);
-      for (let i = 0; i < 3; i++) {
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.28 - i * 0.08, 0.04, 5, 8), blade);
-        ring.position.z = 0.25 + i * 0.4;
-        bit.add(ring);
+      bit.position.z = 0.46;
+      bit.add(turned([[0, 0], [0.2, 0], [0.22, 0.08], [0.18, 0.3], [0.12, 0.7], [0.05, 1.1], [0, 1.28]], steel));
+      for (const phase of [0, Math.PI]) {
+        const points: Vec[] = [];
+        for (let i = 0; i <= 24; i++) {
+          const t = i / 24;
+          const a = t * Math.PI * 5 + phase;
+          const r = 0.23 * (1 - t) + 0.012;
+          points.push([Math.cos(a) * r, Math.sin(a) * r, 0.04 + t * 1.22]);
+        }
+        bit.add(tube(points, 0.026, blade, false, 56));
       }
       pivot.add(bit);
       return { spinner: bit, axis: 'z' };
     }
     case 'dagger': {
-      pivot.add(box(0.5, 0.22, 0.2, dark, 0, 0, 0.1));
-      const edge = box(0.28, 0.06, 1.1, blade, 0, 0, 0.75);
-      pivot.add(edge);
-      const tip = cone(0.2, 0.34, blade, 4);
-      tip.rotation.x = Math.PI / 2;
-      tip.scale.y = 1;
-      tip.position.z = 1.42;
-      pivot.add(tip);
+      // A mount and crossguard, then a long double-edged spike with a dark fuller down the middle.
+      pivot.add(sideOn([[-0.08, -0.14], [0.2, -0.1], [0.24, 0.1], [-0.08, 0.14]], 0.3, dark, 0.02));
+      pivot.add(rod([-0.28, 0, 0.26], [0.28, 0, 0.26], 0.05, steel, 12));
+      pivot.add(topOn([[-0.16, 0.26], [0.16, 0.26], [0.13, 1.1], [0, 1.72], [-0.13, 1.1]], 0.05, blade, 0.022));
+      const fuller = topOn([[-0.035, 0.3], [0.035, 0.3], [0.02, 1.1], [-0.02, 1.1]], 0.075, dark, 0);
+      pivot.add(fuller);
       return { spinner: null, axis: 'x' };
     }
     case 'rollingpin': {
-      for (const x of [-0.75, 0.75]) pivot.add(box(0.08, 0.14, 0.7, steel, x, 0, 0.3));
+      // A studded steel roller carried on two arms, like a compactor's drum.
+      forkArms(pivot, 0.76, 0.7);
       const drum = new THREE.Group();
       drum.position.z = 0.7;
-      const roller = cylinder(0.42, 1.4, steel, 10);
+      const roller = cylinder(0.38, 1.34, steel);
       roller.rotation.z = Math.PI / 2;
       drum.add(roller);
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        drum.add(box(1.4, 0.1, 0.1, dark, 0, Math.cos(a) * 0.44, Math.sin(a) * 0.44));
+      for (const side of [-1, 1]) {
+        const flange = cylinder(0.43, 0.06, dark);
+        flange.rotation.z = Math.PI / 2;
+        flange.position.x = side * 0.66;
+        drum.add(flange);
+      }
+      for (let row = 0; row < 3; row++) {
+        for (let i = 0; i < 8; i++) {
+          const a = ((i + row * 0.5) / 8) * Math.PI * 2;
+          const stud = cone(0.06, 0.13, blade, 5);
+          stud.position.set((row - 1) * 0.42, Math.cos(a) * 0.42, Math.sin(a) * 0.42);
+          stud.rotation.x = a;
+          drum.add(stud);
+        }
       }
       pivot.add(drum);
       return { spinner: drum, axis: 'x' };
     }
-    case 'hammer':
-      pivot.add(box(0.14, 0.14, 1.8, steel, 0, 0, 0.9));
-      pivot.add(box(0.9, 0.55, 0.55, dark, 0, 0, 1.85));
-      return { spinner: null, axis: 'x' };
-    case 'axe': {
-      pivot.add(box(0.12, 0.12, 1.5, steel, 0, 0, 0.75));
-      const head = box(0.1, 0.85, 0.5, blade, 0, 0.1, 1.45);
+    case 'hammer': {
+      // A piston-driven shaft and a proper sledge head, faced off to strike downward.
+      swingMount(pivot, 0.34);
+      pivot.add(rod([0, 0, 0.04], [0, 0, 1.85], 0.055, steel, 12));
+      pivot.add(turned([[0.075, 0.1], [0.075, 0.5], [0.06, 0.52]], dark));
+      piston(pivot, [0, -0.3, -0.05], [0, -0.03, 0.8], 0.05);
+      const head = new THREE.Mesh(smoothed(new THREE.LatheGeometry([[0, -0.46], [0.2, -0.46], [0.25, -0.42], [0.2, -0.33], [0.2, 0.33], [0.25, 0.42], [0.2, 0.46], [0, 0.46]].map(([r, h]) => new THREE.Vector2(Math.max(r, 0.0001), h)), 8), 0.5), dark);
+      head.position.z = 1.85;
+      head.castShadow = true;
       pivot.add(head);
       return { spinner: null, axis: 'x' };
     }
-    case 'ram':
-      pivot.add(box(1.5, 0.35, 0.15, steel, 0, 0, 0.1));
-      for (const x of [-0.5, 0, 0.5]) {
-        const spike = cone(0.16, 0.8, blade, 6);
-        spike.rotation.x = Math.PI / 2;
-        spike.position.set(x, 0, 0.55);
-        pivot.add(spike);
+    case 'axe': {
+      // A long haft with a crescent head, its cutting edge ground thin.
+      swingMount(pivot, 0.3);
+      pivot.add(rod([0, 0, 0.04], [0, 0, 1.62], 0.05, steel, 12));
+      piston(pivot, [0, -0.28, -0.05], [0, -0.03, 0.7], 0.045);
+      const head = new THREE.Shape();
+      head.moveTo(1.22, 0.12);
+      head.lineTo(1.58, 0.12);
+      head.lineTo(1.6, -0.06);
+      head.quadraticCurveTo(1.78, -0.26, 2.02, -0.42);
+      head.quadraticCurveTo(1.72, -0.74, 1.08, -0.7);
+      head.quadraticCurveTo(1.3, -0.36, 1.22, -0.08);
+      pivot.add(sideOn(head, 0.075, blade, 0.03, 10));
+      pivot.add(topOn([[-0.06, 1.22], [0.06, 1.22], [0.06, 1.62], [-0.06, 1.62]], 0.2, dark, 0.012));
+      return { spinner: null, axis: 'x' };
+    }
+    case 'ram': {
+      // A chamfered plate on two rams, with three turned spikes.
+      pivot.add(frontOn([[-0.78, -0.12], [-0.78, 0.12], [-0.6, 0.24], [0.6, 0.24], [0.78, 0.12], [0.78, -0.12], [0.6, -0.24], [-0.6, -0.24]], 0.14, steel, 0.025));
+      for (const side of [-1, 1]) piston(pivot, [side * 0.45, 0, -0.45], [side * 0.45, 0, 0.0], 0.08);
+      for (const x of [-0.52, 0, 0.52]) {
+        pivot.add(turned([[0.17, 0.05], [0.17, 0.13], [0.11, 0.2], [0.05, 0.62], [0, 0.82]], blade, 0, 0, x));
       }
       return { spinner: null, axis: 'x' };
-    case 'claw':
-      pivot.add(box(0.4, 0.3, 0.5, dark, 0, 0, 0.2));
+    }
+    case 'claw': {
+      // Two curved talons on pivot pins, closed by hydraulic rams.
+      pivot.add(topOn([[-0.42, -0.1], [0.42, -0.1], [0.5, 0.28], [-0.5, 0.28]], 0.24, dark, 0.03));
       for (const side of [-1, 1]) {
-        const upper = box(0.12, 0.14, 0.9, steel, side * 0.3, 0, 0.75);
-        upper.rotation.y = -side * 0.5;
-        pivot.add(upper);
-        const lower = box(0.12, 0.14, 0.7, blade, side * 0.34, 0, 1.3);
-        lower.rotation.y = side * 0.65;
-        pivot.add(lower);
+        const talon = new THREE.Shape();
+        talon.moveTo(side * 0.32, 0.12);
+        talon.quadraticCurveTo(side * 1.12, 0.72, side * 0.14, 1.58);
+        talon.quadraticCurveTo(side * 0.66, 0.82, side * 0.2, 0.36);
+        const mesh = topOn(talon, 0.15, steel, 0.035, 12);
+        pivot.add(mesh);
+        pivot.add(topOn(side > 0 ? [[0.14, 1.58], [0.34, 1.26], [0.26, 1.2]] : [[-0.14, 1.58], [-0.34, 1.26], [-0.26, 1.2]], 0.1, blade, 0.02));
+        pivot.add(rod([side * 0.3, -0.1, 0.22], [side * 0.3, 0.1, 0.22], 0.07, blade, 12));
+        piston(pivot, [side * 0.12, 0.14, 0.05], [side * 0.62, 0.14, 0.62], 0.04);
       }
       return { spinner: null, axis: 'x' };
+    }
     case 'magnet': {
-      const arc = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.15, 8, 14, Math.PI), glowRed);
-      arc.rotation.x = Math.PI;
-      arc.position.z = 0.6;
-      arc.castShadow = true;
-      pivot.add(arc);
-      for (const x of [-0.55, 0.55]) pivot.add(box(0.3, 0.28, 0.24, steel, x, 0, 0.6));
-      pivot.add(box(0.2, 0.2, 0.6, dark, 0, -0.2, 0.25));
+      // A red horseshoe with steel pole tips, wound with coils and carried on a bracket.
+      const bend = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.16, 12, 24, Math.PI), paintRed);
+      bend.rotation.x = -Math.PI / 2;
+      bend.position.z = 0.56;
+      bend.castShadow = true;
+      pivot.add(bend);
+      for (const side of [-1, 1]) {
+        pivot.add(turned([[0.16, 0], [0.16, 0.42]], paintRed, 0.56, 0, side * 0.5));
+        pivot.add(turned([[0.17, 0], [0.17, 0.2], [0.14, 0.24], [0, 0.24]], steel, 0.98, 0, side * 0.5));
+        for (const z of [0.62, 0.72, 0.82]) pivot.add(turned([[0.175, 0], [0.175, 0.06]], copper, z, 0, side * 0.5));
+      }
+      pivot.add(sideOn([[-0.1, -0.1], [0.2, -0.09], [0.2, 0.09], [-0.1, 0.1]], 0.24, dark, 0.02));
+      return { spinner: null, axis: 'x' };
+    }
+    case 'vertdisc': {
+      forkArms(pivot, 0.2, 0.95);
+      const disc = sawOnHub('x', 0.72, 0.13, 2, 0.32, 4);
+      disc.position.set(0, 0.28, 0.95);
+      for (const side of [-1, 1]) pivot.add(rod([side * 0.2, 0.05, 0.3], [side * 0.2, 0.28, 0.95], 0.05, dark, 10));
+      pivot.add(disc);
+      return { spinner: disc, axis: 'x' };
+    }
+    case 'vertbar': {
+      forkArms(pivot, 0.22, 1);
+      for (const side of [-1, 1]) pivot.add(rod([side * 0.22, 0.05, 0.3], [side * 0.22, 0.3, 1], 0.055, dark, 10));
+      const bar = new THREE.Group();
+      bar.position.set(0, 0.3, 1);
+      // Thick at the hub and tapering out, with a hardened hammer block on each end.
+      bar.add(sideOn([[-0.17, -0.2], [-0.13, -0.7], [-0.22, -0.96], [0.2, -1.05], [0.17, -0.25], [0.17, 0.2], [0.13, 0.7], [0.22, 0.96], [-0.2, 1.05], [-0.17, 0.25]], 0.17, steel, 0.02));
+      for (const end of [-1, 1]) {
+        bar.add(sideOn(end > 0 ? [[-0.2, 0.78], [0.26, 0.82], [0.28, 0.98], [-0.24, 1.08]] : [[0.2, -0.78], [-0.26, -0.82], [-0.28, -0.98], [0.24, -1.08]], 0.24, blade, 0.02));
+      }
+      bar.add(axle(0.2, 0.3, dark));
+      pivot.add(bar);
+      return { spinner: bar, axis: 'x' };
+    }
+    case 'horizbar': {
+      pivot.add(sideOn([[-0.05, -0.1], [0.5, -0.02], [0.82, 0.08], [0.82, 0.14], [0.3, 0.22], [-0.05, 0.2]], 0.44, dark, 0.03));
+      const bar = new THREE.Group();
+      bar.position.set(0, 0.28, 0.72);
+      bar.add(topOn([[-1.5, -0.22], [-0.4, -0.15], [0.4, -0.2], [1.5, -0.06], [1.5, 0.22], [0.4, 0.15], [-0.4, 0.2], [-1.5, 0.06]], 0.11, steel, 0.02));
+      for (const end of [-1, 1]) {
+        bar.add(topOn(end > 0 ? [[1.08, -0.1], [1.52, -0.08], [1.56, 0.28], [1.1, 0.22]] : [[-1.08, 0.1], [-1.52, 0.08], [-1.56, -0.28], [-1.1, -0.22]], 0.17, blade, 0.02));
+      }
+      const hub = cylinder(0.25, 0.24, dark);
+      bar.add(hub);
+      pivot.add(bar);
+      return { spinner: bar, axis: 'y' };
+    }
+    case 'undercutter': {
+      pivot.add(sideOn([[-0.05, -0.2], [0.82, -0.2], [0.82, -0.13], [0.3, -0.02], [-0.05, 0.04]], 0.42, dark, 0.02));
+      const saw = sawOnHub('y', 0.84, 0.05, 8, 0.15, 4);
+      saw.position.set(0, -0.18, 0.8);
+      pivot.add(saw);
+      return { spinner: saw, axis: 'y' };
+    }
+    case 'drum': {
+      const width = spec.width * 0.74;
+      forkArms(pivot, width / 2 + 0.08, 0.68, 0);
+      const drum = new THREE.Group();
+      drum.position.set(0, 0, 0.68);
+      const body = new THREE.Mesh(smoothed(new THREE.LatheGeometry([[0.02, -width / 2], [0.3, -width / 2], [0.36, -width / 2 + 0.06], [0.36, width / 2 - 0.06], [0.3, width / 2], [0.02, width / 2]].map(([r, h]) => new THREE.Vector2(r, h)), ROUND_SIDES), 0.6), steel);
+      body.rotation.z = Math.PI / 2;
+      body.castShadow = true;
+      drum.add(body);
+      // Hardened teeth, staggered so one is always about to bite.
+      const count = 6;
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2;
+        const holder = new THREE.Group();
+        holder.rotation.x = a;
+        holder.position.x = (i % 3 - 1) * width * 0.3;
+        holder.add(sideOn([[-0.1, 0.33], [0.09, 0.33], [0.15, 0.5], [0.02, 0.46], [-0.12, 0.4]], 0.18, blade, 0.015));
+        drum.add(holder);
+      }
+      pivot.add(drum);
+      return { spinner: drum, axis: 'x' };
+    }
+    case 'eggbeater': {
+      const width = spec.width * 0.66;
+      forkArms(pivot, width / 2 + 0.08, 0.76, 0);
+      const beater = new THREE.Group();
+      beater.position.set(0, 0.04, 0.76);
+      beater.add(axle(0.06, width + 0.16, dark));
+      // Two loops at right angles, bulging at the middle, with a tooth on each side.
+      for (const turn of [0, Math.PI / 2]) {
+        const points: Vec[] = [];
+        for (let i = 0; i < 20; i++) {
+          const t = (i / 20) * Math.PI * 2;
+          const r = Math.sin(t) * 0.46;
+          points.push([Math.cos(t) * (width / 2), Math.cos(turn) * r, Math.sin(turn) * r]);
+        }
+        beater.add(tube(points, 0.05, steel, true, 48));
+        for (const side of [-1, 1]) {
+          const holder = new THREE.Group();
+          holder.rotation.x = -turn + (side > 0 ? 0 : Math.PI);
+          holder.add(sideOn([[-0.11, 0.42], [0.1, 0.42], [0.16, 0.6], [0.02, 0.55], [-0.12, 0.47]], 0.13, blade, 0.012));
+          beater.add(holder);
+        }
+      }
+      pivot.add(beater);
+      return { spinner: beater, axis: 'x' };
+    }
+    case 'shell': {
+      // A heavy shell ring around the whole robot, centered on the hull rather than the nose.
+      const ring = new THREE.Group();
+      ring.position.set(0, 0, -spec.length / 2);
+      const radius = Math.hypot(spec.width / 2 + spec.trackWidth, spec.length / 2) + 0.14;
+      const band = new THREE.Mesh(
+        smoothed(new THREE.LatheGeometry([[radius - 0.09, -0.15], [radius + 0.06, -0.15], [radius + 0.12, -0.05], [radius + 0.12, 0.05], [radius + 0.06, 0.15], [radius - 0.09, 0.15], [radius - 0.09, -0.15]].map(([r, h]) => new THREE.Vector2(r, h)), 40), 0.5),
+        steel,
+      );
+      band.castShadow = true;
+      ring.add(band);
+      for (const end of [-1, 1]) {
+        const tooth = topOn(end > 0 ? [[radius, -0.26], [radius + 0.28, -0.14], [radius + 0.22, 0.26], [radius, 0.26]] : [[-radius, 0.26], [-radius - 0.28, 0.14], [-radius - 0.22, -0.26], [-radius, -0.26]], 0.26, blade, 0.02);
+        ring.add(tooth);
+      }
+      ring.add(box(radius * 2, 0.06, 0.2, dark));
+      pivot.add(ring);
+      return { spinner: ring, axis: 'y' };
+    }
+    case 'hammersaw': {
+      // A swinging arm with a guarded circular saw on the end.
+      swingMount(pivot, 0.32);
+      pivot.add(sideOn([[0, -0.08], [0.7, -0.07], [1.5, -0.05], [1.5, 0.08], [0.7, 0.1], [0, 0.1]], 0.13, steel, 0.018));
+      piston(pivot, [0, -0.3, -0.05], [0, -0.04, 0.75], 0.05);
+      const guard = new THREE.Shape();
+      guard.moveTo(1.5 - 0.72, 0);
+      guard.absarc(1.5, -0.08, 0.72, Math.PI, 0.2, true);
+      guard.lineTo(1.5 + 0.56, 0.05);
+      guard.absarc(1.5, -0.08, 0.58, 0.2, Math.PI, false);
+      pivot.add(sideOn(guard, 0.1, dark, 0.008, 12));
+      const saw = sawOnHub('x', 0.56, 0.05, 14, 0.12, 5);
+      saw.position.set(0, -0.08, 1.5);
+      pivot.add(saw);
+      return { spinner: saw, axis: 'x' };
+    }
+    case 'flipper': {
+      // A wedge plate on a hinge, stiffened with ribs, fired by two pneumatic rams underneath.
+      const w = spec.width * 0.42;
+      const tilt = new THREE.Group();
+      tilt.rotation.x = 0.1;
+      tilt.position.y = -0.14;
+      tilt.add(topOn([[-w, 0], [w, 0], [w, 0.95], [w * 0.82, 1.26], [-w * 0.82, 1.26], [-w, 0.95]], 0.07, steel, 0.015));
+      for (const side of [-1, 0, 1]) {
+        const rib = sideOn([[0.02, 0.03], [1.05, 0.03], [0.02, 0.1]], 0.05, dark, 0.008);
+        rib.position.x = side * w * 0.6;
+        tilt.add(rib);
+      }
+      const lip = topOn([[-w * 0.8, 1.14], [w * 0.8, 1.14], [w * 0.8, 1.26], [-w * 0.8, 1.26]], 0.085, blade, 0.012);
+      tilt.add(lip);
+      pivot.add(tilt);
+      pivot.add(axle(0.07, w * 2, dark, -0.1, 0.02));
+      for (const side of [-1, 1]) piston(pivot, [side * w * 0.45, -0.28, 0.02], [side * w * 0.45, -0.2, 0.7], 0.06);
+      return { spinner: null, axis: 'x' };
+    }
+    case 'crusher': {
+      // A hooked beak driven by one big hydraulic ram, closing onto a low forked jaw.
+      pivot.add(sideOn([[-0.08, -0.18], [0.46, -0.18], [0.5, 0.05], [0.28, 0.3], [-0.08, 0.3]], 0.44, dark, 0.03));
+      const beak = new THREE.Shape();
+      beak.moveTo(0.2, 0.2);
+      beak.quadraticCurveTo(0.9, 0.82, 1.55, 0.42);
+      beak.quadraticCurveTo(1.72, 0.2, 1.62, -0.14);
+      beak.quadraticCurveTo(1.4, 0.2, 1.05, 0.28);
+      beak.quadraticCurveTo(0.6, 0.3, 0.3, 0.02);
+      pivot.add(sideOn(beak, 0.18, steel, 0.025, 10));
+      pivot.add(sideOn([[1.38, 0.33], [1.56, 0.42], [1.72, 0.2], [1.62, -0.14], [1.4, 0.2]], 0.1, blade, 0.018));
+      piston(pivot, [0, 0.42, -0.1], [0, 0.42, 0.68], 0.09);
+      for (const side of [-1, 1]) {
+        const tine = topOn([[side * 0.2, 0.3], [side * 0.34, 0.3], [side * 0.34, 1.5], [side * 0.26, 1.72]], 0.08, steel, 0.015);
+        tine.position.y = -0.2;
+        pivot.add(tine);
+      }
+      return { spinner: null, axis: 'x' };
+    }
+    case 'forks': {
+      // A forklift's mast and carriage, with two L-shaped tines tapering to a point.
+      for (const side of [-1, 1]) {
+        pivot.add(box(0.09, 0.62, 0.1, dark, side * spec.width * 0.34, 0.08, 0.03));
+        const tine = sideOn([[0, -0.2], [1.3, -0.24], [1.52, -0.25], [1.3, -0.18], [0.1, -0.13], [0.06, 0.32], [-0.03, 0.32]], 0.17, steel, 0.012);
+        tine.position.x = side * spec.width * 0.25;
+        pivot.add(tine);
+      }
+      pivot.add(box(spec.width * 0.72, 0.1, 0.07, dark, 0, 0.27, 0.05), box(spec.width * 0.72, 0.1, 0.07, dark, 0, -0.1, 0.05));
+      piston(pivot, [0, -0.2, -0.04], [0, 0.34, -0.04], 0.05);
       return { spinner: null, axis: 'x' };
     }
   }
@@ -719,29 +1049,42 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec): { spinner:
 function buildDefenseGear(root: THREE.Group, id: DefenseId, deckY: number, spec: HullSpec): THREE.Group | null {
   const front = spec.length / 2;
   switch (id) {
-    case 'steelram':
-      root.add(box(spec.width + 0.4, 0.75, 0.18, steel, 0, deckY - spec.height * 0.45, front + 0.12));
+    case 'steelram': {
+      // A chamfered slab of armour with a raised rib across it.
+      const w = (spec.width + 0.4) / 2;
+      const ram = frontOn([[-w, -0.24], [-w, 0.22], [-w + 0.2, 0.38], [w - 0.2, 0.38], [w, 0.22], [w, -0.24], [w - 0.2, -0.38], [-w + 0.2, -0.38]], 0.16, steel, 0.03);
+      ram.position.set(0, deckY - spec.height * 0.45, front + 0.12);
+      root.add(ram);
+      root.add(box(w * 1.7, 0.1, 0.07, dark, 0, deckY - spec.height * 0.45, front + 0.22));
       break;
+    }
     case 'plow': {
-      const plate = box(spec.width + 0.55, 0.55, 0.12, blade, 0, spec.wheelRadius * 0.9, front + 0.3);
-      plate.rotation.x = -0.45;
-      root.add(plate);
+      // A curved blade that rolls whatever it meets up and away.
+      const curve = new THREE.Shape();
+      curve.moveTo(0.34, 0.02);
+      curve.lineTo(0.5, 0.03);
+      curve.quadraticCurveTo(0.2, 0.2, 0.24, 0.62);
+      curve.lineTo(0.14, 0.62);
+      curve.quadraticCurveTo(0.08, 0.24, 0.34, 0.02);
+      const plow = sideOn(curve, spec.width + 0.55, blade, 0.012, 8);
+      plow.position.z = front;
+      root.add(plow);
+      for (const side of [-1, 1]) root.add(rod([side * spec.width * 0.34, spec.wheelRadius, front - 0.1], [side * spec.width * 0.34, 0.4, front + 0.24], 0.05, dark, 10));
       break;
     }
     case 'blades': {
       const group = new THREE.Group();
       group.position.y = deckY - spec.height * 0.5;
       for (const side of [-1, 1]) {
-        const disc = cylinder(0.55, 0.05, blade, 10);
-        disc.rotation.z = Math.PI / 2;
-        disc.position.x = side * (spec.width / 2 + spec.trackWidth + 0.1);
-        group.add(disc);
+        const saw = sawOnHub('x', 0.5, 0.04, 10, 0.1, 3);
+        saw.position.x = side * (spec.width / 2 + spec.trackWidth + 0.1);
+        group.add(saw);
       }
       root.add(group);
       return group;
     }
     case 'cutter': {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(Math.hypot(spec.width / 2 + spec.trackWidth, spec.length / 2) + 0.1, 0.06, 5, 24), blade);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(Math.hypot(spec.width / 2 + spec.trackWidth, spec.length / 2) + 0.1, 0.06, 8, 32), blade);
       ring.rotation.x = Math.PI / 2;
       ring.position.y = deckY - spec.height * 0.5;
       ring.castShadow = true;
@@ -777,13 +1120,13 @@ export function buildRobot(build: RobotBuild): RobotModel {
   const towerZ = -spec.length * 0.14;
   turretPivot.position.set(0, towerSeat(spec, paint.body, towerZ, 0.35 * towerScale), towerZ);
   turretPivot.scale.setScalar(towerScale);
-  buildTurret(turretPivot, build.turret, headMaterial);
+  const gunSpinner = buildTurret(turretPivot, build.turret, headMaterial);
   root.add(turretPivot);
 
   const meleePivot = new THREE.Group();
   meleePivot.position.set(0, deckY - spec.height * 0.45, build.rearMelee ? -spec.length / 2 : spec.length / 2);
   if (build.rearMelee) meleePivot.rotation.y = Math.PI;
-  const { spinner, axis } = buildMelee(meleePivot, build.melee, spec);
+  const { spinner, axis, chain = null } = buildMelee(meleePivot, build.melee, spec);
   root.add(meleePivot);
 
   const blades = buildDefenseGear(root, build.defense, deckY, spec);
@@ -812,6 +1155,8 @@ export function buildRobot(build: RobotBuild): RobotModel {
   return {
     root,
     turretPivot,
+    gunSpinner,
+    chain,
     meleePivot,
     spinner,
     spinAxis: axis,
