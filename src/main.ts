@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Sfx } from './audio';
-import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, partFits, previewLoadout, sellPart, setArmour, writeSave, type PartPreview, type Save, type Slot } from './game/progress';
+import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, partFits, previewLoadout, sellPart, setArmour, togglePowerupSlot, writeSave, type PartPreview, type Save, type Slot } from './game/progress';
 import { awardMedal, careerResult, fightSetups, loadCareer, writeCareer, type Fight } from './game/career';
 import { activeLevel, audibleVolume, AutoQuality, DEFAULT_BINDINGS, loadSettings, musicOff, QUALITY, rebind, toggleMusic, writeSettings, type Action } from './game/settings';
 import { Tutorial } from './game/tutorial';
@@ -13,7 +13,7 @@ import { GarageView } from './render/garageView';
 import type { ArenaId } from './sim/arena';
 import { installLogoIcon } from './render/logo';
 import { MatchView } from './render/matchView';
-import { COUNTDOWN, DEFAULT_PAINT, DUEL_INTRO, MELEE, POWERUP_CAP } from './sim/data';
+import { COUNTDOWN, DEFAULT_PAINT, DUEL_INTRO, fittedPowerups, MELEE, POWERUP_CAP } from './sim/data';
 import { emptyInput, Match, STEP, type Bot, type BotSetup, type GameEvent } from './sim/match';
 import { renderGoogleButton } from './ui/google';
 import { Hud } from './ui/hud';
@@ -36,6 +36,7 @@ const WORKSHOP_METAL = 0x121314;
 /** Seconds for the register to ring before the drill starts on a part that was just bought. */
 const DRILL_AFTER_SALE = 0.55;
 const DESK_DOCK_HEIGHT = 136;
+const SPINNER_HIT_VOLUME = 0.35;
 const SKIN_SAVE_DELAY_MS = 700;
 const ONLINE_POLL_MS = 15_000;
 const TRAINING_SECONDS = 30 * 60;
@@ -660,6 +661,7 @@ class Game {
             this.showMenu();
           },
           onPowerup: (id) => change({ type: 'powerup', id }, () => buyPowerup(this.save, id), sold),
+          onPowerupSlot: (id) => change({ type: 'powerup-slot', id }, () => togglePowerupSlot(this.save, id)),
           onUpgrade: (id) => change({ type: 'upgrade', id }, () => buyUpgrade(this.save, id), sold),
           onFight: () => this.startMatch(),
           onOnline: (queue) => this.startOnline(queue),
@@ -878,9 +880,11 @@ class Game {
   /** Online these go to the server. Offline there's only a bot to surrender to. */
   private makeHud(match: Match, player: Bot): Hud {
     const hud = this.buildHud(match, player);
+    const slots = fittedPowerups(player.loadout);
+    this.keyboard.powerupSlots = slots;
     if (this.touch) {
       hud.root.classList.add('hud-touch');
-      const controls = touchControls(this.keyboard.touch, () => this.togglePause(), (index) => this.keyboard.queuePowerup(index));
+      const controls = touchControls(this.keyboard.touch, () => this.togglePause(), (slot) => this.keyboard.queuePowerup(slot), slots);
       hud.root.appendChild(controls);
       hud.linkTouchControls(controls);
     }
@@ -1041,8 +1045,13 @@ class Game {
         this.sfx.arc(near(event.x1, event.z1));
         break;
       case 'hit':
-        if (event.source === player.id && event.amount >= 1) this.sfx.hit(0.8, event.amount);
-        else if (event.target === player.id && event.amount >= 1) this.sfx.hit(1, event.amount);
+        {
+          // A spinner's hit is already heard from the weapon itself, and it lands big hits every time.
+          const attacker = this.match.bots[event.source];
+          const soft = attacker && MELEE[attacker.loadout.melee].kind === 'spinner' ? SPINNER_HIT_VOLUME : 1;
+          if (event.source === player.id && event.amount >= 1) this.sfx.hit(0.8 * soft, event.amount);
+          else if (event.target === player.id && event.amount >= 1) this.sfx.hit(soft, event.amount);
+        }
         break;
       case 'strike':
         this.sfx.meleeHit(this.match.bots[event.owner].loadout.melee, near(event.x, event.z));

@@ -10,7 +10,14 @@ Where Scrap Riot stands, for picking the work up in a new session. Last updated 
 
 Update the page and server together whenever `PROTOCOL_VERSION` changes.
 
-## Latest work (protocol 10)
+## Latest work (protocol 11)
+
+- **Three powerups at a time:** `POWERUP_SLOTS`. `loadout.powerupSlots` lists what goes into a match, in slot order, and `fittedPowerups` in `src/sim/data.ts` caps it and picks for robots nobody chose for. `Match` only loads those (`carriedPowerups`), so the server enforces it and the rest of the garage stock can't be spent. Keys 1 to 3 and the D-pad's up, right and down fire slots, not particular powerups. Workshop cards have a tick box. In a match they sit in the dock's weapon row on a desktop, and on touch in an arc above the thumb buttons (`.touch-power`).
+- **Tower weapons:** `onTower` on the Flamethrower, Tesla Coil and Pneumatic Spear mounts them on the tower in `buildRobot`, placed by `TOWER_MOUNTS`. Every robot always has a tower, so nothing has to enforce needing one. The rules are unchanged: only the model and where the flame starts moved.
+- **Spinner sound:** set well below everything else on purpose, including the extra clang when they land a big hit (`SPINNER_HIT_VOLUME`). The whine is a low triangle wave now.
+- **Announcer:** "Winner" and "Scrapped" are the game's own robot voice, in `public/voice/`, played by `Sfx.announce` through the effects mix. `scripts/make-voice.mjs` makes them from scratch with a small formant synthesizer, so no recording or outside voice is involved. Nothing plays in a draw.
+- **Phone workshop menu:** every section shows at once in a grid (`.shop-rail`), 3 across upright and 5 sideways. The top tabs also fit without scrolling, with a row of their own on an upright phone.
+- **Long names:** names can be 16 wide letters. The face-off shrinks them to fit (`fitNames`), and it must not clip them, because the slanted font leans past its own box. Elsewhere they end in an ellipsis.
 
 - **No guns:** turrets, projectiles and the gun key are gone. The Flamethrower, Arc Coil (now Tesla Coil) and Spear Gun (now Pneumatic Spear) became main weapons. `retireGuns` in `src/game/progress.ts` upgrades old saves on load, refunding any other gun bought and handing over the weapon a converted one became. The refund reaches the database with the player's next garage action.
 - **Balance:** `npm run balance` plays 8-robot matches in every big mode, plus a duel round robin. Bots-only numbers can't show how a weapon feels to a person. Bots are poor with the Magnet (27% of duels) and strong with the Ring Spinner (69%, mostly by outlasting), so check those by hand before moving them further.
@@ -53,7 +60,7 @@ Update the page and server together whenever `PROTOCOL_VERSION` changes.
 - **Smooth shading:** materials are no longer flat-shaded, and hulls use creased normals, like Blender's smooth by angle. Canyon rock and snow stay faceted on purpose.
 - **Self-righting:** a Flipper hit sets `flipT`, which stuns the target through the throw plus `FLIP_TIME` (2.5 seconds on the ground). 3 seconds on the ground made the Flipper win 84% of bot duels. Vertical spinners, drums and eggbeaters still throw robots without flipping them.
 - **Settings button:** a gear in the top right corner, on every screen after the name prompt. It pauses offline matches, while online matches carry on underneath. Keys rebound during a match work at once, but the HUD shows the old key names until the next match.
-- **Workshop and Buy Parts merged:** Workshop has a tab for each part type plus Powerups and Upgrades, showing the part fitted now, and cards for everything in that type. Clicking a card previews it on the robot and in the numbers, and only the card's Fit or Buy button changes anything, in `partCards` in `src/ui/screens.ts`. Powerups and Upgrades have nothing to preview, so clicking those buys straight away, as it did before.
+- **Workshop and Buy Parts merged:** Workshop has a tab for each part type plus Powerups and Upgrades, showing the part fitted now, and cards for everything in that type. Clicking a card previews it on the robot and in the numbers, and only the card's Fit or Buy button changes anything, in `partCards` in `src/ui/screens.ts`. Upgrades have nothing to preview, so clicking those buys straight away, as it did before.
 - **Renames:** the Garage page is now Stats, so the robot's numbers in the side panel became Specs.
 
 ## Earlier work
@@ -72,7 +79,7 @@ Shipped before the latest work, and still true unless it says otherwise above.
 
 ### Controls
 
-WASD to drive, Space or left click main weapon, R or right click defense, Shift boost, E look behind, 1–6 powerups, M mute, Esc menu. Players can rebind them in Settings, except that Ctrl can't be bound, because Ctrl+W closes the tab.
+WASD to drive, Space or left click main weapon, R or right click defense, Shift boost, E look behind, 1–3 powerups, M mute, Esc menu. Players can rebind them in Settings, except that Ctrl can't be bound, because Ctrl+W closes the tab.
 
 ## What the user wants next
 

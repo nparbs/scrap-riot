@@ -20,7 +20,7 @@ describe('key bindings', () => {
     const b = DEFAULT_BINDINGS;
     expect([b.forward, b.left, b.back, b.right]).toEqual(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
     expect([b.melee, b.defense, b.rear, b.boost]).toEqual(['Space', 'KeyR', 'KeyE', 'ShiftLeft']);
-    expect(b.power6).toBe('Digit6');
+    expect(b.power3).toBe('Digit3');
     expect(new Set(Object.values(b)).size).toBe(Object.keys(b).length);
   });
 

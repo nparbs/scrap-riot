@@ -11,13 +11,13 @@ export interface PadState {
   defense: boolean;
   boost: boolean;
   rear: boolean;
-  /** Index of a powerup pressed this read, or -1. */
+  /** Slot of a powerup pressed this read, or -1. */
   powerup: number;
   pausePressed: boolean;
 }
 
 const BUTTON = { a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, lt: 6, rt: 7, start: 9, up: 12, down: 13, left: 14, right: 15 };
-const POWERUP_BUTTONS = [BUTTON.up, BUTTON.right, BUTTON.down, BUTTON.left, BUTTON.lb];
+const POWERUP_BUTTONS = [BUTTON.up, BUTTON.right, BUTTON.down];
 const DEADZONE = 0.18;
 
 export function deadzone(value: number, zone = DEADZONE): number {

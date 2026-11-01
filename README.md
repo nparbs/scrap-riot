@@ -46,7 +46,7 @@ The server is authoritative: it runs the same simulation as the game, and client
 - **A paintshop** in the style of the original: paint directly on your unfolded robot with a pencil, spray can, shapes, fill and a 120-colour palette, and see it live on the 3D model. Your opponent sees it too.
 - **A workshop** in the style of the original: 5 chassis, plus towers, wheels, engines, power sources and an armour dial. Every part takes up room, and the chassis decides how much there is.
 - **40 weapons, and no guns:** 23 main weapons and 17 defenses, drawn from every version of the original and from real combat robots such as spinners, flippers, crushers and flamethrowers ([research notes](docs/original-research.md))
-- **6 powerups:** Rage, Mega Shield, Cloaking, X-Ray, Repair Kit, Battery Pack
+- **6 powerups, take 3 into a match:** Rage, Mega Shield, Cloaking, X-Ray, Repair Kit, Battery Pack
 - **3 upgrade tracks** of 5 levels each: armor, engine, weapons
 - **7 maps:** The Skyscraper for duels, plus for Offline vs Bots walled pits, a rooftop and a canyon with lethal drops, a furnace, a piston foundry, and a frozen lake
 - **4 modes:** Online Duel and Online Brawl (up to 8 robots in a Free-for-All on a random map, with bots in any empty seats), plus for Offline vs Bots Free-for-All, Last Robot Standing and King of the Hill

@@ -1330,6 +1330,7 @@ select:focus-visible {
   min-width: 0;
   height: 19px;
   overflow: hidden;
+  text-overflow: ellipsis;
   padding: 1px 6px;
   background: #0b0c0d;
   font: 700 13px/17px var(--body);
@@ -1488,6 +1489,10 @@ select:focus-visible {
 }
 
 .slot kbd {
+  display: inline-block;
+  overflow: hidden;
+  max-width: 100%;
+  white-space: nowrap;
   padding: 0 3px;
   font-size: 10px;
   border-bottom-width: 1px;
@@ -1501,34 +1506,56 @@ select:focus-visible {
   transform-origin: bottom;
 }
 
-.hud-powers {
-  position: absolute;
-  bottom: calc(var(--dock-height) + 6px);
-  left: 10px;
-  display: flex;
-  gap: 4px;
+/* In the dock beside the weapons, which keep the extra room because their names are longer. */
+.dock-slots .slot:not(.slot-power) {
+  flex-grow: 1.5;
 }
 
-.hud-powers .slot {
-  flex: none;
-  width: 70px;
-  background: rgba(12, 13, 14, 0.72);
+@media (max-width: 1100px) {
+  .dock-slots .slot:not(.slot-power) {
+    flex-grow: 2.4;
+  }
 }
 
+.slot-power {
+  box-shadow: inset 0 0 0 1px rgba(242, 234, 219, 0.14);
+}
 
 .slot-power b {
   position: absolute;
-  top: 2px;
-  right: 5px;
+  top: 1px;
+  right: 4px;
   font-size: 14px;
   color: var(--good);
 }
 
-.slot-empty {
-  opacity: 0.5;
+/* A bar along the bottom counts down while the effect lasts. */
+.slot-power::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: var(--accent);
+  opacity: 0;
+  transform: scaleX(var(--left, 0));
+  transform-origin: left;
 }
 
-.slot-empty b {
+.slot-power.power-running::after {
+  opacity: 1;
+}
+
+.power-empty {
+  opacity: 0.45;
+}
+
+.power-empty b {
+  color: var(--muted);
+}
+
+.slot-power.power-needless b {
   color: var(--muted);
 }
 
@@ -1638,7 +1665,9 @@ select:focus-visible {
 
 .board-row span {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -1669,6 +1698,7 @@ select:focus-visible {
 }
 
 .feed-row {
+  overflow-wrap: anywhere;
   padding: 2px 6px;
   margin-bottom: 2px;
   background: rgba(12, 13, 14, 0.6);
@@ -1809,7 +1839,9 @@ select:focus-visible {
 
 .board-row span {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -1840,6 +1872,7 @@ select:focus-visible {
 }
 
 .feed-row {
+  overflow-wrap: anywhere;
   padding: 2px 6px;
   margin-bottom: 2px;
   background: rgba(12, 13, 14, 0.6);
@@ -1989,8 +2022,7 @@ select:focus-visible {
     flex-direction: column;
   }
 
-  .hud-powers .slot {
-    width: 54px;
+  .slot {
     font-size: 9px;
   }
 
@@ -2449,6 +2481,119 @@ button.part-card-about {
   font: 700 12px var(--body);
 }
 
+/* Enough to land a thumb on. */
+html.touch .step-btn {
+  width: 32px;
+  height: 32px;
+}
+
+html.touch .dock-btn,
+html.touch .mini-btn,
+html.touch .plate-btn {
+  min-height: 34px;
+}
+
+/* A real tick box, so what's going into the next match can be seen at a glance. */
+.power-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 8px 0 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 700 12px var(--body);
+  cursor: pointer;
+}
+
+.power-check i {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--muted);
+  border-radius: 4px;
+  background: #15171a;
+}
+
+.power-check[aria-checked="true"] i {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.power-check[aria-checked="true"] i::after {
+  content: '';
+  width: 10px;
+  height: 5px;
+  margin-top: -3px;
+  border-bottom: 3px solid #15171a;
+  border-left: 3px solid #15171a;
+  transform: rotate(-45deg);
+}
+
+.power-check:disabled {
+  color: var(--muted);
+  opacity: 0.6;
+  cursor: default;
+}
+
+.part-card-about kbd {
+  margin-right: 2px;
+}
+
+/* Every section on screen at once on a phone, so nothing is hidden off to the side. */
+@media (max-width: 860px), (max-width: 960px) and (max-height: 500px) {
+  .shop {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shop-rail {
+    position: static;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+    padding-bottom: 6px;
+  }
+
+  .shop-rail h4,
+  .rail-item small {
+    display: none;
+  }
+
+  .rail-item {
+    min-height: 34px;
+    padding: 3px 4px;
+    border-left: 0;
+    border-bottom: 3px solid transparent;
+    border-radius: 6px;
+    background: #24272b;
+    font-size: 12px;
+    line-height: 1.1;
+    text-align: center;
+  }
+
+  .rail-on {
+    border-bottom-color: var(--accent);
+    background: #33373c;
+  }
+
+  .card-foot .power-check {
+    min-height: 40px;
+  }
+
+  .card-foot .plate-btn {
+    min-height: 36px;
+  }
+}
+
+@media (max-width: 600px) and (orientation: portrait) {
+  .shop-rail {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 .plate-buy {
   border-color: var(--accent);
   background: linear-gradient(var(--enamel), var(--enamel-dark));
@@ -2595,38 +2740,6 @@ button.part-card-about {
 
   .garage-money {
     font-size: 15px;
-  }
-
-  .shop {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .shop-rail {
-    position: static;
-    display: flex;
-    gap: 4px;
-    overflow-x: auto;
-    padding-bottom: 6px;
-  }
-
-  .shop-rail h4 {
-    display: none;
-  }
-
-  .rail-item {
-    flex: none;
-    width: auto;
-    border-left: 0;
-    border-bottom: 3px solid transparent;
-    border-radius: 6px;
-  }
-
-  .rail-on {
-    border-bottom-color: var(--accent);
-  }
-
-  .rail-item small {
-    display: none;
   }
 
   .ws-panel {
@@ -2808,6 +2921,42 @@ button.part-card-about {
   color: #fff;
 }
 
+/* The smallest phones held sideways have no room to spare in the top bar. */
+@media (max-width: 640px) and (max-height: 500px) {
+  .top-tab {
+    padding: 0 5px;
+    font-size: 11.5px;
+  }
+
+  .rail-item {
+    padding: 3px 2px;
+    font-size: 11px;
+  }
+
+  /* The bars take a row, and the armour control drops below them. */
+  .shop .shop-head {
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+
+  .shop-head .stat-bars {
+    flex: 1 1 100%;
+    gap: 8px;
+  }
+
+  .stat-bar label {
+    font-size: 10px;
+    white-space: nowrap;
+  }
+}
+
+/* Stacked robots leave the whole width for a name. */
+@media (max-aspect-ratio: 85/100) {
+  .di-card {
+    max-width: 90vw;
+  }
+}
+
 .di-card-left {
   bottom: 13vh;
   left: 5vw;
@@ -2821,11 +2970,12 @@ button.part-card-about {
   animation: di-card-right 0.26s cubic-bezier(0.1, 0.9, 0.2, 1.2) calc(0.48s + var(--skip)) backwards;
 }
 
+/* The padding is room for the slant and the shadow, which lean past the edges of the letters. */
 .di-name {
-  overflow: hidden;
+  padding: 0.04em 0.2em 0.1em;
+  margin: -0.04em -0.2em -0.1em;
   font: italic 400 clamp(34px, 8vw, 104px) / 1 var(--display);
   letter-spacing: 0.015em;
-  text-overflow: ellipsis;
   text-transform: uppercase;
   text-shadow: 5px 5px 0 #000, 0 0 30px rgba(0, 0, 0, 0.55);
   transform: skewX(-6deg);
@@ -3095,6 +3245,96 @@ html.touch.fighting .settings-button {
   font-size: 11px;
 }
 
+/* An arc around the top of the buttons, where a right thumb reaches without letting go of the rest. */
+.touch-power {
+  --tint: #cfd6dc;
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  padding: 0;
+  border: 2px solid var(--tint);
+  border-radius: 50%;
+  background: rgba(20, 22, 25, 0.78);
+  color: #fff;
+  font: 700 11px var(--body);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+/* A little more to hit than there is to see, for a thumb that can't look. */
+.touch-power::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+}
+
+.touch-power:nth-child(1) {
+  right: 0;
+  bottom: 180px;
+}
+
+.touch-power:nth-child(2) {
+  right: 60px;
+  bottom: 168px;
+}
+
+.touch-power:nth-child(3) {
+  right: 122px;
+  bottom: 142px;
+}
+
+.touch-power-rage { --tint: #ff6a4d; }
+.touch-power-megashield { --tint: #6cc4ff; }
+.touch-power-cloaking { --tint: #b79cff; }
+.touch-power-xray { --tint: #7ce0c3; }
+.touch-power-repair { --tint: #7ddb8a; }
+.touch-power-battery { --tint: #ffd24a; }
+
+.touch-power b {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+  border-radius: 10px;
+  background: var(--tint);
+  color: #101214;
+  font: 700 12px/1 var(--body);
+}
+
+.touch-power.touch-held {
+  background: var(--tint);
+  color: #101214;
+  transform: scale(0.93);
+}
+
+/* Nothing left, or nothing to gain right now: it stays in its place, so the thumb never has to look for it. */
+.touch-power.power-empty {
+  opacity: 0.35;
+}
+
+.touch-power.power-needless {
+  border-style: dashed;
+  opacity: 0.6;
+}
+
+/* A ring around the button that runs down with the effect. */
+.touch-power.power-running::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background: conic-gradient(var(--tint) calc(var(--left, 0) * 1turn), transparent 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+}
+
 .touch-pause {
   position: absolute;
   top: calc(6px + env(safe-area-inset-top));
@@ -3151,8 +3391,8 @@ html.touch.fighting .settings-button {
 .hud-touch .hud-mode,
 .hud-touch .hud-money,
 .hud-touch .hud-map,
-.hud-touch .slot-power kbd,
-.hud-touch .hud-powers .slot.slot-empty {
+.hud-touch .hud-spectate:not([hidden]) ~ .touch-controls .touch-rotate,
+.touch-traps .touch-powers {
   display: none;
 }
 
@@ -3226,38 +3466,6 @@ html.touch.fighting .settings-button {
   font-size: 11px;
 }
 
-/* A row across the top, clear of both thumbs, of only the powerups this robot still has. */
-.hud-touch .hud-powers {
-  top: calc(48px + env(safe-area-inset-top));
-  right: 60px;
-  bottom: auto;
-  left: 60px;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.hud-touch .hud-powers .slot {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: auto;
-  height: 38px;
-  padding: 0 10px;
-  border: 1px solid rgba(242, 234, 219, 0.3);
-  border-radius: 6px;
-  font-size: 11px;
-  pointer-events: auto;
-  touch-action: none;
-}
-
-.hud-touch .slot-power span {
-  margin: 0;
-}
-
-.hud-touch .slot-power b {
-  position: static;
-}
-
 .hud-touch .hud-arrow {
   top: calc(90px + env(safe-area-inset-top));
   left: calc(50% - 10px);
@@ -3308,11 +3516,6 @@ html.touch.fighting .settings-button {
   transform: translateX(-50%);
 }
 
-.hud-touch .hud-spectate:not([hidden]) ~ .hud-powers,
-.hud-touch .hud-spectate:not([hidden]) ~ .touch-controls .touch-rotate {
-  display: none;
-}
-
 .hud-touch .hud-spectate h3 {
   font-size: 16px;
 }
@@ -3353,6 +3556,19 @@ html.touch.fighting .settings-button {
 .hud-touch .spectate-leave small {
   margin-bottom: 4px;
   font-size: 11px;
+}
+
+/* On the smallest phones held sideways, the scoreboard moves in from the powerup buttons. */
+@media (max-height: 340px) {
+  /* The spectator panel needs the same spot. */
+  .hud-touch:has(.hud-spectate:not([hidden])) .hud-board {
+    display: none;
+  }
+
+  .hud-touch .hud-board {
+    top: calc(32px + env(safe-area-inset-top));
+    right: calc(196px + env(safe-area-inset-right));
+  }
 }
 
 /* Held upright, the stick and buttons have to shrink to share the width. */
@@ -3411,11 +3627,25 @@ html.touch.fighting .settings-button {
     top: calc(236px + env(safe-area-inset-top));
   }
 
-  .hud-touch .hud-powers {
-    top: calc(52px + env(safe-area-inset-top));
-    right: 8px;
-    left: 8px;
-    flex-wrap: wrap;
+  .touch-power {
+    width: 50px;
+    height: 50px;
+    font-size: 10px;
+  }
+
+  .touch-power:nth-child(1) {
+    right: 4px;
+    bottom: 158px;
+  }
+
+  .touch-power:nth-child(2) {
+    right: 58px;
+    bottom: 146px;
+  }
+
+  .touch-power:nth-child(3) {
+    right: 112px;
+    bottom: 124px;
   }
 
   .hud-touch .hud-arrow {
@@ -3443,6 +3673,11 @@ html.touch.fighting .settings-button {
     gap: 6px;
     padding-top: 10px;
     padding-bottom: 10px;
+  }
+
+  /* Stays fully on screen, however little padding the card has left. */
+  .settings-card [data-back] {
+    bottom: -10px;
   }
 
   .screen-menu .logo,
@@ -3504,11 +3739,7 @@ html.touch.fighting .settings-button {
   }
 
   .card span {
-    overflow: hidden;
     font-size: 11px;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    max-width: 100%;
   }
 
   .card-foot {
@@ -3586,20 +3817,59 @@ html.touch.fighting .settings-button {
     font-size: 12px;
   }
 
+  /* The tabs get a row of their own, under the money, so all of them show at once. */
   .ws-bar {
-    gap: 4px;
-    padding-left: 2px;
+    flex-wrap: wrap;
+    gap: 0 4px;
+    height: auto;
+    min-height: 44px;
+    padding-left: 8px;
+  }
+
+  .garage-money {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    margin-left: 0;
+    min-height: 44px;
+  }
+
+  .top-tabs {
+    flex: 1 0 calc(100% + 84px);
+    order: 2;
+    height: 34px;
+    margin-right: -84px;
+    overflow: visible;
   }
 
   .top-tab {
-    padding: 0 6px;
-    font-size: 11.5px;
+    flex: 1;
+    min-width: 0;
+    padding: 0 2px;
+    font-size: 12px;
+    white-space: nowrap;
   }
 
-  /* There's more to scroll to. */
-  .top-tabs {
-    -webkit-mask-image: linear-gradient(to right, #000 86%, transparent);
-    mask-image: linear-gradient(to right, #000 86%, transparent);
+  .settings-card .mini-btn {
+    min-width: 50px;
+    padding: 6px 7px;
+  }
+
+  .settings-row {
+    flex-wrap: wrap;
+  }
+
+  /* The columns that matter most, and a long name gives way before they do. */
+  .screen-results .results th:nth-child(n + 4):nth-child(-n + 6),
+  .screen-results .results td:nth-child(n + 4):nth-child(-n + 6) {
+    display: none;
+  }
+
+  .screen-results .results td:nth-child(2) {
+    overflow: hidden;
+    max-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .paint-board {

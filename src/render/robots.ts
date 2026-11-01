@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { decodeSkin, ERASED, SKIN_PANELS, SKIN_SIZE, type PanelId } from '../game/skin';
-import { DEFAULT_PAINT, PAINT_COLORS, type BodyId, type ChassisId, type DefenseId, type MeleeId, type Paint, type PatternId, type TowerId, type WheelsId } from '../sim/data';
+import { DEFAULT_PAINT, MELEE, PAINT_COLORS, type BodyId, type ChassisId, type DefenseId, type MeleeId, type Paint, type PatternId, type TowerId, type WheelsId } from '../sim/data';
 
 export interface RobotBuild {
   chassis: ChassisId;
@@ -35,6 +35,8 @@ export interface RobotModel {
   baseColors: THREE.Color[];
   /** How high to hold the robot so its tower rests on the floor when it's upside down. */
   rollHeight: number;
+  /** Where a flame starts, as a height and a distance out from the middle of the robot. */
+  muzzle: { height: number; reach: number };
 }
 
 const steel = new THREE.MeshStandardMaterial({ color: 0x6d7379, metalness: 0.75, roughness: 0.45 });
@@ -612,6 +614,13 @@ function buildChainsaw(pivot: THREE.Group): BuiltMelee {
   return { spinner: null, axis: 'x', chain };
 }
 
+/** Where gun-style weapons bolt onto the tower, and how far they stand above it, both in the tower's own size. */
+const TOWER_MOUNTS: Partial<Record<MeleeId, { y: number; z: number; top: number; muzzle: number }>> = {
+  flamethrower: { y: 0.34, z: 0.06, top: 0.25, muzzle: 1.5 },
+  tesla: { y: 0.3, z: -0.28, top: 1, muzzle: 0 },
+  spear: { y: 0.36, z: 0.08, top: 0.25, muzzle: 1.75 },
+};
+
 function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec): BuiltMelee {
   switch (id) {
     case 'chainsaw':
@@ -638,10 +647,11 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec): BuiltMelee
     case 'flamethrower':
       // A nozzle flaring at the end of a pipe, with a fuel line and a pilot light beneath it.
       pivot.add(sideOn([[-0.08, -0.14], [0.2, -0.1], [0.24, 0.1], [-0.08, 0.14]], 0.34, dark, 0.02));
-      pivot.add(turned([[0.09, 0], [0.09, 0.85], [0.11, 0.92], [0.19, 1.15], [0.19, 1.2], [0.13, 1.2]], dark, 0, 0.06));
-      pivot.add(turned([[0.12, 0.28], [0.12, 0.36], [0, 0.36]], steel, 0, 0.06), turned([[0.12, 0.62], [0.12, 0.7], [0, 0.7]], steel, 0, 0.06));
-      pivot.add(tube([[0.15, -0.06, -0.05], [0.15, -0.05, 0.4], [0.05, -0.04, 0.8]], 0.022, copper, false, 12));
-      pivot.add(turned([[0.03, 0.8], [0.03, 1.1], [0.016, 1.16], [0, 1.18]], hot, 0, -0.04));
+      // Closed at both ends, with a shallow bore inside the mouth, or you'd see straight through it.
+      pivot.add(turned([[0, 0], [0.09, 0], [0.09, 1.15], [0.11, 1.22], [0.19, 1.45], [0.19, 1.5], [0.13, 1.5], [0.08, 1.34], [0, 1.34]], dark, 0, 0.06));
+      pivot.add(turned([[0.12, 0.28], [0.12, 0.36], [0, 0.36]], steel, 0, 0.06), turned([[0.12, 0.8], [0.12, 0.88], [0, 0.88]], steel, 0, 0.06));
+      pivot.add(tube([[0.15, -0.06, -0.05], [0.15, -0.05, 0.5], [0.05, -0.04, 1.1]], 0.022, copper, false, 12));
+      pivot.add(turned([[0, 1.32], [0.03, 1.32], [0.03, 1.4], [0.016, 1.46], [0, 1.48]], hot, 0, 0.06));
       return { spinner: null, axis: 'x' };
     case 'tesla': {
       // An insulated stack on the nose, with a polished ring on top.
@@ -1035,10 +1045,13 @@ export function buildRobot(build: RobotBuild): RobotModel {
   root.add(towerPivot);
 
   const meleePivot = new THREE.Group();
-  meleePivot.position.set(0, deckY - spec.height * 0.45, build.rearMelee ? -spec.length / 2 : spec.length / 2);
+  const facing = build.rearMelee ? -1 : 1;
+  const mount = MELEE[build.melee].onTower ? TOWER_MOUNTS[build.melee] : undefined;
+  if (mount) meleePivot.position.set(0, mount.y, facing * mount.z);
+  else meleePivot.position.set(0, deckY - spec.height * 0.45, facing * spec.length / 2);
   if (build.rearMelee) meleePivot.rotation.y = Math.PI;
   const { spinner, axis, chain = null } = buildMelee(meleePivot, build.melee, spec);
-  root.add(meleePivot);
+  (mount ? towerPivot : root).add(meleePivot);
 
   const gear = new THREE.Group();
   if (!build.rearMelee) gear.rotation.y = Math.PI;
@@ -1079,7 +1092,10 @@ export function buildRobot(build: RobotBuild): RobotModel {
     materials,
     plates,
     baseColors: materials.map((m) => m.color.clone()),
-    rollHeight: towerPivot.position.y + 0.3 * towerScale,
+    rollHeight: towerPivot.position.y + (0.3 + (mount?.top ?? 0)) * towerScale,
+    muzzle: mount
+      ? { height: towerPivot.position.y + (mount.y + 0.06) * towerScale, reach: facing * towerZ + (mount.z + mount.muzzle) * towerScale }
+      : { height: 1.2, reach: spec.length / 2 + 0.7 },
   };
 }
 

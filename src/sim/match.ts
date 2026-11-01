@@ -30,6 +30,7 @@ import {
   BURN_TIME,
   buildStats,
   CHASSIS,
+  carriedPowerups,
   CLOAK_TIME,
   CROWD_SPLASH,
   DEFENSES,
@@ -82,6 +83,8 @@ export interface Loadout {
   melee: MeleeId;
   defense: DefenseId;
   powerups: Record<PowerupId, number>;
+  /** Which powerups go into a match, in slot order. */
+  powerupSlots?: PowerupId[];
   upgrades: Record<UpgradeId, number>;
   paint?: Paint;
   /** The front weapon faces backward, for fighting while reversing away. */
@@ -401,7 +404,7 @@ export class Match {
       ramCd: 0, pistonCd: 0, flashT: 0, burnT: 0, burnSource: -1, slowT: 0, blindT: 0,
       cloakT: 0, xrayT: 0, regenT: 0, bladesT: 0, kamikazeT: 0,
       lastHitT: -99, lastAttacker: -1, oiled: false, glued: false, hillScore: 0,
-      powerups: { ...setup.loadout.powerups },
+      powerups: carriedPowerups(setup.loadout),
       kills: 0, assists: 0, deaths: 0, damageDealt: 0, earned: 0,
     };
   }

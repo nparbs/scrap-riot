@@ -3,10 +3,10 @@ import { pickLastWords } from '../game/lastWords';
 import { keyLabel, type Action, type Bindings } from '../game/settings';
 import { isTouchDevice } from './touch';
 import { QUICK_CHAT } from '../net/protocol';
-import { COUNTDOWN, DEFENSES, leaveWait, legibleColor, MATCH, MELEE, MODES, POWERUPS, POWERUP_ORDER, RAGDOLL_TIME, SPECTATE, TRAP, UPGRADES } from '../sim/data';
+import { CLOAK_TIME, COUNTDOWN, DEFENSES, fittedPowerups, leaveWait, legibleColor, MATCH, MEGA_TIME, MELEE, MODES, POWERUPS, RAGDOLL_TIME, RAGE_TIME, SPECTATE, TRAP, UPGRADES, XRAY_TIME, type PowerupId } from '../sim/data';
 import { relativeBearing, type Bot, type GameEvent, type Match } from '../sim/match';
 
-const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
+const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3'];
 type TrapId = keyof typeof TRAP;
 const DAMAGE_MARK_TIME = 1;
 const MAP_INTERVAL = 1 / 20;
@@ -52,7 +52,9 @@ export class Hud {
   private readonly money: HTMLElement;
   private readonly effects: HTMLElement;
   private readonly cooldowns: Record<'melee' | 'defense', HTMLElement>;
-  private readonly powerCounts: HTMLElement[] = [];
+  private readonly powerSlots: PowerupId[];
+  /** Each slot's look in the dock, and on a phone its thumb button too. */
+  private readonly powerViews: HTMLElement[][] = [];
   private readonly minimap: CanvasRenderingContext2D;
   private boardTimer = 0;
   private mapTimer = 0;
@@ -101,6 +103,7 @@ export class Hud {
   constructor(private readonly match: Match, private readonly player: Bot, keys: Bindings, actions: HudActions) {
     const { loadout } = player;
     const touch = isTouchDevice();
+    this.powerSlots = fittedPowerups(loadout);
     this.duel = match.mode === 'duel';
     this.rival = match.bots.find((bot) => bot !== player) ?? player;
     this.root.className = `hud${this.duel ? ' hud-duel' : ''}`;
@@ -133,11 +136,6 @@ export class Hud {
       </div>
       <div class="hud-tutorial" role="status"></div>
       <canvas class="hud-map" width="180" height="180"></canvas>
-      <div class="hud-powers">
-        ${POWERUP_ORDER.map(
-          (id, i) => `<div class="slot slot-power"><kbd>${keyLabel(keys[POWER_ACTIONS[i]])}</kbd><span>${POWERUPS[id].name}</span><b data-power="${i}"></b></div>`,
-        ).join('')}
-      </div>
       <div class="hud-dock">
         <div class="dock-card">
           <div class="dock-field"><label>Name:</label><div class="dock-name" style="color:${hex(player.color)}">${escapeText(player.name)}</div></div>
@@ -145,6 +143,7 @@ export class Hud {
           <div class="dock-slots">
             ${this.slot(`${keyLabel(keys.melee)} / LMB`, MELEE[loadout.melee].name, 'melee')}
             ${this.slot(`${keyLabel(keys.defense)} / RMB`, DEFENSES[loadout.defense].name, 'defense')}
+            ${this.powerSlots.map((id, i) => `<div class="slot slot-power" title="${POWERUPS[id].name}"><kbd>${keyLabel(keys[POWER_ACTIONS[i]])}</kbd><span>${POWERUPS[id].short}</span><b></b></div>`).join('')}
           </div>
           <div class="dock-battery"><div class="battery"><i data-battery></i></div><label>Battery:</label></div>
         </div>
@@ -189,7 +188,7 @@ export class Hud {
     this.money = q('.hud-money');
     this.effects = q('.hud-effects');
     this.cooldowns = { melee: q('[data-cd="melee"]'), defense: q('[data-cd="defense"]') };
-    POWERUP_ORDER.forEach((_, i) => this.powerCounts.push(q(`[data-power="${i}"]`)));
+    this.root.querySelectorAll<HTMLElement>('.slot-power').forEach((slot) => this.powerViews.push([slot]));
     this.minimap = this.root.querySelector<HTMLCanvasElement>('.hud-map')!.getContext('2d')!;
     if (!this.duel) {
       this.surrenderBtn.disabled = true;
@@ -423,14 +422,7 @@ export class Hud {
     this.updateDeathFade(dt);
     this.updateRival();
     this.blind.style.opacity = String(Math.min(BLIND_MAX, player.blindT * BLIND_MAX * 1.2));
-    POWERUP_ORDER.forEach((id, i) => {
-      const n = player.powerups[id];
-      const el = this.powerCounts[i];
-      if (el.textContent !== String(n)) {
-        el.textContent = String(n);
-        el.parentElement!.classList.toggle('slot-empty', n === 0);
-      }
-    });
+    this.updatePowerups();
 
     const tags: string[] = [];
     if (player.boostT > 0) tags.push('BOOST');
@@ -506,6 +498,35 @@ export class Hud {
     if (this.ping.textContent !== text) this.ping.textContent = text;
   }
 
+  private updatePowerups(): void {
+    const { player } = this;
+    this.powerSlots.forEach((id, i) => {
+      const n = player.powerups[id];
+      // These two wouldn't be used up at full health or a full battery, so they don't look ready.
+      const needless = (id === 'repair' && player.hp >= player.maxHp) || (id === 'battery' && player.ammo >= 1);
+      const left = this.powerupRunning(id);
+      for (const view of this.powerViews[i]) {
+        this.setText(q(view, 'b'), String(n));
+        view.classList.toggle('power-empty', n === 0);
+        view.classList.toggle('power-needless', n > 0 && needless);
+        view.classList.toggle('power-running', left > 0);
+        if (left > 0) view.style.setProperty('--left', left.toFixed(3));
+      }
+    });
+  }
+
+  /** How much of a powerup's effect is left, from 1 down to 0. */
+  private powerupRunning(id: PowerupId): number {
+    const { player } = this;
+    switch (id) {
+      case 'rage': return player.rageT / RAGE_TIME;
+      case 'megashield': return player.megaT / MEGA_TIME;
+      case 'cloaking': return player.cloakT / CLOAK_TIME;
+      case 'xray': return player.xrayT / XRAY_TIME;
+      default: return 0;
+    }
+  }
+
   private setCooldown(id: 'melee' | 'defense', fraction: number): void {
     const transform = `scaleY(${Math.min(1, fraction)})`;
     this.cooldowns[id].style.transform = transform;
@@ -520,6 +541,7 @@ export class Hud {
   linkTouchControls(controls: HTMLElement): void {
     this.touchControls = controls;
     this.touchButtons = { strike: q(controls, '.touch-melee'), slick: q(controls, '.touch-boost'), pull: q(controls, '.touch-defense') };
+    controls.querySelectorAll<HTMLElement>('.touch-power').forEach((button, i) => this.powerViews[i].push(button));
   }
 
   /** Once out of Last Robot Standing, the same three buttons set off this map's traps instead. */
