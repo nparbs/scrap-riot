@@ -20,7 +20,7 @@ Scrap Riot's look and layout now follow those screenshots, rebuilt from scratch 
 
 ## v0.9: Melee first, BattleBots style
 
-Player feedback from playing against the original's look. Melee is the main event, and guns are a limited extra.
+Player feedback from playing against the original's look. Melee is the main event. Guns started as a limited extra here, and were later removed.
 
 - [x] Guns fixed to the hull: no tracking, no homing, they fire where the robot points
 - [x] Guns limited to a few shots per life, with a battery cost per shot
@@ -44,7 +44,7 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] A weaker Flash Bomb, and $1,000 to start with
 - [x] Players waiting in the queue shown on the Play Online button, and a list of recent players
 - [x] Robots only turn while rolling, and steer like a car in reverse
-- [x] Clear decks: toppers and clutter gone, leaving only the tower and gun on top
+- [x] Clear decks: toppers and clutter gone, leaving only the tower and what's mounted on it on top
 - [x] Three body shapes, for looks only: Wedge, Slab and Turtle
 - [x] Smooth shading on robots and maps, with hard edges kept where they belong
 - [x] A settings button in the corner, usable at any time, including during a match
@@ -67,6 +67,18 @@ Player feedback from playing against the original's look. Melee is the main even
 - [ ] Modular robots: two main weapons at once, front and back, as in the original's weapon slots
 - [x] Self-righting: a Flipper lands robots upside down, and they right themselves about 3 seconds later
 - [ ] Weight as a stat, as the original's parts had
+- [x] Guns removed altogether, with the Flamethrower, Tesla Coil and Pneumatic Spear kept as main weapons
+- [x] Gun-style weapons mounted on the tower, and a Flamethrower barrel that can't be seen through
+- [x] A choice of three powerups for each match, with the rest left in the garage
+- [x] A model on the robot for every defense
+- [x] Spinners turned well down, because they were loud and harsh
+- [x] A robot voice saying "Winner" and "Scrapped"
+- [x] A duel face-off before the countdown
+- [x] Robots tumble and blow up where they actually are, including below the edge
+- [x] The Fight Bots start button always on screen, at the bottom of the panel
+- [x] Claw, crusher, forks and every other weapon animated, in the match and in the workshop preview
+- [x] Tank tracks with links that really run around their wheels
+- [x] Pictures of each map and career fight on their cards
 
 ## v0.1: Playable slice (done)
 
@@ -112,14 +124,15 @@ The current tuning comes from AI-versus-AI data and has not had a human playtest
 
 ## v0.5: Online multiplayer
 
-The original was built around online play, so this was moved to the front of the queue. The netcode and server are built; they go live once a server is hosted (see [docs/hosting.md](docs/hosting.md)).
+The original was built around online play, so this was moved to the front of the queue. The netcode and server are built and hosted (see [docs/hosting.md](docs/hosting.md)).
 
 - [x] Netcode: server-authoritative snapshots at 20 Hz, client prediction for your own robot, interpolation for the rest
 - [x] Authoritative WebSocket server running the shared sim
 - [x] Quick-play matchmaking, with bots filling empty slots
 - [x] Reconnects: a bot drives your robot until you return
 - [x] Input validation, rate and connection limits, Docker packaging, hosting guide, privacy notes
-- [ ] Host the server and test with real players over the internet
+- [x] Host the server
+- [ ] Test with real players over the internet
 - [x] Accounts: Google sign-in or guest, with progress owned by the server
 - [x] Match history, rating and leaderboard
 - [ ] Moderation for player names
@@ -127,6 +140,10 @@ The original was built around online play, so this was moved to the front of the
 ## v1.0: Release
 
 - [ ] Touch controls for phones and tablets: built, needs testing on a real phone
+- [ ] Full screen and landscape lock on phones, and Add to Home Screen on iPhone: built, needs testing on a real phone
+- [ ] Online counts on phones, and joining a waiting match from a bot fight: built, needs testing against a real queue
+- [x] Screens checked on phone sizes down to the 720p minimum (640x360), apart from the item below
+- [ ] Paintshop layout at the 720p minimum, with tools and colours big enough for thumbs
 - [x] Music, with four battle songs and three menu songs in rotation
 - [ ] Accessibility: color-blind palette, reduced screen shake
 - [ ] Trademark and name check before wide release

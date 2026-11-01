@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Sfx } from './audio';
-import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, partFits, previewLoadout, sellPart, setArmour, togglePowerupSlot, writeSave, type PartPreview, type Save, type Slot } from './game/progress';
+import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, partFits, previewLoadout, sellPart, setArmour, tidyPowerups, togglePowerupSlot, writeSave, type PartPreview, type Save, type Slot } from './game/progress';
 import { awardMedal, careerResult, fightSetups, loadCareer, writeCareer, type Fight } from './game/career';
 import { activeLevel, audibleVolume, AutoQuality, DEFAULT_BINDINGS, loadSettings, musicOff, QUALITY, rebind, toggleMusic, writeSettings, type Action } from './game/settings';
 import { Tutorial } from './game/tutorial';
@@ -515,7 +515,7 @@ class Game {
     const skin = this.save.loadout.paint?.skin;
     const saving = this.skinDirty || this.skinSave !== null;
     this.profile = profile;
-    this.save = profile.save;
+    this.save = tidyPowerups(profile.save);
     if (saving) this.save.loadout.paint = { ...(this.save.loadout.paint ?? DEFAULT_PAINT), skin };
   }
 

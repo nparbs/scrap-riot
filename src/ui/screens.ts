@@ -290,13 +290,16 @@ function ordinal(place: number): string {
 
 const MEDAL_LABEL: Record<Medal, string> = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold' };
 
+/** A picture of a map or a career fight, made by scripts/make-previews.mjs. */
+const previewStyle = (name: string) => `style="--shot:url('${import.meta.env.BASE_URL}previews/${name}.jpg')"`;
+
 function careerPanel(progress: CareerProgress): string {
   const cards = CAREER.map((fight, index) => {
     const unlocked = isUnlocked(progress, index);
     const medal = progress[fight.id];
     const reward = medal ? '' : ` · $${fight.reward} first medal`;
     const status = !unlocked ? 'Locked' : medal ? `${MEDAL_LABEL[medal]} · Replay` : 'Fight';
-    return `<button class="card${fight.boss ? ' card-boss' : ''}${medal ? ` medal-${medal}` : ''}${unlocked ? '' : ' card-locked'}" data-fight-id="${fight.id}" ${unlocked ? '' : 'disabled'}>
+    return `<button class="card card-shot${fight.boss ? ' card-boss' : ''}${medal ? ` medal-${medal}` : ''}${unlocked ? '' : ' card-locked'}" data-fight-id="${fight.id}" ${previewStyle(`fight-${fight.id}`)} ${unlocked ? '' : 'disabled'}>
       <strong>${index + 1}. ${fight.title}</strong><span>${fight.blurb}</span><small>${ARENAS[fight.arena].name} · ${MODES[fight.mode].name}${reward}</small><em>${status}</em></button>`;
   }).join('');
   return `<section><h3>Career</h3><p class="settings-hint">Fight your way up the ladder with your current robot. Win a medal to unlock the next fight, and win almost untouched for gold.</p><div class="cards">${cards}</div></section>`;
@@ -613,7 +616,7 @@ function botsPanel(save: Save, options: GarageOptions): string {
   const maps = ARENA_ORDER.map((id) => {
     const def = ARENAS[id];
     const on = save.practice.arena === id;
-    return `<button class="card${on ? ' card-on' : ''}" data-arena="${id}"><strong>${def.name}</strong><span>${def.blurb}</span><em>${on ? 'Selected' : 'Select'}</em></button>`;
+    return `<button class="card card-shot${on ? ' card-on' : ''}" data-arena="${id}" ${previewStyle(`map-${id}`)}><strong>${def.name}</strong><span>${def.blurb}</span><em>${on ? 'Selected' : 'Select'}</em></button>`;
   }).join('');
   const modes = (Object.keys(MODES) as ModeId[])
     .map((id) => {
@@ -709,7 +712,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
       <header class="ws-bar">
         <div class="ws-brand">${logoHtml()}</div>
         <nav class="top-tabs">${topTabs}</nav>
-        <div class="garage-money" data-money><small>Balance</small>$${money}</div>
+        <div class="garage-money" data-money><span class="money-coin" aria-hidden="true">$</span><span class="money-read"><small>Balance</small><b data-money-value>${money}</b></span></div>
       </header>
       <div class="ws-left">
         <div class="ws-panel">${options.notice ? `<div class="garage-notice" role="alert">${escapeText(options.notice)}</div>` : ''}${body()}</div>
@@ -731,6 +734,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
       </div>
     </div>`;
 
+  rollMoney(el, save.money);
   el.querySelector<HTMLInputElement>('[data-name]')?.addEventListener('change', (e) => {
     actions.onName((e.target as HTMLInputElement).value);
   });
@@ -775,6 +779,30 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     else if ('delete' in target.dataset) actions.onDelete();
   });
   return el;
+}
+
+const MONEY_ROLL_MS = 650;
+let moneyShown: number | null = null;
+
+/** Rolls the balance up or down to its new value, and flashes it, whenever it has changed. */
+function rollMoney(el: HTMLElement, money: number): void {
+  const from = moneyShown;
+  moneyShown = money;
+  if (from === null || from === money) return;
+  const box = el.querySelector<HTMLElement>('[data-money]')!;
+  const value = el.querySelector<HTMLElement>('[data-money-value]')!;
+  box.classList.add(money > from ? 'money-up' : 'money-down');
+  const start = performance.now();
+  const step = (now: number) => {
+    // The workshop redraws itself often, and the newest copy takes over the roll.
+    if (moneyShown !== money || !value.isConnected) return;
+    const t = Math.min(1, (now - start) / MONEY_ROLL_MS);
+    const eased = 1 - (1 - t) ** 3;
+    value.textContent = Math.round(from + (money - from) * eased).toLocaleString();
+    if (t < 1) requestAnimationFrame(step);
+  };
+  value.textContent = from.toLocaleString();
+  requestAnimationFrame(step);
 }
 
 export function resultsScreen(standings: Standing[], playerId: number, onContinue: () => void, note = '', drawn = false): HTMLElement {

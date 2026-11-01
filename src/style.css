@@ -1566,10 +1566,20 @@ select:focus-visible {
   width: min(280px, 40vw);
 }
 
+/* The same till as the workshop's, smaller, for what this match has earned so far. */
 .hud-money {
-  font: 400 22px var(--display);
-  color: var(--good);
+  display: inline-block;
+  padding: 3px 10px 2px 12px;
+  border: 1px solid #0a0b0c;
+  border-left: 4px solid var(--accent);
+  border-radius: 5px;
+  background: rgba(13, 15, 16, 0.82);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  color: #8ff5bd;
+  font: 400 20px/1.1 var(--display);
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  text-shadow: 0 0 10px rgba(125, 219, 168, 0.45);
 }
 
 .hud-effects {
@@ -2039,9 +2049,6 @@ select:focus-visible {
     display: none;
   }
 
-  .dock-card {
-    padding-right: 54px;
-  }
 }
 
 /* The workshop: a bar across the top, the shop on the left, and the robot with the ways to fight on the right. */
@@ -2116,21 +2123,91 @@ select:focus-visible {
   background: var(--accent);
 }
 
+/* The till: a recessed readout in its own steel box, with a brass coin beside the number. */
 .garage-money {
+  position: relative;
+  display: flex;
   flex: none;
-  color: var(--good);
-  font: 700 19px var(--body);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  line-height: 1.05;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 12px 0 6px;
+  overflow: hidden;
+  border: 1px solid #0a0b0c;
+  border-radius: 6px;
+  background: linear-gradient(#0d0f10, #16191b);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.75), 0 0 0 1px var(--seam), 0 1px 0 1px rgba(255, 255, 255, 0.06);
 }
 
-.garage-money small {
-  display: block;
+/* A strip of hazard paint down the edge of the box. */
+.garage-money::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: repeating-linear-gradient(135deg, var(--accent) 0 5px, #141516 5px 10px);
+}
+
+.money-coin {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe9a8, #e0a93a 55%, #94671a);
+  box-shadow: inset 0 0 0 2px rgba(120, 78, 12, 0.75), 0 1px 3px rgba(0, 0, 0, 0.7);
+  color: #5c3c08;
+  font: 400 17px/1 var(--display);
+}
+
+.money-read {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1;
+}
+
+.money-read small {
   color: var(--muted);
-  font: 600 10px var(--body);
-  letter-spacing: 0.08em;
+  font: 700 9px/1 var(--body);
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+}
+
+.money-read b {
+  margin-top: 3px;
+  color: #8ff5bd;
+  font: 400 21px/1 var(--display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.035em;
+  text-shadow: 0 0 10px rgba(125, 219, 168, 0.5);
+}
+
+.money-up {
+  animation: money-up 0.75s ease-out;
+}
+
+.money-up .money-coin {
+  animation: coin-flip 0.65s ease-out;
+}
+
+.money-down {
+  animation: money-down 0.5s ease-out;
+}
+
+@keyframes money-up {
+  from { box-shadow: inset 0 0 18px rgba(125, 219, 168, 0.8), 0 0 14px rgba(125, 219, 168, 0.75); }
+}
+
+@keyframes money-down {
+  from { box-shadow: inset 0 0 18px rgba(232, 72, 58, 0.8), 0 0 12px rgba(232, 72, 58, 0.65); }
+}
+
+@keyframes coin-flip {
+  from { transform: rotateY(0); }
+  to { transform: rotateY(720deg); }
 }
 
 .ws-left,
@@ -2934,17 +3011,18 @@ html.touch .plate-btn {
     padding: 8px;
   }
 
+  /* This column scrolls, so the bar stays at the top. The corner buttons live in it, and nothing slides under them. */
   .ws-bar {
+    position: sticky;
+    top: 0;
+    z-index: 3;
     gap: 8px;
     padding-right: 92px;
+    background: #1c1e21;
   }
 
   .ws-brand {
     display: none;
-  }
-
-  .garage-money {
-    font-size: 15px;
   }
 
   .ws-panel {
@@ -4032,11 +4110,8 @@ html.touch.fighting .settings-button {
   }
 
   .garage-money {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    margin-left: 0;
-    min-height: 44px;
+    height: 36px;
+    margin: 4px 0;
   }
 
   .top-tabs {
@@ -4088,14 +4163,6 @@ html.touch.fighting .settings-button {
     aspect-ratio: 1;
   }
 
-  .garage-money {
-    font-size: 13px;
-  }
-
-  .garage-money small {
-    display: none;
-  }
-
   .shop-head {
     gap: 8px;
     margin-bottom: 6px;
@@ -4105,5 +4172,316 @@ html.touch.fighting .settings-button {
   .stat-bars {
     flex-basis: 100%;
     gap: 8px;
+  }
+}
+
+/* Map and career cards: the picture across the top, fading into the card where the words are. */
+.card-shot {
+  position: relative;
+  min-height: 158px;
+  padding-top: 76px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(20, 22, 24, 0.05) 0, rgba(20, 22, 24, 0.5) 38%, #181a1d 72%),
+    var(--shot, none) center top / 100% auto no-repeat,
+    #181a1d;
+}
+
+.card-shot > * {
+  position: relative;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.card-shot:hover {
+  background:
+    linear-gradient(180deg, rgba(20, 22, 24, 0) 0, rgba(20, 22, 24, 0.35) 38%, #1c1f22 72%),
+    var(--shot, none) center top / 100% auto no-repeat,
+    #1c1f22;
+}
+
+.card-shot.card-on {
+  background:
+    linear-gradient(180deg, rgba(255, 127, 63, 0.14) 0, rgba(40, 26, 18, 0.5) 38%, #271c16 72%),
+    var(--shot, none) center top / 100% auto no-repeat,
+    #271c16;
+}
+
+.card-shot.card-boss {
+  background:
+    linear-gradient(180deg, rgba(90, 20, 20, 0.15) 0, rgba(50, 18, 18, 0.55) 38%, #241212 72%),
+    var(--shot, none) center top / 100% auto no-repeat,
+    #241212;
+}
+
+.card-shot.card-locked {
+  filter: grayscale(0.85);
+}
+
+/* The match dock, in the same finish as the workshop's panels. */
+.dock-card {
+  border: 1px solid var(--seam);
+  border-radius: 8px;
+  background: linear-gradient(#212427, #191b1e);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.dock-name {
+  border-radius: 4px;
+}
+
+.dock-field label,
+.dock-battery label {
+  font-weight: 600;
+}
+
+.hp-bar {
+  border: 1px solid #0a0b0c;
+  box-shadow: 0 0 0 1px var(--seam);
+}
+
+.slot {
+  border: 1px solid var(--seam);
+  border-radius: 5px;
+  background: #121416;
+}
+
+.slot-power {
+  box-shadow: none;
+}
+
+.battery {
+  border: 1px solid var(--seam);
+  border-radius: 4px;
+  overflow: hidden;
+  background: #0b0c0d;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.battery::before {
+  display: none;
+}
+
+.dock-battery::before {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: calc(50% - 6px);
+  width: 12px;
+  height: 4px;
+  border-radius: 2px 2px 0 0;
+  background: var(--seam);
+}
+
+.battery i {
+  background: linear-gradient(90deg, #6fb0d2, var(--charge) 45%, #b5dcf0);
+}
+
+.hud-touch .dock-battery::before {
+  display: none;
+}
+
+/* A narrow window that scrolls gives the tabs a row of their own under the till, so all of them show at once. */
+@media (max-width: 860px) and (min-height: 501px) {
+  .ws-bar {
+    flex-wrap: wrap;
+    gap: 0 4px;
+    height: auto;
+    min-height: 44px;
+    padding-left: 8px;
+  }
+
+  .garage-money {
+    height: 36px;
+    margin: 4px 0;
+  }
+
+  .top-tabs {
+    flex: 1 0 calc(100% + 84px);
+    order: 2;
+    height: 34px;
+    margin-right: -84px;
+    overflow: visible;
+  }
+
+  .top-tab {
+    flex: 1;
+    min-width: 0;
+    padding: 0 2px;
+    white-space: nowrap;
+  }
+
+}
+
+/* The corner buttons sit inside the workshop's bar, wherever the bar is. */
+:root {
+  --ws-zoom: 1;
+  --ws-side: 12px;
+  --ws-top: 10px;
+  --ws-bar: 52px;
+}
+
+@media (max-width: 860px) and (min-height: 501px) {
+  :root {
+    --ws-bar: 44px;
+  }
+}
+
+@media (min-width: 1700px) and (min-height: 960px) {
+  :root { --ws-zoom: 1.3; }
+}
+
+@media (min-width: 2400px) and (min-height: 1300px) {
+  :root { --ws-zoom: 1.7; }
+}
+
+@media (max-width: 860px) {
+  :root {
+    --ws-side: 8px;
+    --ws-top: 8px;
+  }
+}
+
+@media (max-width: 960px) and (max-height: 500px) {
+  :root {
+    --ws-side: max(6px, env(safe-area-inset-right));
+    --ws-top: 6px;
+    --ws-bar: 44px;
+  }
+
+  .garage-money {
+    height: 36px;
+  }
+
+  .money-read small {
+    display: none;
+  }
+
+  .money-read b {
+    margin: 0;
+    font-size: 18px;
+  }
+
+  .money-coin {
+    width: 22px;
+    height: 22px;
+    font-size: 14px;
+  }
+
+  .card-shot {
+    min-height: 118px;
+    padding-top: 44px;
+  }
+}
+
+@media (max-width: 600px) and (orientation: portrait) {
+  :root {
+    --ws-side: 6px;
+    --ws-top: max(6px, env(safe-area-inset-top));
+    --ws-bar: 44px;
+  }
+
+  .money-read small {
+    display: none;
+  }
+
+  .money-read b {
+    margin: 0;
+    font-size: 18px;
+  }
+
+  .money-coin {
+    width: 22px;
+    height: 22px;
+    font-size: 14px;
+  }
+}
+
+html:has(.ws) .settings-button {
+  top: calc((var(--ws-top) + var(--ws-bar) / 2) * var(--ws-zoom) - 19px);
+  right: calc(max(var(--ws-side) * var(--ws-zoom), (100vw - 1560px * var(--ws-zoom)) / 2) + 7px);
+}
+
+html:has(.ws) .music-button {
+  right: calc(max(var(--ws-side) * var(--ws-zoom), (100vw - 1560px * var(--ws-zoom)) / 2) + 51px);
+}
+
+/*
+ * A tall or narrow window with a mouse: two cards side by side would squeeze the weapon slots until
+ * the keys ran into the counts, so the player's own card gets a row to itself above the rest.
+ */
+@media (max-width: 1100px) {
+  .hud:not(.hud-touch) {
+    --dock-height: 252px;
+  }
+
+  .hud:not(.hud-touch) .hud-dock {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+  }
+
+  .hud:not(.hud-touch) .dock-card:first-child {
+    flex: 1 0 100%;
+  }
+
+  .hud:not(.hud-touch) .dock-mid {
+    order: 3;
+    flex: 0 0 118px;
+    gap: 3px;
+  }
+
+  .hud:not(.hud-touch) .dock-mid .dock-btn {
+    padding-right: 6px;
+    font-size: 12px;
+  }
+
+  .hud:not(.hud-touch) .dock-mid .dock-btn::after {
+    display: none;
+  }
+
+  .hud:not(.hud-touch) .dock-weapon {
+    margin-left: 0;
+  }
+
+  .hud:not(.hud-touch) .dock-slots .slot:not(.slot-power) {
+    flex-grow: 1.5;
+  }
+}
+
+/* Too short for two rows, and the rival is on the scoreboard anyway. */
+@media (max-width: 1100px) and (max-height: 620px) {
+  .hud:not(.hud-touch) {
+    --dock-height: 136px;
+  }
+
+  .hud:not(.hud-touch) .dock-card:last-child,
+  .hud:not(.hud-touch) .dock-mid {
+    display: none;
+  }
+}
+
+/* The narrowest windows put the powerups on a row under the weapons, and the mode's name gives way to the scoreboard. */
+@media (max-width: 560px) {
+  .hud:not(.hud-touch) {
+    --dock-height: 296px;
+  }
+
+  .hud:not(.hud-touch) .dock-slots {
+    flex-wrap: wrap;
+  }
+
+  .hud:not(.hud-touch) .dock-slots .slot:not(.slot-power) {
+    flex: 1 0 45%;
+  }
+
+  .hud:not(.hud-touch) .dock-slots .slot-power {
+    flex: 1 0 30%;
+  }
+
+  .hud:not(.hud-touch) .hud-mode {
+    display: none;
+  }
+
+  .hud:not(.hud-touch) .dock-battery label {
+    display: none;
   }
 }
