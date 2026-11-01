@@ -1,16 +1,17 @@
 import { ACHIEVEMENTS, CAREER, isUnlocked, type AchievementStats, type CareerProgress, type Fight, type Medal } from '../game/career';
 import { canSell, CATALOG, partFits, previewLoadout, sellPrice, upgradeCost, type PartPreview, type Save, type Slot } from '../game/progress';
 import { ACTIONS, activeLevel, keyLabel, LEVELS, QUALITY, VOLUME_KINDS, type Action, type Bindings, type Quality, type Settings, type VolumeKind } from '../game/settings';
-import { DEFAULT_NAME, NAME_MAX, sanitizeName, type HistoryEntry, type LeaderboardEntry, type OnlineStatus, type Profile } from '../net/protocol';
+import { DEFAULT_NAME, NAME_MAX, sanitizeName, type HistoryEntry, type LeaderboardEntry, type OnlineQueue, type OnlineStatus, type Profile } from '../net/protocol';
 import { logoUrl } from '../render/logo';
 import { ARENA_ORDER, ARENAS, type ArenaId } from '../sim/arena';
 import {
   ARMOUR,
   buildStats,
   MELEE,
+  MIN_PAID_TIME,
+  REWARD,
   TURRETS,
   DEFAULT_PAINT,
-  DUEL_MIN_PAID_TIME,
   installedParts,
   MODES,
   BODIES,
@@ -132,7 +133,7 @@ export function pauseScreen(online: boolean, onResume: () => void, onQuit: () =>
   el.innerHTML = `
     <div class="menu-card">
       <h2>${online ? 'Menu' : 'Paused'}</h2>
-      ${online ? '<p class="tagline">The match keeps running. Leaving a duel counts as a loss.</p>' : ''}
+      ${online ? '<p class="tagline">The match keeps running. Leaving counts as a loss.</p>' : ''}
       <button class="btn btn-primary" data-resume>Resume</button>
       <button class="btn" data-quit>${quitLabel}</button>
       ${controlsTable(keys)}
@@ -142,16 +143,17 @@ export function pauseScreen(online: boolean, onResume: () => void, onQuit: () =>
   return el;
 }
 
-export function lobbyScreen(onCancel: () => void, hasAccount: boolean): { el: HTMLElement; update: (players: number, capacity: number, startsIn: number, arena: ArenaId, mode: ModeId) => void } {
+export function lobbyScreen(queue: OnlineQueue, onCancel: () => void, hasAccount: boolean): { el: HTMLElement; update: (players: number, capacity: number, startsIn: number, arena: ArenaId, mode: ModeId) => void } {
+  const brawl = queue === 'brawl';
   const el = document.createElement('div');
   el.className = 'screen screen-lobby';
   el.innerHTML = `
     <div class="menu-card">
       ${logoHtml()}
-      <h2>Play Online</h2>
+      <h2>${brawl ? 'Online Brawl' : 'Online Duel'}</h2>
       <p class="lobby-status" data-status>Connecting to the server&hellip;</p>
       <p class="tagline" data-where></p>
-      <p class="tagline">${hasAccount ? 'A duel starts as soon as another pilot joins. Win to earn money and rating.' : 'A duel starts as soon as another pilot joins. Online, everyone fights with equal stats.'}</p>
+      <p class="tagline">${brawl ? "Up to six pilots, no bots. It starts 20 seconds after a second pilot joins, or as soon as it's full." : 'A duel starts as soon as another pilot joins.'} ${hasAccount ? 'Win to earn money and rating.' : 'Online, everyone fights with equal stats.'}</p>
       <button class="btn" data-cancel>Cancel</button>
     </div>`;
   el.querySelector('[data-cancel]')!.addEventListener('click', onCancel);
@@ -159,9 +161,10 @@ export function lobbyScreen(onCancel: () => void, hasAccount: boolean): { el: HT
   const where = el.querySelector('[data-where]')!;
   return {
     el,
-    update: (_players, _capacity, startsIn, arena, mode) => {
+    update: (players, capacity, startsIn, arena, mode) => {
       where.textContent = `${MODES[mode].name} on ${ARENAS[arena].name}`;
-      status.textContent = startsIn < 0 ? 'Waiting for another pilot to join…' : `Opponent found! Starting in ${startsIn}…`;
+      if (startsIn < 0) status.textContent = 'Waiting for another pilot to join…';
+      else status.textContent = brawl ? `${players} of ${capacity} pilots here. Starting in ${startsIn}…` : `Opponent found! Starting in ${startsIn}…`;
     },
   };
 }
@@ -175,7 +178,7 @@ export interface GarageActions {
   onPowerup: (id: PowerupId) => void;
   onUpgrade: (id: UpgradeId) => void;
   onFight: () => void;
-  onOnline: () => void;
+  onOnline: (queue: OnlineQueue) => void;
   onTraining: () => void;
   onName: (name: string) => void;
   onSettings: () => void;
@@ -429,8 +432,10 @@ function statsPanel(save: Save, preview: PartPreview | null): string {
   return `<table class="side-table">${rows.map(([label, value]) => `<tr><td>${label}</td><td>${value}</td></tr>`).join('')}</table>`;
 }
 
-export function queueLabel(online: OnlineStatus | null): string {
-  return online ? `${online.queued} in queue` : '';
+export function queueLabel(online: OnlineStatus | null, queue: OnlineQueue): string {
+  // A server a step behind the page doesn't split these up yet.
+  const waiting = online?.queues?.[queue];
+  return waiting === undefined ? '' : `${waiting} in queue`;
 }
 
 /** Who's around now, and who was recently. */
@@ -551,7 +556,7 @@ function pilotPanel(save: Save, options: GarageOptions): string {
 
 function helpPanel(keys: Bindings): string {
   return `<section><h3>How to play</h3>
-      <p class="settings-hint">Build a robot in the Workshop, then fight another pilot on the roof. A duel ends when one robot is wrecked or knocked over the edge. If time runs out, the most armour left wins. Every part takes up room, so a bigger chassis fits more.</p>
+      <p class="settings-hint">Build a robot in the Workshop, then fight another pilot on the roof. A duel ends when one robot is wrecked or knocked over the edge. If time runs out, the most armour left wins. An Online Brawl puts up to six pilots on the roof, and wrecked robots come back: first to 12 kills wins, or the most when time runs out. Every part takes up room, so a bigger chassis fits more.</p>
       <p class="settings-hint">Robots can only turn while rolling, so a stopped robot has to drive forward or back to change direction. Your main weapon does the real damage. Spinners have to reach speed before they bite, so hold the key on the way in. Strong weapons have a cooldown, shown in red on the panel at the bottom. Guns only fire straight ahead and have few shots per life. Your battery runs your gun and your speed boost, so spend it carefully.</p>
       <p class="settings-hint">A flipper lands you upside down. You can't do anything until your robot rights itself, about three seconds later.</p></section>
     <section><h3>Controls</h3>${controlsTable(keys)}</section>
@@ -589,6 +594,8 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
   const topTabs = TOP_TABS.map(([id, label]) => `<button class="top-tab${options.tab === id ? ' top-tab-on' : ''}" data-tab="${id}">${label}</button>`).join('');
   const sideTabs = SIDE_TABS.map(([id, label]) => `<button class="side-tab${options.side === id ? ' side-tab-on' : ''}" data-side="${id}">${label}</button>`).join('');
   const navButton = (label: string, attr: string) => `<button class="nav-btn" ${attr}>${label}</button>`;
+  const onlineButton = (label: string, queue: OnlineQueue) =>
+    navButton(`${label}<small data-queue="${queue}">${queueLabel(options.online, queue)}</small>`, options.onlineAvailable ? `data-online="${queue}"` : 'disabled title="No game server is connected"');
 
   el.innerHTML = `
     <div class="ws">
@@ -606,7 +613,8 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
         ${side()}
         <div class="zoom-row">${options.side === 'preview' ? '<button class="step-btn" data-zoom="0.15" aria-label="Zoom out">−</button><span>Zoom</span><button class="step-btn" data-zoom="-0.15" aria-label="Zoom in">+</button>' : ''}</div>
         <div class="nav-btns">
-          ${navButton(`Play Online<small data-queue>${queueLabel(options.online)}</small>`, options.onlineAvailable ? 'data-online' : 'disabled title="No game server is connected"')}
+          ${onlineButton('Online Duel', 'duel')}
+          ${onlineButton('Online Brawl', 'brawl')}
           ${navButton('Offline vs Bots', 'data-tab="bots"')}
           ${navButton('Training', 'data-training')}
           ${navButton('Stats', 'data-tab="stats"')}
@@ -644,7 +652,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     else if (power) actions.onPowerup(power as PowerupId);
     else if (upgrade) actions.onUpgrade(upgrade as UpgradeId);
     else if ('fight' in target.dataset) actions.onFight();
-    else if ('online' in target.dataset) actions.onOnline();
+    else if (target.dataset.online) actions.onOnline(target.dataset.online as OnlineQueue);
     else if ('training' in target.dataset) actions.onTraining();
     else if ('quit' in target.dataset) actions.onQuit();
     else if ('settings' in target.dataset) actions.onSettings();
@@ -668,7 +676,7 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
   el.innerHTML = `
     <div class="menu-card results-card">
       <h2>${headline}</h2>
-      ${note ? `<p class="payout"><small>${escapeText(note)}</small></p>` : `<p class="payout">You earned <b>$${mine.total}</b> <small>($${Math.round(mine.bot.earned)} in battle + $${mine.bonus} bonus)${duel && mine.bonus === 0 && !drawn ? `. Duels under ${DUEL_MIN_PAID_TIME} seconds pay no bonus.` : ''}</small></p>`}
+      ${note ? `<p class="payout"><small>${escapeText(note)}</small></p>` : `<p class="payout">You earned <b>$${mine.total}</b> <small>($${Math.round(mine.bot.earned)} in battle + $${mine.bonus} bonus)${mine.bonus === 0 && !drawn ? `. Matches under ${MIN_PAID_TIME} seconds pay no bonus.` : ''}${mine.total > Math.round(mine.bot.earned + mine.bonus) ? `. Every finished match pays at least $${REWARD.minimum}.` : ''}</small></p>`}
       <table class="results">
         <thead><tr><th>#</th><th>Robot</th><th>Kills</th><th>Deaths</th><th>Damage</th><th>Payout</th></tr></thead>
         <tbody>${rows}</tbody>

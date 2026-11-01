@@ -50,6 +50,8 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] A settings button in the corner, usable at any time, including during a match
 - [x] Preview any part in the workshop before you can afford it
 - [x] The Garage page renamed Stats, and the robot's numbers renamed Specs
+- [x] Online Brawl: a Free-for-All on the roof for up to 6 pilots, with no bots
+- [x] Every finished match pays at least $100
 - [ ] Replace the name prompt with Google sign-in, and add a name filter
 - [ ] A report button or a way to hide other players' paint jobs
 - [ ] Sparks and visible damage from spinner hits

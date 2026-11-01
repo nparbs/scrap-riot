@@ -12,6 +12,7 @@ import {
   type ServerMessage,
   type SnapshotMessage,
   type StartMessage,
+  type OnlineQueue,
 } from './protocol';
 import { applyBotState, applyWorldState, readAlive, readMotion } from './snapshot';
 
@@ -71,7 +72,7 @@ export class NetClient {
 
   constructor(
     private readonly url: string,
-    private readonly hello: { name: string; loadout: Loadout; session?: string },
+    private readonly hello: { name: string; loadout: Loadout; session?: string; queue?: OnlineQueue },
     private readonly events: NetClientEvents = {},
   ) {}
 
@@ -86,7 +87,7 @@ export class NetClient {
     this.ws = ws;
     ws.onopen = () => {
       if (this.token) this.send({ t: 'resume', v: PROTOCOL_VERSION, token: this.token });
-      else this.send({ t: 'join', v: PROTOCOL_VERSION, name: this.hello.name, loadout: this.withoutSkin(), session: this.hello.session });
+      else this.send({ t: 'join', v: PROTOCOL_VERSION, name: this.hello.name, loadout: this.withoutSkin(), session: this.hello.session, queue: this.hello.queue });
     };
     ws.onmessage = (e) => this.handle(JSON.parse(String(e.data)) as ServerMessage);
     // Not every runtime follows a failed connection's error event with a close event.

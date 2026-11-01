@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { OnlineStatus } from '../src/net/protocol';
 import type { Accounts } from './accounts';
 
 // Has to fit a paint job, which is the largest thing anyone sends.
@@ -59,7 +60,7 @@ export interface ApiOptions {
   googleClientId: string | null;
   clientAddress: (req: IncomingMessage) => string;
   /** How many people are in the queue and in matches right now. */
-  presence: () => { queued: number; playing: number };
+  presence: () => Omit<OnlineStatus, 'recent'>;
 }
 
 export type ApiHandler = ((req: IncomingMessage, res: ServerResponse) => void) & { prune: () => void };

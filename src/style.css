@@ -899,7 +899,7 @@ button:disabled {
 .preview-window,
 .side-view {
   flex: none;
-  width: min(100%, calc(100vh - 318px));
+  width: min(100%, calc(100vh - 356px));
   aspect-ratio: 1;
   align-self: center;
   border: 3px solid var(--accent-dark);
@@ -950,6 +950,11 @@ button:disabled {
   padding: 8px 6px 6px;
   background: var(--circuit);
   background-size: 96px 96px, 96px 156px, auto;
+}
+
+/* A last button with nothing beside it takes the whole row. */
+.nav-btns > :last-child:nth-child(odd) {
+  grid-column: 1 / -1;
 }
 
 .nav-btn {

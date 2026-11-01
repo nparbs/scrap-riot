@@ -23,7 +23,7 @@ import type { BotSetup, GameEvent, Loadout } from '../sim/match';
 import type { Save } from '../game/progress';
 import { decodeSkin } from '../game/skin';
 
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 export const NAME_MAX = 16;
 export const DEFAULT_NAME = 'Pilot';
 /** Clients send input at this rate; each message covers INPUT_STEPS sim steps. */
@@ -34,13 +34,16 @@ export const SNAPSHOT_STEPS = 3;
 /** Chat is picked from this list, so strangers can't send each other anything worse. */
 export const QUICK_CHAT = ['Good luck!', 'Nice hit!', 'Come here!', 'Oops!', 'Good game.', 'Rematch?'];
 
+/** The online matches a player can queue for. */
+export type OnlineQueue = 'duel' | 'brawl';
+
 const FLAG_MELEE = 1;
 const FLAG_TURRET = 2;
 const FLAG_DEFENSE = 4;
 const FLAG_BOOST = 8;
 
 export type ClientMessage =
-  | { t: 'join'; v: number; name: string; loadout: Loadout; session?: string }
+  | { t: 'join'; v: number; name: string; loadout: Loadout; session?: string; queue?: OnlineQueue }
   | { t: 'resume'; v: number; token: string }
   | { t: 'input'; s: number; th: number; st: number; f: number; p: number }
   | { t: 'ping'; c: number }
@@ -192,6 +195,8 @@ export interface HistoryEntry {
 export interface OnlineStatus {
   /** People waiting for a match right now. */
   queued: number;
+  /** The same people, by which match they're waiting for. */
+  queues: Record<OnlineQueue, number>;
   /** People in a match right now. */
   playing: number;
   recent: { name: string; lastSeen: string }[];

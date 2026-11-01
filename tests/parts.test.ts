@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buyOrEquip, newSave, partFits, sellPart, setArmour } from '../src/game/progress';
 import { ARENAS } from '../src/sim/arena';
-import { ARMOUR, buildStats, CHASSIS, DUEL_MIN_PAID_TIME, REWARD, spaceCapacity, spaceUsed, TOWERS, TURRETS } from '../src/sim/data';
+import { ARMOUR, buildStats, CHASSIS, MIN_PAID_TIME, REWARD, spaceCapacity, spaceUsed, TOWERS, TURRETS } from '../src/sim/data';
 import { Match, type BotSetup, type Loadout } from '../src/sim/match';
 
 const pilot = (name: string, over: Partial<Loadout> = {}): BotSetup => ({ name, color: 0, isAI: false, loadout: { ...newSave().loadout, ...over } });
@@ -153,15 +153,51 @@ describe('the duel', () => {
     expect(quick.standings().map((row) => row.bonus)).toEqual([0, 0]);
 
     const long = duel();
-    long.time = DUEL_MIN_PAID_TIME + 1;
+    long.time = MIN_PAID_TIME + 1;
     long.forfeit(0);
     run(long, 3);
     expect(long.standings().map((row) => row.bonus)).toEqual(REWARD.duel);
   });
 
+  it('someone who walks out of a brawl comes last with no bonus, whatever their score', () => {
+    const { loadout } = newSave();
+    const setup = (name: string) => ({ name, color: 0, loadout, isAI: false });
+    const match = new Match([setup('A'), setup('B')], { seed: 1, arena: 'skyscraper', mode: 'ffa' });
+    match.time = MIN_PAID_TIME + 1;
+    match.bots[0].kills = 5;
+    match.forfeit(0);
+    run(match, 4);
+    expect(match.bots[0].alive).toBe(false);
+    const [first, last] = match.standings();
+    expect(first.bot.name).toBe('B');
+    expect(first.bonus).toBe(REWARD.placement[0]);
+    expect(last.bonus).toBe(0);
+  });
+
+  it('every finished match pays at least the minimum, but not to anyone who walked out', () => {
+    const beaten = duel();
+    beaten.time = 1;
+    beaten.bots[0].out = true;
+    beaten.bots[0].alive = false;
+    beaten.over = true;
+    expect(beaten.standings().map((row) => row.total)).toEqual([REWARD.minimum, REWARD.minimum]);
+
+    const walkout = duel();
+    walkout.forfeit(0);
+    run(walkout, 3);
+    const rows = walkout.standings();
+    expect(rows.find((row) => row.bot.name === 'A')!.total).toBe(0);
+    expect(rows.find((row) => row.bot.name === 'B')!.total).toBe(REWARD.minimum);
+
+    const rich = duel();
+    rich.bots[0].earned = REWARD.minimum * 3;
+    rich.over = true;
+    expect(rich.standings().find((row) => row.bot.name === 'A')!.total).toBe(REWARD.minimum * 3);
+  });
+
   it('a draw is a draw: first for both, and no bonus', () => {
     const match = duel();
-    match.time = DUEL_MIN_PAID_TIME + 1;
+    match.time = MIN_PAID_TIME + 1;
     match.drawn = true;
     match.over = true;
     expect(match.standings().map((row) => row.place)).toEqual([1, 1]);

@@ -11,7 +11,8 @@ const SESSION_DAYS = 90;
 const GUEST_RETENTION_DAYS = 60;
 /** A guest that never played a match is cleaned up much sooner. */
 const UNPLAYED_GUEST_DAYS = 7;
-const RATING_BY_PLACE = [25, -15];
+const RATING_FIRST = 25;
+const RATING_LAST = -15;
 const RECENT_DAYS = 7;
 const RECENT_LIMIT = 12;
 
@@ -34,6 +35,8 @@ export interface MatchResult {
   mode: string;
   duration: number;
   drawn?: boolean;
+  /** Robots in the match, which sets the rating scale. Two unless it says otherwise. */
+  seats?: number;
   players: {
     accountId: string;
     place: number;
@@ -43,6 +46,12 @@ export interface MatchResult {
     payout: number;
     powerupsLeft: Record<PowerupId, number>;
   }[];
+}
+
+/** Evenly from first place down to last, so a duel is the two ends of the same scale. */
+export function ratingChange(place: number, seats: number): number {
+  const down = Math.min(1, (place - 1) / Math.max(1, seats - 1));
+  return Math.round(RATING_FIRST + (RATING_LAST - RATING_FIRST) * down);
 }
 
 export type GarageResult = { ok: true; profile: Profile } | { ok: false; reason: 'rejected' };
@@ -216,7 +225,7 @@ export class Accounts {
         const [row] = await q.query<PlayerRow>('SELECT * FROM players WHERE id = $1 FOR UPDATE', [p.accountId]);
         // The account may have been deleted during the match.
         if (!row) continue;
-        const change = result.drawn ? 0 : RATING_BY_PLACE[p.place - 1] ?? RATING_BY_PLACE[RATING_BY_PLACE.length - 1];
+        const change = result.drawn ? 0 : ratingChange(p.place, result.seats ?? 2);
         const state = { ...row.state, loadout: { ...row.state.loadout, powerups: p.powerupsLeft } };
         await q.query(
           `UPDATE players SET money = money + $1, rating = GREATEST(0, rating + $2), matches = matches + 1,
