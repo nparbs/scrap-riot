@@ -840,4 +840,12 @@ export class MatchView {
     this.camera.position.set(Math.sin(a) * dist, 26, Math.cos(a) * dist);
     this.camera.lookAt(0, 0, 0);
   }
+
+  /** Circles inside the map rather than around it, because the scenery outside hides walled maps. */
+  overviewCamera(time: number): void {
+    const a = time * 0.08;
+    const { half } = this.arena.def;
+    this.camera.position.set(Math.sin(a) * half * 0.75, half * 0.8, Math.cos(a) * half * 0.75);
+    this.camera.lookAt(0, 0, 0);
+  }
 }

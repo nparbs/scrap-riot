@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket as NodeWebSocket } from 'ws';
 import { startGameServer, type GameServer } from '../server/gameServer';
+import { BRAWL_ROOM_OPTIONS, Room } from '../server/room';
+import { ARENA_ORDER, ARENAS } from '../src/sim/arena';
 import { NetClient, type NetFailure } from '../src/net/client';
 import { onlineLoadout, PROTOCOL_VERSION, sanitizeName, type OnlineQueue, type ServerMessage } from '../src/net/protocol';
 import { compactEvents } from '../src/net/snapshot';
@@ -20,7 +22,7 @@ afterEach(async () => {
 });
 
 async function server(room: Record<string, unknown> = {}, extra: Record<string, unknown> = {}): Promise<GameServer> {
-  const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 80, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', minPlayers: 1, capacity: 6, bots: true, ...room }, ...extra });
+  const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 80, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', minPlayers: 1, capacity: 6, fillSeats: true, keepLeavers: true, countdown: 0, ...room }, ...extra });
   servers.push(s);
   return s;
 }
@@ -36,12 +38,15 @@ async function until(check: () => boolean, ms = 3000): Promise<void> {
 }
 
 function client(port: number, name = 'Tester', queue?: OnlineQueue) {
-  const state = { started: false, over: false, failed: null as NetFailure | null, queue: 0, reconnecting: false };
+  const state = { started: false, over: false, failed: null as NetFailure | null, queue: 0, arena: '', reconnecting: false };
   const c = new NetClient(`ws://127.0.0.1:${port}`, { name, loadout: newSave().loadout, queue }, {
     onStart: () => (state.started = true),
     onOver: () => (state.over = true),
     onFail: (reason) => (state.failed = reason),
-    onQueue: (players) => (state.queue = players),
+    onQueue: (players, _capacity, _startsIn, arena) => {
+      state.queue = players;
+      state.arena = arena;
+    },
     onReconnecting: (active) => (state.reconnecting = active),
   });
   clients.push(c);
@@ -98,8 +103,8 @@ describe('protocol', () => {
 describe('online match', () => {
   describe('brawl', () => {
     /** The real settings, with shorter waits. */
-    const brawlServer = async (brawlRoom: Record<string, unknown> = {}) => {
-      const s = await startGameServer({ port: 0, host: '127.0.0.1', brawlRoom: { lobbyMs: 150, fullLobbyMs: 10, graceMs: 200, ...brawlRoom } });
+    const brawlServer = async (brawlRoom: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => {
+      const s = await startGameServer({ port: 0, host: '127.0.0.1', brawlRoom: { lobbyMs: 150, fullLobbyMs: 10, graceMs: 200, countdown: 0, ...brawlRoom }, ...extra });
       servers.push(s);
       return s;
     };
@@ -113,7 +118,15 @@ describe('online match', () => {
       expect(a.state.started).toBe(false);
     });
 
-    it('waits out the countdown for more pilots, then fights on the roof with no bots', async () => {
+    it('is set up for eight seats, on a random map, ten seconds after the second pilot', () => {
+      expect(BRAWL_ROOM_OPTIONS).toMatchObject({ capacity: 8, minPlayers: 2, lobbyMs: 10_000, fillSeats: true, arena: 'random', mode: 'ffa' });
+      const maps = new Set(Array.from({ length: 60 }, () => new Room(BRAWL_ROOM_OPTIONS, 0).arena));
+      expect(maps.size).toBeGreaterThan(1);
+      for (const map of maps) expect(ARENA_ORDER).toContain(map);
+      for (const id of ARENA_ORDER) expect(new Set(ARENAS[id].spawns.map((p) => `${p.x},${p.z}`)).size).toBeGreaterThanOrEqual(8);
+    });
+
+    it('waits out the countdown for more pilots, then fills the rest with bots on the map it announced', async () => {
       const s = await brawlServer({ lobbyMs: 300 });
       const a = brawler(s.port, 'Ann');
       await until(() => a.state.queue === 1);
@@ -123,22 +136,52 @@ describe('online match', () => {
       expect(a.state.started).toBe(false);
       const c = brawler(s.port, 'Cal');
       await until(() => a.state.started && b.state.started && c.state.started);
-      expect(a.c.match!.bots.map((bot) => bot.name).sort()).toEqual(['Ann', 'Bea', 'Cal']);
-      expect(a.c.match!.arena.id).toBe('skyscraper');
+      const { bots } = a.c.match!;
+      expect(bots).toHaveLength(8);
+      expect(bots.slice(0, 3).map((bot) => bot.name).sort()).toEqual(['Ann', 'Bea', 'Cal']);
+      expect(bots.slice(3).every((bot) => bot.name.endsWith('[bot]'))).toBe(true);
+      expect(a.c.match!.arena.id).toBe(a.state.arena);
       expect(a.c.match!.mode).toBe('ffa');
       expect(s.stats().rooms).toBe(1);
     });
 
-    it('starts at once when all six seats fill, and a seventh pilot waits for the next one', async () => {
-      const s = await brawlServer({ lobbyMs: 60_000 });
-      const six = ['A', 'B', 'C', 'D', 'E', 'F'].map((name) => brawler(s.port, name));
-      await until(() => six.every((p) => p.state.started));
-      expect(six[0].c.match!.bots).toHaveLength(6);
-      expect(new Set(six[0].c.match!.bots.map((bot) => bot.color)).size).toBe(6);
-      const seventh = brawler(s.port, 'G');
-      await until(() => seventh.state.queue === 1);
-      expect(seventh.state.started).toBe(false);
+    it('fills with bots even if only two pilots ever join', async () => {
+      const s = await brawlServer();
+      const a = brawler(s.port, 'Ann');
+      await until(() => a.state.queue === 1);
+      const b = brawler(s.port, 'Bea');
+      await until(() => a.state.started && b.state.started);
+      expect(a.c.match!.bots).toHaveLength(8);
+      expect(a.c.match!.bots.filter((bot) => bot.name.endsWith('[bot]'))).toHaveLength(6);
+    });
+
+    it('starts at once when all eight seats fill, and a ninth pilot waits for the next one', async () => {
+      const s = await brawlServer({ lobbyMs: 60_000 }, { maxConnectionsPerIp: 20 });
+      const eight = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map((name) => brawler(s.port, name));
+      await until(() => eight.every((p) => p.state.started));
+      expect(eight[0].c.match!.bots).toHaveLength(8);
+      expect(eight[0].c.match!.bots.some((bot) => bot.name.endsWith('[bot]'))).toBe(false);
+      expect(new Set(eight[0].c.match!.bots.map((bot) => bot.color)).size).toBe(8);
+      const ninth = brawler(s.port, 'I');
+      await until(() => ninth.state.queue === 1);
+      expect(ninth.state.started).toBe(false);
       expect(s.stats().rooms).toBe(2);
+    });
+
+    it('lets the last human fight on against the bots, and ends once every human has gone', async () => {
+      const s = await brawlServer();
+      const [a, b] = ['Ann', 'Bea'].map((name) => brawler(s.port, name));
+      await until(() => a.state.started && b.state.started);
+      const stops = [a, b].map((p) => pump(p.c));
+      const annId = a.c.player!.id;
+      a.c.leave();
+      await until(() => b.c.match!.bots[annId].out);
+      await sleep(100);
+      expect(b.state.over).toBe(false);
+      expect(b.c.match!.bots.filter((bot) => !bot.out)).toHaveLength(7);
+      b.c.leave();
+      await until(() => s.stats().rooms === 0);
+      stops.forEach((stop) => stop());
     });
 
     it('keeps duels and brawls apart', async () => {
@@ -151,8 +194,8 @@ describe('online match', () => {
       expect(s.stats().rooms).toBe(2);
     });
 
-    it('takes a leaver out of the match, and ends it when one pilot is left', async () => {
-      const s = await brawlServer();
+    it('takes a leaver out of the match, and with no bots ends it when one pilot is left', async () => {
+      const s = await brawlServer({ fillSeats: false });
       const [a, b, c] = ['Ann', 'Bea', 'Cal'].map((name) => brawler(s.port, name));
       await until(() => a.state.started && b.state.started && c.state.started);
       const stops = [a, b, c].map((p) => pump(p.c));
@@ -185,10 +228,27 @@ describe('online match', () => {
 
   /** A server set up the way the real one is: duels only, and no bots. */
   const duelServer = async (room: Record<string, unknown> = {}) => {
-    const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 40, fullLobbyMs: 40, graceMs: 200, ...room } });
+    const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 40, fullLobbyMs: 40, graceMs: 200, countdown: 0, ...room } });
     servers.push(s);
     return s;
   };
+
+  it('holds everyone through the countdown, and the client knows when it ends', async () => {
+    const s = await duelServer({ countdown: 0.5 });
+    const a = client(s.port);
+    await until(() => a.state.queue === 1);
+    const b = client(s.port);
+    await until(() => a.state.started && b.state.started);
+    const stops = [pump(a.c, (input) => (input.throttle = 1)), pump(b.c)];
+    await until(() => a.c.match!.countdown > 0);
+    const start = { x: a.c.player!.x, z: a.c.player!.z };
+    await sleep(120);
+    expect(a.c.match!.countdown).toBeGreaterThan(0);
+    expect(Math.hypot(a.c.player!.x - start.x, a.c.player!.z - start.z)).toBe(0);
+    await until(() => a.c.match!.countdown === 0);
+    await until(() => Math.hypot(a.c.player!.x - start.x, a.c.player!.z - start.z) > 1);
+    stops.forEach((stop) => stop());
+  });
 
   it('never starts with one player, however long they wait', async () => {
     const s = await duelServer();

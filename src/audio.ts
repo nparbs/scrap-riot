@@ -354,6 +354,11 @@ export class Sfx {
     this.burst(0.05, 0.02, 4000, 'highpass');
   }
 
+  /** A beep for each number, and a higher, longer one to go. */
+  countdown(go: boolean): void {
+    this.tone(0.14, go ? 0.5 : 0.14, go ? 880 : 440, go ? 880 : 440);
+  }
+
   deny(): void {
     this.tone(0.12, 0.12, 180, 120);
   }

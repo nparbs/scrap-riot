@@ -1,6 +1,89 @@
 import { describe, expect, it } from 'vitest';
-import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, previewLoadout, STARTING_MONEY, upgradeCost, writeSave } from '../src/game/progress';
-import { buildStats, CHASSIS, MELEE, POWERUP_CAP, TOWERS, TURRETS } from '../src/sim/data';
+import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, CATALOG, loadSave, makeRivals, newSave, partFits, previewLoadout, STARTING_MONEY, upgradeCost, writeSave } from '../src/game/progress';
+import { ARMOUR, buildStats, CHASSIS, MELEE, POWERUP_CAP, spaceCapacity, spaceUsed, TOWERS, TURRETS } from '../src/sim/data';
+
+describe('cheat codes', () => {
+  it('money adds $5000 every time, in any case', () => {
+    const save = newSave();
+    const start = save.money;
+    expect(applyCheat(save, 'money')).toBeTruthy();
+    expect(applyCheat(save, '  MoNeY ')).toBeTruthy();
+    expect(save.money).toBe(start + 10_000);
+  });
+
+  it('unlock owns every part and fits nothing new', () => {
+    const save = newSave();
+    const before = JSON.stringify(save.loadout);
+    expect(applyCheat(save, 'unlock')).toBeTruthy();
+    for (const slot of Object.keys(CATALOG) as (keyof typeof CATALOG)[]) {
+      expect((save.owned[slot] as string[]).slice().sort()).toEqual(Object.keys(CATALOG[slot]).sort());
+    }
+    expect(JSON.stringify(save.loadout)).toBe(before);
+    save.money = 0;
+    expect(buyOrEquip(save, 'chassis', 'juggernaut')).toBe(true);
+    expect(save.loadout.chassis).toBe('juggernaut');
+  });
+
+  it('ignores anything else', () => {
+    const save = newSave();
+    const before = JSON.stringify(save);
+    for (const code of ['', 'moneyy', 'unlock all', 'constructor']) expect(applyCheat(save, code)).toBeNull();
+    expect(JSON.stringify(save)).toBe(before);
+  });
+});
+
+describe('armour making room', () => {
+  const heavy = () => {
+    const save = newSave();
+    save.money = 100_000;
+    save.loadout.armour = 150;
+    return save;
+  };
+
+  it('drops only as far as it must when moving to a smaller chassis', () => {
+    const save = heavy();
+    expect(spaceUsed(save.loadout)).toBeGreaterThan(CHASSIS.scout.space);
+    expect(buyOrEquip(save, 'chassis', 'scout')).toBe(true);
+    expect(save.loadout.chassis).toBe('scout');
+    expect(spaceUsed(save.loadout)).toBeLessThanOrEqual(spaceCapacity(save.loadout));
+    expect(spaceUsed({ ...save.loadout, armour: save.loadout.armour! + ARMOUR.step })).toBeGreaterThan(spaceCapacity(save.loadout));
+  });
+
+  it('leaves armour alone when there is already room', () => {
+    const save = newSave();
+    save.money = 100_000;
+    save.loadout.armour = 100;
+    buyOrEquip(save, 'chassis', 'juggernaut');
+    expect(save.loadout.armour).toBe(100);
+  });
+
+  it('shows the same drop in a preview, without changing the robot', () => {
+    const save = heavy();
+    const shown = previewLoadout(save.loadout, { slot: 'chassis', id: 'scout' });
+    expect(shown.armour).toBeLessThan(150);
+    expect(save.loadout.armour).toBe(150);
+    expect(save.loadout.chassis).toBe('brawler');
+  });
+
+  it('still says no room, and keeps the armour, when even the minimum is too much', () => {
+    const save = heavy();
+    save.loadout.melee = 'vertbar';
+    save.loadout.turret = 'bunkerbuster';
+    save.loadout.defense = 'emp';
+    expect(partFits(save, 'chassis', 'scout')).toBe(false);
+    buyOrEquip(save, 'chassis', 'scout');
+    expect(save.loadout.chassis).toBe('brawler');
+    expect(save.loadout.armour).toBe(150);
+  });
+
+  it('never touches armour for a part that only takes room', () => {
+    const save = heavy();
+    save.loadout.armour = 100;
+    save.loadout.melee = 'dagger';
+    buyOrEquip(save, 'melee', 'vertbar');
+    expect(save.loadout.armour).toBe(100);
+  });
+});
 
 describe('trying out parts', () => {
   it('shows the part without buying or fitting it, even with no money', () => {

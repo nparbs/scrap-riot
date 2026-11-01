@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { buyOrEquip, buyPowerup, buyUpgrade, CATALOG, newSave, sellPart, setArmour, type Save, type Slot } from '../src/game/progress';
-import { DEFAULT_NAME, sanitizeName, sanitizePaint, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineStatus, type Profile } from '../src/net/protocol';
+import { applyCheat, buyOrEquip, buyPowerup, buyUpgrade, CATALOG, newSave, sellPart, setArmour, type Save, type Slot } from '../src/game/progress';
+import { DEFAULT_NAME, OFFLINE_PAYOUT_MAX, sanitizeName, sanitizePaint, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineStatus, type Profile } from '../src/net/protocol';
 import { isArenaId } from '../src/sim/arena';
 import { DEFAULT_PAINT, MODES, POWERUPS, UPGRADES, type ModeId, type PowerupId, type UpgradeId } from '../src/sim/data';
 import { SCHEMA, type Db, type Queryable } from './db';
@@ -198,6 +198,13 @@ export class Accounts {
         return has(POWERUPS, action.id) && buyPowerup(save, action.id as PowerupId);
       case 'upgrade':
         return has(UPGRADES, action.id) && buyUpgrade(save, action.id as UpgradeId);
+      case 'payout':
+        // Offline matches run in the browser, so this is taken on trust. Cheat codes already make money free.
+        if (!Number.isInteger(action.amount) || action.amount < 0 || action.amount > OFFLINE_PAYOUT_MAX) return false;
+        save.money += action.amount;
+        return true;
+      case 'cheat':
+        return typeof action.code === 'string' && applyCheat(save, action.code) !== null;
       case 'paint':
         save.loadout.paint = sanitizePaint({ ...(save.loadout.paint ?? DEFAULT_PAINT), ...(typeof action.paint === 'object' ? action.paint : {}) });
         return true;

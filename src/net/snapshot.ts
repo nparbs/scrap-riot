@@ -60,6 +60,7 @@ export function compactEvents(events: GameEvent[]): GameEvent[] {
 export function encodeSnapshot(match: Match, events: GameEvent[]): Omit<SnapshotMessage, 't' | 'ack'> {
   return {
     time: round(match.time),
+    countdown: round(match.countdown),
     bots: match.bots.map((bot) => {
       let flags = 0;
       FLAGS.forEach((key, i) => {

@@ -205,6 +205,7 @@ export class NetClient {
   private handleSnapshot(snap: SnapshotMessage): void {
     const { match, player } = this;
     if (!match || !player) return;
+    match.countdown = snap.countdown;
     if (this.snaps.length === 0) this.renderTime = snap.time - RENDER_DELAY;
     this.snaps.push(snap);
     if (this.snaps.length > MAX_BUFFER) this.snaps.shift();

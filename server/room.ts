@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { makeRivals, type Save } from '../src/game/progress';
+import { makeRivals, randomArena, type Save } from '../src/game/progress';
 import { INPUT_STEPS, onlineLoadout, QUICK_CHAT, sanitizeName, SNAPSHOT_STEPS, unpackFlags, type OnlineQueue, type ServerMessage, type StartMessage } from '../src/net/protocol';
 import { encodeSnapshot } from '../src/net/snapshot';
 import type { ArenaId } from '../src/sim/arena';
-import { DUEL_OUTRO, MODES, POWERUP_ORDER, type ModeId, type UpgradeId } from '../src/sim/data';
+import { COUNTDOWN, DUEL_OUTRO, MODES, POWERUP_ORDER, type ModeId, type UpgradeId } from '../src/sim/data';
 import { Match, STEP, type BotSetup, type Loadout } from '../src/sim/match';
 
 import type { MatchResult } from './accounts';
@@ -25,13 +25,18 @@ export interface RoomOptions {
   minPlayers: number;
   /** Seats in the match. */
   capacity: number;
-  /** Bots take any seats left over, and keep a leaver's robot going. Without them, anyone who leaves is out of the match. */
-  bots: boolean;
+  /** Bots take any seats no human has when the match starts. */
+  fillSeats: boolean;
+  /** A bot keeps a leaver's robot going. Otherwise anyone who leaves, or doesn't come back, is out of the match. */
+  keepLeavers: boolean;
   queue: OnlineQueue;
   /** Fixes the match length. By default each mode uses its own. */
   duration?: number;
   killTarget: number;
-  arena: ArenaId;
+  /** Seconds of 3, 2, 1 before the match starts. */
+  countdown: number;
+  /** 'random' picks one for each room. */
+  arena: ArenaId | 'random';
   mode: ModeId;
 }
 
@@ -41,9 +46,11 @@ export const DEFAULT_ROOM_OPTIONS: RoomOptions = {
   graceMs: 20_000,
   minPlayers: 2,
   capacity: 2,
-  bots: false,
+  fillSeats: false,
+  keepLeavers: false,
   queue: 'duel',
   killTarget: 12,
+  countdown: COUNTDOWN,
   arena: 'skyscraper',
   mode: 'duel',
 };
@@ -51,13 +58,15 @@ export const DEFAULT_ROOM_OPTIONS: RoomOptions = {
 export const BRAWL_ROOM_OPTIONS: RoomOptions = {
   ...DEFAULT_ROOM_OPTIONS,
   // Starts with whoever's there, but gives others time to get in first.
-  lobbyMs: 20_000,
-  capacity: 6,
+  lobbyMs: 10_000,
+  capacity: 8,
+  fillSeats: true,
   queue: 'brawl',
+  arena: 'random',
   mode: 'ffa',
 };
 
-const HUMAN_COLORS = [0xff8a2a, 0x35d0e6, 0xf25fd0, 0x9be03a, 0xf4f1e8, 0xffd23a];
+const HUMAN_COLORS = [0xff8a2a, 0x35d0e6, 0xf25fd0, 0x9be03a, 0xf4f1e8, 0xffd23a, 0xa066e0, 0xe0503a];
 const MAX_BACKLOG = 256 * 1024;
 const MAX_CATCH_UP = 0.25;
 /** Past this many queued inputs the player has lagged, so old ones go rather than delaying their weapons. */
@@ -119,7 +128,7 @@ export class Room {
 
   constructor(private readonly options: RoomOptions, now: number, private readonly onResults?: (result: MatchResult) => Promise<void>) {
     this.startAt = options.minPlayers <= 1 ? now + options.lobbyMs : Infinity;
-    this.arena = options.arena;
+    this.arena = options.arena === 'random' ? randomArena(Math.random) : options.arena;
     this.mode = options.mode;
     this.duration = options.duration ?? MODES[this.mode].duration;
   }
@@ -186,7 +195,7 @@ export class Room {
     player.left = true;
     this.disconnect(player, now);
     // Walking out loses, rather than leaving a bot to fight on.
-    if (this.match && !this.options.bots) this.match.forfeit(player.botId);
+    if (this.match && !this.options.keepLeavers) this.match.forfeit(player.botId);
   }
 
   surrender(player: Player): void {
@@ -284,12 +293,14 @@ export class Room {
       this.emptySince = null;
     }
 
-    if (!this.options.bots) {
+    if (!this.options.keepLeavers) {
       for (const player of this.players.values()) {
         if (player.droppedAt !== null && now - player.droppedAt > this.options.graceMs) this.match.forfeit(player.botId);
       }
-      // A duel ends itself. A brawl would otherwise leave the last pilot alone until time ran out.
-      if (this.mode !== 'duel' && this.match.bots.filter((bot) => !bot.out).length <= 1) {
+      // A duel ends itself. A brawl would otherwise run on with nobody left to play it, or nobody left to fight.
+      const { bots } = this.match;
+      const humansGone = [...this.players.values()].every((player) => bots[player.botId].out);
+      if (this.mode !== 'duel' && (humansGone || bots.filter((bot) => !bot.out).length <= 1)) {
         this.aloneSince ??= now;
         // Clients draw slightly in the past, so ending at once would beat the news of who left.
         if (now - this.aloneSince >= DUEL_OUTRO * 1000) this.match.over = true;
@@ -322,7 +333,7 @@ export class Room {
     // Bots match the average human, so upgrades don't make a match trivial.
     const average = (key: UpgradeId) => Math.round(humans.reduce((sum, p) => sum + p.loadout.upgrades[key], 0) / Math.max(1, humans.length));
     const progress = { wins: 0, loadout: { upgrades: { armor: average('armor'), engine: average('engine'), weapons: average('weapons') } } };
-    const rivals = makeRivals(progress, this.options.bots ? this.options.capacity - humans.length : 0, this.seed).map((rival) => ({
+    const rivals = makeRivals(progress, this.options.fillSeats ? this.options.capacity - humans.length : 0, this.seed).map((rival) => ({
       ...rival,
       name: `${rival.name} [bot]`,
     }));
@@ -333,6 +344,7 @@ export class Room {
       mode: this.mode,
       duration: this.duration,
       killTarget: this.options.killTarget,
+      countdown: this.options.countdown,
     });
     this.last = now;
     for (const player of humans) player.conn?.send(JSON.stringify(this.startMessage(player)));
@@ -398,7 +410,7 @@ export class Room {
     const standings = match.standings();
     const players = [...this.players.values()]
       // Leaving still counts as losing, so nobody can quit to protect their rating.
-      .filter((p) => p.accountId && (!p.left || !this.options.bots))
+      .filter((p) => p.accountId && (!p.left || !this.options.keepLeavers))
       .map((p) => {
         const row = standings.find((s) => s.bot.id === p.botId)!;
         return {
@@ -408,7 +420,8 @@ export class Room {
           kills: row.bot.kills,
           deaths: row.bot.deaths,
           damage: row.bot.damageDealt,
-          payout: row.total,
+          // Leaving gives up the payout, as the screen warns.
+          payout: p.left ? 0 : row.total,
           powerupsLeft: row.bot.powerups,
         };
       });

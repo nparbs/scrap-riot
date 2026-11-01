@@ -233,6 +233,27 @@ button:disabled {
   background-size: 96px 96px, 96px 156px, auto;
 }
 
+/* The map being fought on shows through once the server has said which it is. */
+.screen-lobby.lobby-map {
+  background: rgba(4, 6, 8, 0.25);
+}
+
+.cheat-form {
+  display: flex;
+  gap: 6px;
+  max-width: 320px;
+}
+
+.cheat-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--accent-dark);
+  background: #050707;
+  color: #fff;
+  font: 14px var(--body);
+}
+
 .menu-card {
   width: min(440px, 100%);
   max-height: 100%;
@@ -381,24 +402,26 @@ button:disabled {
   font-size: 13px;
 }
 
-/* The opening logo */
+/* The opening logo: it slams down, and everything happens at the moment of impact, 34% of the way in. */
 .screen-intro {
   display: grid;
   place-items: center;
   overflow: hidden;
   background: radial-gradient(circle, #1b2422 0%, #050707 70%);
-  animation: intro-out 3s linear forwards;
+  animation: intro-out 1s linear forwards;
 }
 
 .intro-stage {
   position: relative;
   text-align: center;
+  animation: intro-shake 1s linear forwards;
 }
 
 .intro-logo {
+  position: relative;
   width: min(52vh, 70vw);
   height: min(52vh, 70vw);
-  animation: intro-logo 3s cubic-bezier(0.2, 1.3, 0.4, 1) forwards;
+  animation: intro-logo 1s linear forwards;
 }
 
 .intro-line {
@@ -407,7 +430,7 @@ button:disabled {
   font: italic 400 clamp(18px, 3.4vh, 30px) var(--display);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  animation: intro-line 3s linear forwards;
+  animation: intro-line 1s linear forwards;
 }
 
 .intro-band {
@@ -416,7 +439,7 @@ button:disabled {
   left: 0;
   height: 22px;
   background: var(--hazard-strip);
-  animation: intro-band 3s ease-out forwards;
+  animation: intro-band 1s linear forwards;
 }
 
 .intro-band-top {
@@ -425,48 +448,182 @@ button:disabled {
 
 .intro-band-bottom {
   bottom: 16%;
-  animation-direction: reverse;
   animation-name: intro-band-back;
+}
+
+.intro-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff3c4;
+  opacity: 0;
+  pointer-events: none;
+  animation: intro-flash 1s linear forwards;
+}
+
+.intro-ring,
+.intro-sparks {
+  position: absolute;
+  top: min(26vh, 35vw);
+  left: 50%;
+}
+
+.intro-ring {
+  width: min(52vh, 70vw);
+  height: min(52vh, 70vw);
+  margin: calc(min(26vh, 35vw) * -1) 0 0 calc(min(26vh, 35vw) * -1);
+  border: 6px solid var(--hazard);
+  border-radius: 50%;
+  opacity: 0;
+  animation: intro-ring 1s linear forwards;
+}
+
+.intro-sparks i {
+  position: absolute;
+  width: 34px;
+  height: 6px;
+  margin: -3px 0 0 -17px;
+  border-radius: 3px;
+  background: #ffd24a;
+  box-shadow: 0 0 8px #ff8a2a;
+  opacity: 0;
+  animation: intro-spark 1s linear forwards;
 }
 
 @keyframes intro-logo {
   0% {
     opacity: 0;
-    transform: scale(0.3) rotate(-120deg);
+    transform: scale(3.6) rotate(-220deg);
+    animation-timing-function: cubic-bezier(0.55, 0, 1, 0.6);
   }
 
-  28% {
+  34% {
     opacity: 1;
-    transform: scale(1.06) rotate(0);
+    transform: scale(0.9) rotate(0);
+    animation-timing-function: ease-out;
   }
 
-  36%,
+  44% {
+    transform: scale(1.07) rotate(5deg);
+    animation-timing-function: ease-in-out;
+  }
+
+  56%,
   100% {
     opacity: 1;
     transform: scale(1) rotate(0);
   }
 }
 
-@keyframes intro-line {
+@keyframes intro-shake {
   0%,
-  35% {
-    opacity: 0;
-    transform: translateY(10px);
+  34% {
+    transform: none;
   }
 
-  48%,
+  37% {
+    transform: translate(-9px, 7px);
+  }
+
+  40% {
+    transform: translate(8px, -6px);
+  }
+
+  43% {
+    transform: translate(-5px, -4px);
+  }
+
+  47% {
+    transform: translate(3px, 3px);
+  }
+
+  52%,
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes intro-flash {
+  0%,
+  33% {
+    opacity: 0;
+  }
+
+  35% {
+    opacity: 0.75;
+  }
+
+  52%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes intro-ring {
+  0%,
+  33% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+
+  35% {
+    opacity: 1;
+    transform: scale(0.6);
+    animation-timing-function: cubic-bezier(0.1, 0.7, 0.3, 1);
+  }
+
+  72%,
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+@keyframes intro-spark {
+  0%,
+  33% {
+    opacity: 0;
+    transform: rotate(var(--angle)) translateX(calc(var(--reach) * 0.3));
+  }
+
+  35% {
+    opacity: 1;
+    transform: rotate(var(--angle)) translateX(calc(var(--reach) * 0.35));
+    animation-timing-function: ease-out;
+  }
+
+  62% {
+    opacity: 1;
+    transform: rotate(var(--angle)) translateX(calc(var(--reach) * 0.9));
+  }
+
+  80%,
+  100% {
+    opacity: 0;
+    transform: rotate(var(--angle)) translateX(var(--reach)) scaleX(0.3);
+  }
+}
+
+@keyframes intro-line {
+  0%,
+  44% {
+    opacity: 0;
+    letter-spacing: 0.6em;
+  }
+
+  60%,
   100% {
     opacity: 1;
-    transform: none;
+    letter-spacing: 0.12em;
   }
 }
 
 @keyframes intro-band {
   0% {
     transform: translateX(-100%);
+    animation-timing-function: cubic-bezier(0.55, 0, 1, 0.6);
   }
 
-  25%,
+  34%,
   100% {
     transform: none;
   }
@@ -475,9 +632,10 @@ button:disabled {
 @keyframes intro-band-back {
   0% {
     transform: translateX(100%);
+    animation-timing-function: cubic-bezier(0.55, 0, 1, 0.6);
   }
 
-  25%,
+  34%,
   100% {
     transform: none;
   }
@@ -485,7 +643,7 @@ button:disabled {
 
 @keyframes intro-out {
   0%,
-  88% {
+  90% {
     opacity: 1;
   }
 
@@ -495,10 +653,17 @@ button:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .intro-stage,
   .intro-logo,
   .intro-line,
   .intro-band {
     animation: none;
+  }
+
+  .intro-flash,
+  .intro-ring,
+  .intro-sparks {
+    display: none;
   }
 }
 
@@ -1776,6 +1941,41 @@ button:disabled {
   font: italic 400 clamp(26px, 5vw, 48px) var(--display);
   letter-spacing: 0.04em;
   color: var(--hazard);
+}
+
+.hud-center.hud-count {
+  top: 26%;
+  font-size: clamp(60px, 14vw, 140px);
+}
+
+.hud-leave {
+  position: absolute;
+  top: 42%;
+  left: 50%;
+  width: 280px;
+  padding: 10px 14px;
+  border: 2px solid var(--accent-dark);
+  background: rgba(10, 14, 12, 0.8);
+  text-align: center;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.hud-leave[hidden] {
+  display: none;
+}
+
+.hud-leave p {
+  margin: 0 0 2px;
+  color: var(--hazard);
+  font: italic 400 22px var(--display);
+}
+
+.hud-leave small {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 13px;
 }
 
 .hud-map {

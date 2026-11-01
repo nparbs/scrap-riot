@@ -7,7 +7,7 @@ import { startGameServer, type GameServer } from '../server/gameServer';
 import { googleVerifier } from '../server/google';
 import { STARTING_MONEY } from '../src/game/progress';
 import { NetClient } from '../src/net/client';
-import { PROTOCOL_VERSION, type OnlineStatus, type Profile, type ServerMessage } from '../src/net/protocol';
+import { OFFLINE_PAYOUT_MAX, PROTOCOL_VERSION, type OnlineStatus, type Profile, type ServerMessage } from '../src/net/protocol';
 import { MELEE, TURRETS } from '../src/sim/data';
 
 const CLIENT_ID = 'test-client.apps.googleusercontent.com';
@@ -157,6 +157,32 @@ describe('rating', () => {
 });
 
 describe('garage on the server', () => {
+  it('banks an offline payout within limits, and refuses anything else', async () => {
+    const { token } = await accounts.createGuest();
+    expect(await accounts.garage(token, { type: 'payout', amount: 250 })).toMatchObject({ ok: true, profile: { save: { money: STARTING_MONEY + 250 } } });
+    for (const amount of [-1, 1.5, OFFLINE_PAYOUT_MAX + 1, '100', null]) {
+      expect(await accounts.garage(token, { type: 'payout', amount } as never), String(amount)).toMatchObject({ ok: false });
+    }
+    expect((await accounts.profile(token))!.save.money).toBe(STARTING_MONEY + 250);
+    expect((await accounts.profile(token))!.save.matches).toBe(0);
+  });
+
+  it('applies cheat codes on the server, records the money and refuses anything else', async () => {
+    const { token } = await accounts.createGuest();
+    const paid = await accounts.garage(token, { type: 'cheat', code: ' MONEY ' });
+    expect(paid).toMatchObject({ ok: true, profile: { save: { money: STARTING_MONEY + 5000 } } });
+    const { rows } = { rows: await db.query<{ amount: number; reason: string }>("SELECT amount, reason FROM ledger WHERE reason = 'garage: cheat'") };
+    expect(rows.some((row) => row.amount === 5000)).toBe(true);
+
+    const unlocked = await accounts.garage(token, { type: 'cheat', code: 'unlock' });
+    expect(unlocked).toMatchObject({ ok: true });
+    if (unlocked?.ok) expect(unlocked.profile.save.owned.melee).toContain('vertbar');
+
+    for (const code of ['nope', '', 7, null]) {
+      expect(await accounts.garage(token, { type: 'cheat', code } as never), String(code)).toMatchObject({ ok: false });
+    }
+  });
+
   const give = async (token: string, money: number) => {
     const { accountId } = (await accounts.forMatch(token))!;
     await db.query('UPDATE players SET money = $1 WHERE id = $2', [money, accountId]);
@@ -236,7 +262,7 @@ describe('over the network', () => {
       accounts,
       googleClientId: CLIENT_ID,
       allowedOrigins,
-      room: { lobbyMs: 60, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', minPlayers: 1, capacity: 6, bots: true, ...room },
+      room: { lobbyMs: 60, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', minPlayers: 1, capacity: 6, fillSeats: true, keepLeavers: true, countdown: 0, ...room },
     });
     servers.push(s);
     return s;
@@ -429,7 +455,7 @@ describe('over the network', () => {
   });
 
   it('counts leaving a brawl as last place, and scales rating by the seats in the match', async () => {
-    const s = await server({ bots: false, minPlayers: 3, capacity: 3, lobbyMs: 20 });
+    const s = await server({ fillSeats: false, keepLeavers: false, minPlayers: 3, capacity: 3, lobbyMs: 20 });
     const [quitter, second, third] = await Promise.all([accounts.createGuest(), accounts.createGuest(), accounts.createGuest()]);
     const open = (guest: typeof quitter, events = {}) => new NetClient(`ws://127.0.0.1:${s.port}`, { name: 'x', loadout: guest.profile.save.loadout, session: guest.token }, events);
     let over = 0;
@@ -443,6 +469,8 @@ describe('over the network', () => {
     expect(rows.map((row) => row.save.matches)).toEqual([1, 1, 1]);
     expect(rows.map((row) => row.rating - start).sort((x, y) => x - y)).toEqual([-15, -15, 25]);
     expect(rows[2].rating - start).toBe(25);
+    expect(rows[0].save.money).toBe(STARTING_MONEY);
+    expect(rows[2].save.money).toBeGreaterThanOrEqual(STARTING_MONEY + 100);
   });
 
   it('pays nothing to a player who leaves early', async () => {
