@@ -52,8 +52,8 @@ const STEPS: Step[] = [
   },
   {
     // Just information, since a Repair Kit or Battery Pack does nothing while topped up.
-    prompt: (b) => `Keys ${k(b.power1)} to ${k(b.power6)} use powerups. They're limited, so choose your moment.`,
-    touch: "Tap a powerup at the top of the screen to use it. They're limited, so choose your moment.",
+    prompt: (b) => `Keys ${k(b.power1)} to ${k(b.power3)} use the powerups you selected. They're limited, so choose your moment.`,
+    touch: "Tap a powerup above your weapon buttons to use it. They're limited, so choose your moment.",
     hold: 5,
     done: () => true,
   },

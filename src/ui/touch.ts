@@ -1,9 +1,11 @@
 import type { TouchState } from '../input';
+import { POWERUPS, type PowerupId } from '../sim/data';
 
 /** How far the stick travels for full throttle or full steering, as a share of its width. */
 const STICK_REACH = 0.35;
 /** Small movements near the middle don't count, so resting a thumb doesn't drift. */
 const STICK_DEADZONE = 0.14;
+const POWERUP_BUZZ_MS = 12;
 
 /**
  * Phones and tablets. A laptop with a touchscreen keeps its mouse as the main pointer, and isn't included.
@@ -32,7 +34,7 @@ function hold(el: HTMLElement, set: (down: boolean) => void): void {
 }
 
 /** A thumbstick for driving and thumb buttons for everything else, drawn over the match. */
-export function touchControls(state: TouchState, onPause: () => void, onPowerup: (index: number) => void): HTMLElement {
+export function touchControls(state: TouchState, onPause: () => void, onPowerup: (slot: number) => void, powerups: PowerupId[]): HTMLElement {
   const el = document.createElement('div');
   el.className = 'touch-controls';
   el.innerHTML = `
@@ -42,6 +44,9 @@ export function touchControls(state: TouchState, onPause: () => void, onPowerup:
       <button class="touch-btn touch-defense" tabindex="-1" aria-label="Defense"><i class="touch-cd"></i><span>Defense</span></button>
       <button class="touch-btn touch-boost" tabindex="-1" aria-label="Speed boost"><i class="touch-cd"></i><span>Boost</span></button>
       <button class="touch-btn touch-rear" tabindex="-1" aria-label="Look behind"><span>Rear</span></button>
+      <div class="touch-powers">
+        ${powerups.map((id) => `<button class="touch-power touch-power-${id}" tabindex="-1" aria-label="${POWERUPS[id].name}"><span>${POWERUPS[id].short}</span><b></b></button>`).join('')}
+      </div>
     </div>
     <button class="touch-pause" tabindex="-1" aria-label="Menu">II</button>
     <div class="touch-rotate">Turn your phone sideways for more room</div>`;
@@ -90,13 +95,12 @@ export function touchControls(state: TouchState, onPause: () => void, onPowerup:
   stick.addEventListener('pointerup', center);
   stick.addEventListener('pointercancel', center);
 
-  // Powerups are the slots already on screen, so they just become buttons.
-  queueMicrotask(() => {
-    el.parentElement?.querySelectorAll<HTMLElement>('.slot-power').forEach((slot, i) => {
-      slot.addEventListener('pointerdown', (e) => {
-        e.preventDefault();
-        onPowerup(i);
-      });
+  el.querySelectorAll<HTMLElement>('.touch-power').forEach((button, slot) => {
+    hold(button, (down) => {
+      if (!down) return;
+      // A little buzz where phones allow it, since the thumb hides the button being pressed.
+      navigator.vibrate?.(POWERUP_BUZZ_MS);
+      onPowerup(slot);
     });
   });
   return el;

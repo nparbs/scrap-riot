@@ -177,6 +177,8 @@ export interface MeleeDef {
   runTime?: number;
   /** Multiplies top speed. Spinning the whole body is hard on the drive. */
   drive?: number;
+  /** Gun-style, so it sits on top of the tower rather than on the nose. Every robot has a tower. */
+  onTower?: boolean;
 }
 
 const melee = (d: Partial<MeleeDef> & Pick<MeleeDef, 'name' | 'type' | 'blurb' | 'price' | 'kind'>): MeleeDef => ({
@@ -206,9 +208,9 @@ export const MELEE: Record<MeleeId, MeleeDef> = {
   flipper: melee({ name: 'Pneumatic Flipper', type: 'Flipper', blurb: 'Hurls robots through the air, and they land upside down until they right themselves. Little damage, but deadly near an edge. Uses battery.', price: 800, kind: 'strike', range: 2.8, arc: 0.55, damage: 8, cooldown: 4, windup: 0.05, stun: 0.3, knockback: 12, launch: 0.55, flips: true, battery: 0.14 }),
   crusher: melee({ name: 'Hydraulic Crusher', type: 'Crusher', blurb: 'Bites down and holds on. Enormous damage if you can catch them.', price: 900, kind: 'claw', range: 2.9, arc: 0.45, damage: 48, cooldown: 4, windup: 1.6 }),
   forks: melee({ name: 'Lifting Forks', type: 'Lifter', blurb: 'Scoop a robot up and drive it wherever you like. Almost no damage.', price: 400, kind: 'claw', range: 3.1, arc: 0.6, damage: 14, cooldown: 2.5, windup: 3.5 }),
-  flamethrower: melee({ name: 'Flamethrower', type: 'Flame', blurb: 'Hold for a cone of fire that keeps them burning. Longest reach of any weapon, but it drinks the battery.', price: 650, kind: 'held', range: 7, arc: 0.42, damage: 30, drain: 0.2, burns: true }),
-  tesla: melee({ name: 'Tesla Coil', type: 'Tesla', blurb: 'A short-range bolt that stuns, then jumps to a second robot nearby. Uses battery.', price: 800, kind: 'strike', range: 5, arc: 0.6, damage: 17, cooldown: 1.1, windup: 0.05, stun: 0.25, battery: 0.09, chain: 7 }),
-  spear: melee({ name: 'Pneumatic Spear', type: 'Spike', blurb: 'Fires a steel spike straight out and back. Long and narrow, and it shoves hard.', price: 550, kind: 'strike', range: 4.4, arc: 0.3, damage: 30, cooldown: 1.25, windup: 0.06, knockback: 20 }),
+  flamethrower: melee({ name: 'Flamethrower', type: 'Flame', blurb: 'Hold for a cone of fire that keeps them burning. Longest reach of any weapon, but it drinks the battery.', price: 650, kind: 'held', range: 7, arc: 0.42, damage: 30, drain: 0.2, burns: true, onTower: true }),
+  tesla: melee({ name: 'Tesla Coil', type: 'Tesla', blurb: 'A short-range bolt that stuns, then jumps to a second robot nearby. Uses battery.', price: 800, kind: 'strike', range: 5, arc: 0.6, damage: 17, cooldown: 1.1, windup: 0.05, stun: 0.25, battery: 0.09, chain: 7, onTower: true }),
+  spear: melee({ name: 'Pneumatic Spear', type: 'Spike', blurb: 'Fires a steel spike straight out and back. Long and narrow, and it shoves hard.', price: 550, kind: 'strike', range: 4.4, arc: 0.3, damage: 30, cooldown: 1.25, windup: 0.06, knockback: 20, onTower: true }),
 };
 
 /** Battery refilled per second, from 0 to 1. */
@@ -266,6 +268,8 @@ export const DEFENSES: Record<DefenseId, DefenseDef> = {
 
 export interface PowerupDef {
   name: string;
+  /** For the small buttons in a match. */
+  short: string;
   blurb: string;
   price: number;
 }
@@ -274,15 +278,34 @@ export interface PowerupDef {
 export const POWERUP_ORDER: PowerupId[] = ['rage', 'megashield', 'cloaking', 'xray', 'repair', 'battery'];
 
 export const POWERUPS: Record<PowerupId, PowerupDef> = {
-  rage: { name: 'Rage', blurb: '+75% damage for 6 s.', price: 120 },
-  megashield: { name: 'Mega Shield', blurb: 'Blocks 90% of damage for 5 s.', price: 140 },
-  cloaking: { name: 'Cloaking', blurb: 'Invisible for 6 s, or until you land a hit.', price: 110 },
-  xray: { name: 'X-Ray', blurb: 'See every robot through walls and cloaks for 10 s.', price: 70 },
-  repair: { name: 'Repair Kit', blurb: 'Restores 40% of max HP.', price: 80 },
-  battery: { name: 'Battery Pack', blurb: 'Refills your battery at once.', price: 60 },
+  rage: { name: 'Rage', short: 'Rage', blurb: '+75% damage for 6 s.', price: 120 },
+  megashield: { name: 'Mega Shield', short: 'Mega', blurb: 'Blocks 90% of damage for 5 s.', price: 140 },
+  cloaking: { name: 'Cloaking', short: 'Cloak', blurb: 'Invisible for 6 s, or until you land a hit.', price: 110 },
+  xray: { name: 'X-Ray', short: 'X-Ray', blurb: 'See every robot through walls and cloaks for 10 s.', price: 70 },
+  repair: { name: 'Repair Kit', short: 'Repair', blurb: 'Restores 40% of max HP.', price: 80 },
+  battery: { name: 'Battery Pack', short: 'Battery', blurb: 'Refills your battery at once.', price: 60 },
 };
 
 export const POWERUP_CAP = 3;
+/** How many kinds of powerup a robot can take into a match. */
+export const POWERUP_SLOTS = 3;
+
+/**
+ * The powerups a robot takes into a match, in slot order. Saves always say which, so the fallback
+ * is for robots nobody chose for, such as rivals: the first it has any of.
+ */
+export function fittedPowerups(loadout: { powerups: Record<PowerupId, number>; powerupSlots?: PowerupId[] }): PowerupId[] {
+  const chosen = loadout.powerupSlots ?? POWERUP_ORDER.filter((id) => loadout.powerups[id] > 0);
+  return [...new Set(chosen)].filter((id) => POWERUP_ORDER.includes(id)).slice(0, POWERUP_SLOTS);
+}
+
+/** What the robot can actually use in a match. The rest stays in the garage. */
+export function carriedPowerups(loadout: { powerups: Record<PowerupId, number>; powerupSlots?: PowerupId[] }): Record<PowerupId, number> {
+  const carried: Record<PowerupId, number> = { rage: 0, megashield: 0, cloaking: 0, xray: 0, repair: 0, battery: 0 };
+  for (const id of fittedPowerups(loadout)) carried[id] = loadout.powerups[id];
+  return carried;
+}
+
 export const REPAIR_FRACTION = 0.4;
 export const RAGE_TIME = 6;
 export const RAGE_MULT = 1.75;

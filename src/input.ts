@@ -1,9 +1,9 @@
 import type { Bindings } from './game/settings';
 import { PadReader, type PadLike, type PadState } from './gamepad';
-import { POWERUP_ORDER, type PowerupId } from './sim/data';
+import type { PowerupId } from './sim/data';
 import type { BotInput } from './sim/match';
 
-const POWER_ACTIONS = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'] as const;
+const POWER_ACTIONS = ['power1', 'power2', 'power3'] as const;
 
 /** Left and right mouse buttons, which sit alongside whatever keys are bound. */
 const MOUSE_MELEE = 'Mouse0';
@@ -29,8 +29,10 @@ export class Keyboard {
   private readonly pad = new PadReader();
   private padState: PadState | null = null;
   private captured = new Set<string>();
-  private powerByCode = new Map<string, PowerupId>();
+  private powerByCode = new Map<string, number>();
   private queuedPowerup: PowerupId | null = null;
+  /** What each powerup key fires in this match. */
+  powerupSlots: PowerupId[] = [];
   /** While set, the next key press goes here instead of the game. Esc cancels. */
   private capture: ((code: string | null) => void) | null = null;
   onFirstInput: (() => void) | null = null;
@@ -67,7 +69,8 @@ export class Keyboard {
       e.preventDefault();
       this.held.add(e.code);
       this.tapped.add(e.code);
-      if (!e.repeat) this.queuedPowerup = this.powerByCode.get(e.code) ?? this.queuedPowerup;
+      const slot = this.powerByCode.get(e.code);
+      if (!e.repeat && slot !== undefined) this.queuePowerup(slot);
     });
     window.addEventListener('keyup', (e) => this.held.delete(e.code));
     window.addEventListener('mousedown', (e) => {
@@ -97,7 +100,7 @@ export class Keyboard {
     this.captured = new Set(Object.values(bindings));
     // Holding either Shift key counts, and browsers report them separately.
     if (bindings.boost === 'ShiftLeft') this.captured.add('ShiftRight');
-    this.powerByCode = new Map(POWER_ACTIONS.map((action, i) => [bindings[action], POWERUP_ORDER[i]]));
+    this.powerByCode = new Map(POWER_ACTIONS.map((action, i) => [bindings[action], i]));
   }
 
   captureNextKey(done: (code: string | null) => void): void {
@@ -141,16 +144,16 @@ export class Keyboard {
     this.pollPad();
     this.peek(input);
     this.tapped.clear();
-    if (this.padState && this.padState.powerup >= 0) this.queuedPowerup = POWERUP_ORDER[this.padState.powerup];
+    if (this.padState && this.padState.powerup >= 0) this.queuePowerup(this.padState.powerup);
     if (this.queuedPowerup) {
       input.powerup = this.queuedPowerup;
       this.queuedPowerup = null;
     }
   }
 
-  /** For the on-screen powerup buttons. */
-  queuePowerup(index: number): void {
-    this.queuedPowerup = POWERUP_ORDER[index] ?? null;
+  /** Fires whatever is in this slot, from a key, a gamepad or an on-screen button. */
+  queuePowerup(slot: number): void {
+    this.queuedPowerup = this.powerupSlots[slot] ?? null;
   }
 
   clear(): void {

@@ -4,7 +4,7 @@ const SETTINGS_KEY = 'scrap-riot.settings.v4';
 export type Action =
   | 'forward' | 'back' | 'left' | 'right'
   | 'melee' | 'defense' | 'boost'
-  | 'power1' | 'power2' | 'power3' | 'power4' | 'power5' | 'power6'
+  | 'power1' | 'power2' | 'power3'
   | 'rear';
 
 export type Bindings = Record<Action, string>;
@@ -19,12 +19,9 @@ export const ACTIONS: { id: Action; label: string }[] = [
   { id: 'melee', label: 'Main weapon' },
   { id: 'defense', label: 'Defense' },
   { id: 'boost', label: 'Speed boost' },
-  { id: 'power1', label: 'Rage' },
-  { id: 'power2', label: 'Mega Shield' },
-  { id: 'power3', label: 'Cloaking' },
-  { id: 'power4', label: 'X-Ray' },
-  { id: 'power5', label: 'Repair Kit' },
-  { id: 'power6', label: 'Battery Pack' },
+  { id: 'power1', label: 'Powerup 1' },
+  { id: 'power2', label: 'Powerup 2' },
+  { id: 'power3', label: 'Powerup 3' },
   { id: 'rear', label: 'Look behind' },
 ];
 
@@ -39,9 +36,6 @@ export const DEFAULT_BINDINGS: Bindings = {
   power1: 'Digit1',
   power2: 'Digit2',
   power3: 'Digit3',
-  power4: 'Digit4',
-  power5: 'Digit5',
-  power6: 'Digit6',
   rear: 'KeyE',
 };
 

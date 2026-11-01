@@ -212,7 +212,7 @@ describe('combat', () => {
 
 describe('powerups', () => {
   it('spends a charge and applies the effect', () => {
-    const match = duel();
+    const match = duel({ powerupSlots: ['repair'] });
     const bot = match.bots[0];
     bot.hp = 10;
     bot.input.powerup = 'repair';
@@ -225,7 +225,7 @@ describe('powerups', () => {
   });
 
   it('does not waste a repair at full health', () => {
-    const match = duel();
+    const match = duel({ powerupSlots: ['repair'] });
     const bot = match.bots[0];
     bot.input.powerup = 'repair';
     match.step();
@@ -509,7 +509,7 @@ describe('arsenal', () => {
 
 describe('powerups: original four', () => {
   it('rage boosts damage, mega shield blocks it, x-ray and cloaking run on timers', () => {
-    const match = duel();
+    const match = duel({ powerupSlots: ['rage', 'xray'] }, { powerupSlots: ['megashield', 'cloaking'] });
     const [a, b] = match.bots;
     a.input.powerup = 'rage';
     b.input.powerup = 'megashield';

@@ -12,6 +12,7 @@ import {
   PATTERNS,
   POWER_SOURCES,
   POWERUP_ORDER,
+  fittedPowerups,
   TOWERS,
   WHEELS,
   type ModeId,
@@ -22,7 +23,7 @@ import type { BotSetup, GameEvent, Loadout } from '../sim/match';
 import type { Save } from '../game/progress';
 import { decodeSkin } from '../game/skin';
 
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 /** The most a browser can bank for a match it ran itself. */
 export const OFFLINE_PAYOUT_MAX = 10_000;
 export const NAME_MAX = 16;
@@ -137,16 +138,18 @@ export function sanitizePaint(raw: unknown): Paint {
 
 /**
  * Builds the loadout a player actually gets online. Browser saves can be edited, so nothing
- * purchased counts yet: everyone gets the same stats and one of each powerup, and only the
- * choice of gear carries over. This goes away once the server owns player progress.
+ * purchased counts yet: everyone gets the same stats and one of each powerup they select, and
+ * only the choice of gear carries over. This goes away once the server owns player progress.
  */
 export function onlineLoadout(raw: unknown): Loadout {
   const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  const powerups: Record<PowerupId, number> = { rage: 1, megashield: 1, cloaking: 1, xray: 1, repair: 1, battery: 1 };
   return {
     chassis: pickKey(CHASSIS, r.chassis, 'brawler'),
     melee: pickKey(MELEE, r.melee, 'chainsaw'),
     defense: pickKey(DEFENSES, r.defense, 'shield'),
-    powerups: { rage: 1, megashield: 1, cloaking: 1, xray: 1, repair: 1, battery: 1 },
+    powerups,
+    powerupSlots: fittedPowerups({ powerups, powerupSlots: Array.isArray(r.powerupSlots) ? (r.powerupSlots as PowerupId[]) : undefined }),
     upgrades: { armor: 0, engine: 0, weapons: 0 },
     paint: sanitizePaint(r.paint),
     rearMelee: r.rearMelee === true,
@@ -175,6 +178,7 @@ export type GarageAction =
   | { type: 'sell'; slot: string; id: string }
   | { type: 'armour'; armour: number }
   | { type: 'powerup'; id: string }
+  | { type: 'powerup-slot'; id: string }
   | { type: 'upgrade'; id: string }
   | { type: 'paint'; paint: Partial<Paint> }
   | { type: 'practice'; arena?: ArenaId; mode?: ModeId }

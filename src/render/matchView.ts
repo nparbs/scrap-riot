@@ -598,8 +598,9 @@ export class MatchView {
       const toward = bot.loadout.rearMelee ? bot.heading + Math.PI : bot.heading;
       const dx = Math.sin(toward);
       const dz = Math.cos(toward);
-      this.particles.burst(bot.x + dx * (bot.radius + 0.7), bot.z + dz * (bot.radius + 0.7), {
-        count: 3, color: Math.random() < 0.5 ? 0xff8a2a : 0xffd24a, speed: 18, size: 0.4, life: 0.45, y: 1.2, gravity: -3, dir: { x: dx, z: dz, jitter: 5 },
+      const reach = model.muzzle.reach * bot.size;
+      this.particles.burst(bot.x + dx * reach, bot.z + dz * reach, {
+        count: 3, color: Math.random() < 0.5 ? 0xff8a2a : 0xffd24a, speed: 18, size: 0.4, life: 0.45, y: model.muzzle.height * bot.size, gravity: -3, dir: { x: dx, z: dz, jitter: 5 },
       });
     }
     if (bot.burnT > 0 && Math.random() < 0.5) {

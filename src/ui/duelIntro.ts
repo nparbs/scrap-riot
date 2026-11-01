@@ -26,6 +26,15 @@ const TALL_STAGE_Y = 0.215;
 
 export type DuelBeat = 'whoosh' | 'slam';
 
+/** Leaves a little of the slant's room spare when working out how much a name can take. */
+const NAME_SLACK = 0.5;
+
+function textWidth(el: HTMLElement): number {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  return range.getBoundingClientRect().width;
+}
+
 function hex(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`;
 }
@@ -53,6 +62,7 @@ export class DuelIntro {
   private readonly models: { model: RobotModel; side: 1 | -1; turn: number }[] = [];
   private whooshed = false;
   private slammed = false;
+  private fitted = false;
   private stageX = STAGE_X;
   private stageY = 0;
 
@@ -132,7 +142,24 @@ export class DuelIntro {
     this.camera.updateProjectionMatrix();
   }
 
+  /** Long names shrink to fit their side of the screen. It needs measuring, so it waits until the page shows it. */
+  private fitNames(): void {
+    for (const name of this.root.querySelectorAll<HTMLElement>('.di-name')) {
+      name.style.fontSize = '';
+      const padding = parseFloat(getComputedStyle(name).paddingLeft) * 2;
+      const room = (name.parentElement?.clientWidth ?? 0) - padding * NAME_SLACK;
+      const needs = textWidth(name);
+      if (needs > room && room > 0) name.style.fontSize = `${Math.floor(parseFloat(getComputedStyle(name).fontSize) * (room / needs))}px`;
+    }
+  }
+
   update(dt: number): void {
+    if (!this.fitted) {
+      this.fitted = true;
+      this.fitNames();
+      // The display font may still be on its way, and it's wider than the fallback.
+      void document.fonts?.ready.then(() => this.fitNames());
+    }
     this.time += dt;
     const t = this.time;
     if (t >= DUEL_INTRO) this.done = true;

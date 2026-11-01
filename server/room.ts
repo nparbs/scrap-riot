@@ -3,7 +3,7 @@ import { makeRivals, randomArena, type Save } from '../src/game/progress';
 import { INPUT_STEPS, onlineLoadout, QUICK_CHAT, sanitizeName, SNAPSHOT_STEPS, unpackFlags, type OnlineQueue, type ServerMessage, type StartMessage } from '../src/net/protocol';
 import { encodeSnapshot } from '../src/net/snapshot';
 import type { ArenaId } from '../src/sim/arena';
-import { COUNTDOWN, DUEL_INTRO, FORFEIT_OUTRO, MATCH, MODES, POWERUP_ORDER, type ModeId, type UpgradeId } from '../src/sim/data';
+import { COUNTDOWN, DUEL_INTRO, FORFEIT_OUTRO, fittedPowerups, MATCH, MODES, POWERUP_ORDER, type ModeId, type UpgradeId } from '../src/sim/data';
 import { Match, STEP, type BotSetup, type Loadout } from '../src/sim/match';
 
 import type { MatchResult } from './accounts';
@@ -423,7 +423,7 @@ export class Room {
           damage: row.bot.damageDealt,
           // Leaving gives up the payout, as the screen warns.
           payout: p.left ? 0 : row.total,
-          powerupsLeft: row.bot.powerups,
+          powerupsLeft: Object.fromEntries(fittedPowerups(row.bot.loadout).map((id) => [id, row.bot.powerups[id]])),
         };
       });
     return { id: this.id, arena: this.arena, mode: this.mode, duration: match.time, drawn: match.drawn, seats: match.bots.length, players };

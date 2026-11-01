@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { applyCheat, buyOrEquip, buyPowerup, buyUpgrade, CATALOG, newSave, retireGuns, sellPart, setArmour, type Save, type Slot } from '../src/game/progress';
+import { applyCheat, buyOrEquip, buyPowerup, buyUpgrade, CATALOG, fillPowerupSlots, newSave, retireGuns, sellPart, setArmour, togglePowerupSlot, type Save, type Slot } from '../src/game/progress';
 import { DEFAULT_NAME, OFFLINE_PAYOUT_MAX, sanitizeName, sanitizePaint, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineStatus, type Profile } from '../src/net/protocol';
 import { isArenaId } from '../src/sim/arena';
 import { DEFAULT_PAINT, MODES, POWERUPS, UPGRADES, type ModeId, type PowerupId, type UpgradeId } from '../src/sim/data';
@@ -45,7 +45,8 @@ export interface MatchResult {
     deaths: number;
     damage: number;
     payout: number;
-    powerupsLeft: Record<PowerupId, number>;
+    /** Only the powerups taken into the match. The rest can't have been used. */
+    powerupsLeft: Partial<Record<PowerupId, number>>;
   }[];
 }
 
@@ -69,7 +70,7 @@ function codeHash(code: string): Buffer {
 function toSave(row: PlayerRow): Save {
   // Rows from before a part type existed simply start with the free one.
   const state = { ...row.state, owned: { ...newSave().owned, ...row.state.owned } };
-  return retireGuns({ name: row.name, money: row.money, matches: row.matches, wins: row.wins, ...state });
+  return fillPowerupSlots(retireGuns({ name: row.name, money: row.money, matches: row.matches, wins: row.wins, ...state }));
 }
 
 function toProfile(row: PlayerRow): Profile {
@@ -202,6 +203,8 @@ export class Accounts {
         return typeof action.armour === 'number' && setArmour(save, action.armour);
       case 'powerup':
         return has(POWERUPS, action.id) && buyPowerup(save, action.id as PowerupId);
+      case 'powerup-slot':
+        return has(POWERUPS, action.id) && togglePowerupSlot(save, action.id as PowerupId);
       case 'upgrade':
         return has(UPGRADES, action.id) && buyUpgrade(save, action.id as UpgradeId);
       case 'payout':
@@ -248,7 +251,7 @@ export class Accounts {
         // The account may have been deleted during the match.
         if (!row) continue;
         const change = result.drawn ? 0 : ratingChange(p.place, result.seats ?? 2);
-        const state = { ...row.state, loadout: { ...row.state.loadout, powerups: p.powerupsLeft } };
+        const state = { ...row.state, loadout: { ...row.state.loadout, powerups: { ...row.state.loadout.powerups, ...p.powerupsLeft } } };
         await q.query(
           `UPDATE players SET money = money + $1, rating = GREATEST(0, rating + $2), matches = matches + 1,
              wins = wins + $3, kills = kills + $4, deaths = deaths + $5, state = $6, last_seen = now() WHERE id = $7`,

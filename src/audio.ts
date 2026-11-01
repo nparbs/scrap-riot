@@ -15,11 +15,18 @@ const REGISTER_BELL = [[2093, 1, 0.75], [3140, 0.7, 0.6], [4700, 0.4, 0.4], [628
 // These levels were set by rendering every sound and measuring it with A-weighting, which follows
 // how sensitive hearing is at each pitch. Peak level alone misses that a whine at 1 kHz sounds far
 // louder than a thud with the same peak. Re-measure after changing how a sound is made.
+// Spinners are then set well below the rest on purpose, because they were tiring to listen to.
 const MELEE_LEVEL: Record<MeleeId, number> = {
-  vertbar: 1.23, vertdisc: 1.26, shell: 1.26, horizbar: 1.29, flipper: 1.07, axe: 1.66, hammer: 1.7, undercutter: 1.7, crusher: 1.7,
-  hammersaw: 1.74, drum: 1.78, eggbeater: 1.78, ram: 2.16, chainsaw: 2.66, drill: 2.66, rollingpin: 2.66, dagger: 2.69, magnet: 2.72, claw: 3, forks: 3,
+  vertbar: 0.42, vertdisc: 0.42, shell: 0.42, horizbar: 0.42, flipper: 1.07, axe: 1.66, hammer: 1.7, undercutter: 0.7, crusher: 1.7,
+  hammersaw: 1.74, drum: 0.7, eggbeater: 0.7, ram: 2.16, chainsaw: 2.66, drill: 2.66, rollingpin: 2.66, dagger: 2.69, magnet: 2.72, claw: 3, forks: 3,
   flamethrower: 1, tesla: 1.2, spear: 2,
 };
+/** How long the announcer waits for each result's sting to finish, in seconds. */
+const WIN_VOICE_DELAY = 0.65;
+const LOSE_VOICE_DELAY = 0.85;
+const VOICE_LINES = ['winner', 'scrapped'] as const;
+type VoiceLine = (typeof VOICE_LINES)[number];
+const VOICE_LEVEL = 0.8;
 /** The Tesla Coil's bolt and the teleport's crackle. */
 const ARC_LEVEL = 2;
 
@@ -47,7 +54,7 @@ export interface LoopState {
 
 const SILENT: LoopState = { engine: -1, boosting: false, saw: 0, spinSpeed: 0, spinLevel: 0, flame: false };
 
-/** Everything is synthesized, so the game ships with no audio files. */
+/** Everything is synthesized here, except the announcer's two short lines. */
 export class Sfx {
   muted = false;
   private ctx: AudioContext | null = null;
@@ -67,6 +74,7 @@ export class Sfx {
   private spinGain: GainNode | null = null;
   private spinOsc: OscillatorNode | null = null;
   private lastHit = -1;
+  private readonly voices = new Map<VoiceLine, AudioBuffer>();
 
   /** Browsers only allow audio after a user gesture, so call this from input handlers. */
   unlock(): void {
@@ -112,14 +120,14 @@ export class Sfx {
     this.boostGain = boost;
     this.boostFilter = this.loopFilter;
 
-    // A spinner is a whine that climbs as it winds up, with a rough edge to it.
+    // A spinner is a soft hum that climbs as it winds up. A brighter wave here turns into a harsh whine.
     this.spinOsc = ctx.createOscillator();
-    this.spinOsc.type = 'sawtooth';
+    this.spinOsc.type = 'triangle';
     this.spinOsc.frequency.value = 80;
     const spinFilter = ctx.createBiquadFilter();
-    spinFilter.type = 'bandpass';
-    spinFilter.frequency.value = 850;
-    spinFilter.Q.value = 0.8;
+    spinFilter.type = 'lowpass';
+    spinFilter.frequency.value = 650;
+    spinFilter.Q.value = 0.5;
     this.spinGain = ctx.createGain();
     this.spinGain.gain.value = 0;
     this.spinOsc.connect(spinFilter).connect(this.spinGain).connect(this.effects);
@@ -127,6 +135,7 @@ export class Sfx {
 
     this.music = new Music(ctx, this.musicBus, buffer);
     this.music.play(this.volumes.music > 0 ? this.wantedTrack : null);
+    this.loadVoices();
   }
 
   /** The filter of the loop made most recently, for the one loop that sweeps. */
@@ -244,13 +253,13 @@ export class Sfx {
       case 'shell':
         this.clang(0.9 * volume, 180, 0.7);
         this.thud(0.5 * volume, 0.28);
-        this.burst(0.35 * volume, 0.35, 4200, 'bandpass', 1200);
+        this.burst(0.2 * volume, 0.3, 2200, 'bandpass', 900);
         break;
       case 'drum':
       case 'eggbeater':
       case 'undercutter':
         this.clang(0.6 * volume, 340, 0.3);
-        this.burst(0.3 * volume, 0.14, 3600, 'bandpass');
+        this.burst(0.18 * volume, 0.14, 2200, 'bandpass');
         break;
       case 'hammer':
       case 'axe':
@@ -314,10 +323,38 @@ export class Sfx {
 
   win(): void {
     [440, 554, 659, 880].forEach((freq, i) => this.tone(0.075, 0.32, freq, freq, 'square', i * 0.13));
+    this.announce('winner', WIN_VOICE_DELAY);
   }
 
   lose(): void {
     [392, 349, 311, 220].forEach((freq, i) => this.tone(0.07, 0.4, freq, freq * 0.98, 'sawtooth', i * 0.18));
+    this.announce('scrapped', LOSE_VOICE_DELAY);
+  }
+
+  /** The robot announcer, once the sting has played. The files come from scripts/make-voice.mjs. */
+  private announce(line: VoiceLine, delay: number): void {
+    const { ctx, effects } = this;
+    const buffer = this.voices.get(line);
+    if (!ctx || !effects || !buffer || this.muted) return;
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    const gain = ctx.createGain();
+    gain.gain.value = VOICE_LEVEL;
+    source.connect(gain).connect(effects);
+    source.start(ctx.currentTime + delay);
+  }
+
+  /** Fetched ahead of time, so a line is ready the moment a match ends. A match just goes without if this fails. */
+  private loadVoices(): void {
+    const { ctx } = this;
+    if (!ctx) return;
+    for (const line of VOICE_LINES) {
+      fetch(`${import.meta.env.BASE_URL}voice/${line}.mp3`)
+        .then((response) => (response.ok ? response.arrayBuffer() : Promise.reject(new Error(String(response.status)))))
+        .then((data) => ctx.decodeAudioData(data))
+        .then((buffer) => this.voices.set(line, buffer))
+        .catch(() => {});
+    }
   }
 
   click(): void {
@@ -387,8 +424,8 @@ export class Sfx {
     boostGain.gain.setTargetAtTime(state.boosting ? 0.11 : 0, now, 0.06);
     boostFilter?.frequency.setTargetAtTime(state.boosting ? 1500 : 600, now, 0.2);
     flameGain.gain.setTargetAtTime(state.flame ? 0.17 : 0, now, 0.05);
-    spinOsc.frequency.setTargetAtTime(70 + state.spinSpeed * 520, now, 0.1);
-    spinGain.gain.setTargetAtTime(0.09 * state.spinLevel * Math.min(1, state.spinSpeed * 2.5), now, 0.08);
+    spinOsc.frequency.setTargetAtTime(60 + state.spinSpeed * 300, now, 0.1);
+    spinGain.gain.setTargetAtTime(0.03 * state.spinLevel * Math.min(1, state.spinSpeed * 2.5), now, 0.08);
   }
 
   /** Stops every continuous sound, for leaving a match. */

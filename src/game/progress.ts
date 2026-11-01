@@ -12,6 +12,8 @@ import {
   POWER_SOURCES,
   POWERUPS,
   POWERUP_CAP,
+  POWERUP_SLOTS,
+  fittedPowerups,
   spaceCapacity,
   spaceUsed,
   TOWERS,
@@ -82,6 +84,7 @@ export function newSave(): Save {
       melee: 'chainsaw',
       defense: 'shield',
       powerups: { rage: 0, megashield: 0, cloaking: 0, xray: 0, repair: 1, battery: 1 },
+      powerupSlots: ['repair', 'battery'],
       upgrades: { armor: 0, engine: 0, weapons: 0 },
       paint: { ...DEFAULT_PAINT },
     },
@@ -108,10 +111,16 @@ export function retireGuns<T extends { money: number; owned: Save['owned']; load
   return save;
 }
 
+/** Saves from before there were slots start with the first powerups they have, and pick from there. */
+export function fillPowerupSlots<T extends { loadout: Loadout }>(save: T): T {
+  save.loadout.powerupSlots = fittedPowerups(save.loadout);
+  return save;
+}
+
 export function loadSave(storage: Pick<Storage, 'getItem'> | null): Save {
   try {
     const raw = storage?.getItem(SAVE_KEY);
-    if (raw) return retireGuns({ ...newSave(), ...(JSON.parse(raw) as Partial<Save>) });
+    if (raw) return fillPowerupSlots(retireGuns({ ...newSave(), ...(JSON.parse(raw) as Partial<Save>) }));
   } catch {
     // Blocked storage or a corrupt save both just start a new game.
   }
@@ -216,8 +225,24 @@ export function setArmour(save: Save, armour: number): boolean {
 export function buyPowerup(save: Save, id: PowerupId): boolean {
   const price = POWERUPS[id].price;
   if (save.money < price || save.loadout.powerups[id] >= POWERUP_CAP) return false;
+  // Worked out first, because a robot with no choice saved goes by what it has.
+  const slots = fittedPowerups(save.loadout);
   save.money -= price;
   save.loadout.powerups[id]++;
+  // Buying one for a robot with a free slot means wanting to use it.
+  if (!slots.includes(id) && slots.length < POWERUP_SLOTS) slots.push(id);
+  save.loadout.powerupSlots = slots;
+  return true;
+}
+
+/** Selects or drops a powerup for the next match. False if every slot is taken. */
+export function togglePowerupSlot(save: Save, id: PowerupId): boolean {
+  const slots = fittedPowerups(save.loadout);
+  const at = slots.indexOf(id);
+  if (at >= 0) slots.splice(at, 1);
+  else if (slots.length >= POWERUP_SLOTS) return false;
+  else slots.push(id);
+  save.loadout.powerupSlots = slots;
   return true;
 }
 
@@ -238,7 +263,8 @@ export function applyResult(save: Save, payout: number, place: number, remaining
   save.money += payout;
   save.matches++;
   if (place === 1) save.wins++;
-  save.loadout.powerups = { ...remaining };
+  // Only what went into the match can have been used. The rest stays in the garage.
+  for (const id of fittedPowerups(save.loadout)) save.loadout.powerups[id] = remaining[id];
 }
 
 const RIVALS = [

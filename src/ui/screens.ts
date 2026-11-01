@@ -19,6 +19,8 @@ import {
   POWERUPS,
   POWERUP_CAP,
   POWERUP_ORDER,
+  POWERUP_SLOTS,
+  fittedPowerups,
   spaceCapacity,
   spaceUsed,
   UPGRADES,
@@ -40,7 +42,7 @@ const INTRO_MS = 1000;
 const INTRO_SPARKS = 18;
 const NAME_MIN = 2;
 
-const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
+const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3'];
 
 /** iPhones have no way for a page to go full screen, so this is the only route there. */
 function homeScreenHint(): string {
@@ -62,7 +64,7 @@ function controlsTable(keys: Bindings): string {
     <tr><td><kbd>Defense</kbd></td><td>Defense</td></tr>
     <tr><td><kbd>Boost</kbd></td><td>Speed boost (uses battery)</td></tr>
     <tr><td><kbd>Rear</kbd></td><td>Look behind</td></tr>
-    <tr><td>Top of the screen</td><td>Tap a powerup to use it</td></tr>
+    <tr><td>Above the buttons</td><td>Tap one of your powerups to use it</td></tr>
   </table>`;
   }
   const key = (action: Action) => `<kbd>${keyLabel(keys[action])}</kbd>`;
@@ -72,7 +74,7 @@ function controlsTable(keys: Bindings): string {
     <tr><td>${key('melee')}<kbd>Left click</kbd></td><td>Main weapon</td></tr>
     <tr><td>${key('defense')}<kbd>Right click</kbd></td><td>Defense</td></tr>
     <tr><td>${key('boost')}</td><td>Speed boost (uses battery)</td></tr>
-    <tr><td>${key('power1')}${key('power2')}${key('power3')}${key('power4')}${key('power5')}${key('power6')}</td><td>Powerups</td></tr>
+    <tr><td>${key('power1')}${key('power2')}${key('power3')}</td><td>Your three powerups</td></tr>
     <tr><td>${key('rear')}</td><td>Look behind</td></tr>
     <tr><td><kbd>M</kbd> / <kbd>Esc</kbd></td><td>Mute / Pause</td></tr>
   </table>`;
@@ -218,6 +220,7 @@ export interface GarageActions {
   onSell: (slot: Slot, id: string) => void;
   onArmour: (armour: number) => void;
   onPowerup: (id: PowerupId) => void;
+  onPowerupSlot: (id: PowerupId) => void;
   onUpgrade: (id: UpgradeId) => void;
   onFight: () => void;
   onOnline: (queue: OnlineQueue) => void;
@@ -382,6 +385,7 @@ function partChips(slot: Slot, id: string): string {
       weapon.range ? chip(`Reach ${weapon.range}`) : '',
       weapon.cooldown >= 0.3 ? chip(`${weapon.cooldown}s reload`) : '',
       weapon.battery || weapon.drain ? chip('Battery', 'bad') : '',
+      weapon.onTower ? chip('On the tower', 'good') : '',
       chip(`Takes ${weaponSpace(weapon.price)} room`),
     ].join('');
   }
@@ -439,13 +443,19 @@ function partCards(save: Save, slot: Slot, preview: PartPreview | null): string 
 }
 
 function powerupCards(save: Save, keys: Bindings): string {
-  return POWERUP_ORDER.map((id, i) => {
+  const slots = fittedPowerups(save.loadout);
+  return POWERUP_ORDER.map((id) => {
     const def = POWERUPS[id];
     const n = save.loadout.powerups[id];
     const full = n >= POWERUP_CAP;
     const broke = !full && save.money < def.price;
-    const key = isTouchDevice() ? '' : `[${keyLabel(keys[POWER_ACTIONS[i]])}] `;
-    return `<button class="card${broke ? ' card-broke' : ''}" data-power="${id}"><strong>${key}${def.name}</strong><span>${def.blurb}</span><small>Carrying ${n}/${POWERUP_CAP}</small><em>${full ? 'Full' : `$${def.price}`}</em></button>`;
+    const slot = slots.indexOf(id);
+    const on = slot >= 0;
+    const key = on && !isTouchDevice() ? `<kbd>${keyLabel(keys[POWER_ACTIONS[slot]])}</kbd> ` : '';
+    const taken = !on && slots.length >= POWERUP_SLOTS;
+    const select = `<button class="power-check" role="checkbox" aria-checked="${on}" data-power-slot="${id}" ${taken ? 'disabled' : ''}><i></i>${on ? 'Selected' : taken ? `${POWERUP_SLOTS} already` : 'Select'}</button>`;
+    const buy = `<button class="plate-btn plate-buy" data-power="${id}" ${full || broke ? 'disabled' : ''}>${full ? 'Full' : `Buy $${def.price}`}</button>`;
+    return `<div class="card part-card${on ? ' card-on' : ''}${broke ? ' card-broke' : ''}"><div class="part-card-about"><strong>${key}${def.name}</strong><span>${def.blurb}</span><small>Carrying ${n}/${POWERUP_CAP}</small></div><div class="card-foot">${select}${buy}</div></div>`;
   }).join('');
 }
 
@@ -487,13 +497,15 @@ function workshopPanel(save: Save, options: GarageOptions): string {
     : '';
 
   const rail = SHOP_GROUPS.map(([group, items]) => `<h4>${group}</h4>${items.map(([id, label]) => {
-    const current = id === 'powerups' || id === 'upgrades' ? '' : `<small>${partName(id, fittedPart(shown, id))}</small>`;
+    const current = id === 'upgrades' ? '' : id === 'powerups' ? `<small>${fittedPowerups(loadout).length} of ${POWERUP_SLOTS} selected</small>` : `<small>${partName(id, fittedPart(shown, id))}</small>`;
     return `<button class="rail-item${category === id ? ' rail-on' : ''}${preview?.slot === id ? ' part-trying' : ''}" data-buy="${id}"><span>${label}</span>${current}</button>`;
   }).join('')}`).join('');
   const title = SHOP_GROUPS.flatMap(([, items]) => items).find(([id]) => id === category)?.[1] ?? '';
   const cards = category === 'powerups' ? powerupCards(save, options.keys) : category === 'upgrades' ? upgradeCards(save) : partCards(save, category, preview);
-  const hint = category === 'powerups' || category === 'upgrades'
+  const hint = category === 'upgrades'
     ? ''
+    : category === 'powerups'
+    ? `<p class="preview-note">Select up to ${POWERUP_SLOTS} to take into a match. Any you don't select stay in the garage, unused.</p>`
     : `<p class="preview-note${preview ? ' preview-on' : ''}">${preview ? `Previewing <b>${partName(preview.slot, preview.id)}</b>. Nothing has changed yet.` : `${isTouchDevice() ? 'Tap' : 'Click'} a part to try it on your robot. Nothing is bought until you press its button.`}</p>`;
   return `
     <div class="shop">
@@ -628,6 +640,7 @@ function helpPanel(keys: Bindings): string {
   return `<div class="help-grid">
     <section><h3>The basics</h3>${list([
       'Build a robot in the Workshop. Every part takes up room, so a bigger chassis fits more.',
+      'Tick up to three powerups in the Workshop to take into a match. The rest stay in your garage.',
       'Robots only turn while rolling, so a stopped robot has to drive forward or back to change direction.',
       'Your defense goes on the opposite side from your main weapon, so moving the weapon to the back moves the defense to the front.',
       `Your main weapon is how you win. Spinners have to reach speed before they bite, so hold the ${touch ? 'button' : 'key'} on the way in.`,
@@ -724,7 +737,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
   el.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest<HTMLElement>('button');
     if (!target) return;
-    const { slot, id, power, upgrade, tab, side: sideTab, buy, armour, zoom, sellSlot, sellId, paint: part, paintUse, value, arena, mode, fightId, previewSlot, previewId } = target.dataset;
+    const { slot, id, power, powerSlot, upgrade, tab, side: sideTab, buy, armour, zoom, sellSlot, sellId, paint: part, paintUse, value, arena, mode, fightId, previewSlot, previewId } = target.dataset;
     if (previewSlot !== undefined) actions.onPreviewPart(previewSlot && previewId ? { slot: previewSlot as Slot, id: previewId } : null);
     else if (tab) actions.onTab(tab as GarageTab);
     else if (sideTab) actions.onSide(sideTab as SideTab);
@@ -738,6 +751,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     else if (arena) actions.onPractice({ arena: arena as ArenaId });
     else if (mode) actions.onPractice({ mode: mode as ModeId });
     else if (slot && id) actions.onEquip(slot as Slot, id);
+    else if (powerSlot) actions.onPowerupSlot(powerSlot as PowerupId);
     else if (power) actions.onPowerup(power as PowerupId);
     else if (upgrade) actions.onUpgrade(upgrade as UpgradeId);
     else if ('fight' in target.dataset) actions.onFight();
@@ -840,7 +854,7 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
       ${bindings}
       <p class="settings-hint">Esc cancels a rebind. Using a key that's taken swaps the two actions. Esc and M stay reserved for pause and mute, and Ctrl for browser shortcuts. Left click always fires the main weapon and right click the defense.</p>
       <h3>Gamepad</h3>
-      <p class="settings-hint">Right and left triggers drive, the left stick steers. A or RB: main weapon, B: defense, X: speed boost, D-pad: first four powerups, LB: Repair Kit, Y: look behind, Start: menu.</p>
+      <p class="settings-hint">Right and left triggers drive, the left stick steers. A or RB: main weapon, B: defense, X: speed boost, D-pad up, right and down: your three powerups, Y: look behind, Start: menu.</p>
       <button class="btn" data-reset>Reset keys</button>`}
       <button class="btn btn-primary" data-back>Done</button>
     </div>`;
