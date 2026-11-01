@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 const MAX_PARTICLES = 900;
+const FLOOR_Y = 0.05;
 
 interface Particle {
   x: number;
@@ -39,6 +40,8 @@ export class Particles {
   private readonly color = new THREE.Color();
   /** Fraction of each burst to actually spawn, lowered by the quality setting. */
   density = 1;
+  /** How far the floor reaches from the middle. Anything past it keeps falling. */
+  floorHalf = Infinity;
 
   constructor() {
     this.mesh = new THREE.InstancedMesh(
@@ -89,12 +92,14 @@ export class Particles {
         this.pool.splice(i, 1);
         continue;
       }
+      // Only something coming down from above lands, so a blast below the edge stays down there.
+      const above = p.y >= FLOOR_Y;
       p.vy -= p.gravity * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.z += p.vz * dt;
-      if (p.y < 0.05) {
-        p.y = 0.05;
+      if (above && p.y < FLOOR_Y && Math.abs(p.x) < this.floorHalf && Math.abs(p.z) < this.floorHalf) {
+        p.y = FLOOR_Y;
         p.vy *= -0.35;
         p.vx *= 0.6;
         p.vz *= 0.6;

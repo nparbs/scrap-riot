@@ -16,7 +16,13 @@ const STAGE_X = 3.5;
 const STAGE_FROM = 17;
 const CAMERA_Z = 12.5;
 /** Below this shape the two robots wouldn't fit side by side, so the camera backs up. */
-const WIDE_ENOUGH = 1.5;
+const WIDE_ENOUGH = 1.8;
+/** Below this shape the VS would cover them side by side, so they stack, each by their own name. */
+const TALL = 0.85;
+const TALL_WIDE_ENOUGH = 1.05;
+const TALL_STAGE_X = 0.6;
+/** How far from the middle each one sits, as a share of the height of the view. */
+const TALL_STAGE_Y = 0.215;
 
 export type DuelBeat = 'whoosh' | 'slam';
 
@@ -47,6 +53,8 @@ export class DuelIntro {
   private readonly models: { model: RobotModel; side: 1 | -1; turn: number }[] = [];
   private whooshed = false;
   private slammed = false;
+  private stageX = STAGE_X;
+  private stageY = 0;
 
   constructor(left: Bot, right: Bot, arenaName: string, startAt: number, pixelRatio: number, private readonly onBeat: (beat: DuelBeat) => void) {
     this.time = startAt;
@@ -112,8 +120,14 @@ export class DuelIntro {
     const width = window.innerWidth;
     const height = window.innerHeight;
     this.renderer?.setSize(width, height, false);
-    this.camera.aspect = width / height;
-    this.camera.position.set(0, 1.9, CAMERA_Z * Math.max(1, WIDE_ENOUGH / this.camera.aspect));
+    const aspect = width / height;
+    const tall = aspect < TALL;
+    const distance = CAMERA_Z * Math.max(1, (tall ? TALL_WIDE_ENOUGH : WIDE_ENOUGH) / aspect);
+    const viewHeight = 2 * distance * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
+    this.stageX = tall ? TALL_STAGE_X : STAGE_X;
+    this.stageY = tall ? TALL_STAGE_Y * viewHeight : 0;
+    this.camera.aspect = aspect;
+    this.camera.position.set(0, 1.9, distance);
     this.camera.lookAt(0, 0.7, 0);
     this.camera.updateProjectionMatrix();
   }
@@ -137,8 +151,8 @@ export class DuelIntro {
     const leaving = Math.max(0, t - EXIT);
     for (const { model, side, turn } of this.models) {
       const drift = Math.max(0, t - ENTER_END) * 0.14;
-      model.root.position.x = side * (STAGE_X + STAGE_FROM * (1 - eased) - drift + leaving * leaving * 90);
-      model.root.position.y = 0.05 * Math.sin(t * 9 + side);
+      model.root.position.x = side * (this.stageX + STAGE_FROM * (1 - eased) - drift + leaving * leaving * 90);
+      model.root.position.y = side * this.stageY + 0.05 * Math.sin(t * 9 + side);
       model.root.rotation.y = turn + side * 0.08 * Math.sin(t * 1.6);
       if (model.spinner) model.spinner.rotation[model.spinAxis] += dt * 34;
       for (const wheel of model.wheels) wheel.rotation.x += dt * (arrive < 1 ? 26 : 1.5);

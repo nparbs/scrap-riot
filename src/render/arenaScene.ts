@@ -591,6 +591,15 @@ function addTowerTops(glow: GlowBatch, beacons: [number, number, number][], look
   });
 }
 
+/** Lower rooftops right beside the night city's roof, close enough for a falling robot to land on. */
+function nightCityLedges(half: number): Ledge[] {
+  return [
+    { x: -12, z: half + 7, w: 36, d: 12, top: -2 },
+    { x: -half - 7, z: 16, w: 12, d: 30, top: -2 },
+    { x: 28, z: half + 7, w: 34, d: 12, top: -10 },
+  ];
+}
+
 /** The city around the roof. The towers merge into one draw, so all this costs one call per material. */
 function buildNightCity(scene: THREE.Scene, half: number, look: Look, glow: GlowBatch, animators: Animator[]): void {
   const map = windowTexture(WINDOWS_NIGHT, 77);
@@ -607,9 +616,7 @@ function buildNightCity(scene: THREE.Scene, half: number, look: Look, glow: Glow
   ];
   for (const [x, z, w, d, top] of near) towers.push(towerGeometry(w, top + 300, d, x, top - (top + 300) / 2, z, 1.2));
   // Lower ledges behind the fenced sides, which carry the neon.
-  towers.push(towerGeometry(36, 300, 12, -12, -152, half + 7, 1.2));
-  towers.push(towerGeometry(12, 300, 30, -half - 7, -152, 16, 1.2));
-  towers.push(towerGeometry(34, 300, 12, 28, -160, half + 7, 1.2));
+  for (const { x, z, w, d, top } of nightCityLedges(half)) towers.push(towerGeometry(w, 300, d, x, top - 150, z, 1.2));
   addMerged(scene, towers, new THREE.MeshBasicMaterial({ map, toneMapped: false }));
   const beacons: [number, number, number][] = [];
   addTowerTops(glow, beacons, look, near);
@@ -990,9 +997,19 @@ function buildBackdrop(scene: THREE.Scene, def: ArenaDef, look: Look, glow: Glow
   else buildGlacier(scene, half);
 }
 
+export interface Ledge {
+  x: number;
+  z: number;
+  w: number;
+  d: number;
+  top: number;
+}
+
 export interface ArenaScene {
   def: ArenaDef;
   scene: THREE.Scene;
+  /** Scenery below the floor that a falling robot lands on. */
+  ledges: Ledge[];
   saws: THREE.Group[];
   shockers: THREE.MeshStandardMaterial[];
   pistons: THREE.Group[];
@@ -1267,6 +1284,7 @@ export function buildArena(def: ArenaDef): ArenaScene {
 
   return {
     def, scene, saws, shockers, pistons, fire, hill, fill,
+    ledges: theme.backdrop === 'night' ? nightCityLedges(half) : [],
     animate: (time) => {
       for (const animator of animators) animator(time);
     },
