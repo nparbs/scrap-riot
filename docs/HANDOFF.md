@@ -14,10 +14,10 @@ If `git pull --ff-only origin main` fails with "Cannot fast-forward to multiple 
 
 ## Current state
 
-- **Live:** everything through PR #42 is merged and on the page. No PRs are open.
-- **Server:** on protocol 11, last rebuilt for PR #41. PR #42 only added a helper to `src/net/protocol.ts` that the page uses, so it didn't need a rebuild.
+- **Live:** everything through PR #43 is merged and on the page.
+- **Server:** on protocol 11, last rebuilt for PR #43, and its health check answered afterwards.
 - **Tests:** 321 pass.
-- **Not verified yet:** nothing since the phone work has run on a real phone. That includes the thumb buttons, the face-off when a phone really rotates or goes full screen, the landscape lock and Add to Home Screen. The join banner and phone counts have only run against a mocked server, not a real queue.
+- **Not verified yet:** the new animations, tracks and window fixes have only run in a headless browser, and nobody has played with them by hand. An account already showing `null/3` hasn't been checked on the real database, only in tests. Nothing since the phone work has run on a real phone. That includes the thumb buttons, the face-off when a phone really rotates or goes full screen, the landscape lock and Add to Home Screen. The join banner and phone counts have only run against a mocked server, not a real queue.
 
 ## Latest work (protocol 11)
 
@@ -128,7 +128,7 @@ The user tests by hand, and their feedback should drive what comes next. Open it
 - **Join banner lag:** the person waiting may have gone by the time someone taps it, leaving them waiting in the queue instead.
 - **Defense gear:** it's only a look. Parts stick out past the hull and can poke through walls, and shelf items stay put when used, so the Mini-Robot and bomb still show after they've gone.
 - **Below the minimum:** the `@media (max-height: 340px)` block in the stylesheet only serves phones below the 720p target and can go.
-- **Trailer:** `C:\Users\N P\Projects\scrap-riot-trailer.mp4` (20 seconds) was rendered before the tower weapons, defense gear and the flamethrower fix, so it shows those weapons on the nose. Its fights are staged, including the one under the "Online Duels" caption. The older promo is `scrap-riot-promo.mp4`, with its files in `C:\Users\N P\Projects\scrap-riot-promo\`.
+- **Trailer:** the current one is `C:\Users\N P\Projects\scrap-riot-trailer-30s.mp4` (30 seconds, 1080p). Its fights are staged, including the one under the "Online Duels" caption, and nobody has listened to its sound. Its rig is `promo-30s.mjs` in `C:\Users\N P\Projects\scrap-riot-promo\`. Run it with `PROMO_GPU=1 node promo-30s.mjs final`, because the PC's graphics card takes about 4 minutes where the software renderer would take about 1.5 hours. That folder also has the overlap sweep (`sweep.mjs`) and weapon close-ups (`anim.mjs`), which load `playwright-core` from the older `smoke` folder below. The older `scrap-riot-trailer.mp4` and `scrap-riot-promo.mp4` predate much of the game.
 
 ## Things worth knowing
 
