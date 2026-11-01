@@ -170,6 +170,8 @@ export interface Profile {
   kills: number;
   deaths: number;
   signedIn: boolean;
+  /** Entered the member code, so they appear on the Highscore and Players lists. */
+  member: boolean;
 }
 
 export type GarageAction =

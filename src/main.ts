@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Sfx } from './audio';
-import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, previewLoadout, sellPart, setArmour, writeSave, type PartPreview, type Save, type Slot } from './game/progress';
+import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, partFits, previewLoadout, sellPart, setArmour, writeSave, type PartPreview, type Save, type Slot } from './game/progress';
 import { awardMedal, careerResult, fightSetups, loadCareer, writeCareer, type Fight } from './game/career';
-import { activeLevel, AutoQuality, DEFAULT_BINDINGS, loadSettings, QUALITY, rebind, writeSettings, type Action } from './game/settings';
+import { activeLevel, audibleVolume, AutoQuality, DEFAULT_BINDINGS, loadSettings, musicOff, QUALITY, rebind, toggleMusic, writeSettings, type Action } from './game/settings';
 import { Tutorial } from './game/tutorial';
 import { Keyboard } from './input';
 import { Api, ApiError } from './net/api';
@@ -24,10 +24,14 @@ type Mode = 'intro' | 'menu' | 'garage' | 'lobby' | 'match' | 'paused' | 'result
 
 /** Without a configured server, the build simply offers no online mode. */
 const SETTINGS_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-1.7-1L15 3.5h-4L10.6 6a7.6 7.6 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 1.7 1l.3 2.5h4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.4 1 2-3.4zM13 15.2a3.2 3.2 0 1 1 0-6.4 3.2 3.2 0 0 1 0 6.4z" transform="translate(-1 0)"/></svg>';
+const MUSIC_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4.5v10.7a3.4 3.4 0 1 0 2 3.1V8.6l8-1.8v6.4a3.4 3.4 0 1 0 2 3.1V2.5z"/></svg>';
+const MUSIC_OFF_ICON = `${MUSIC_ICON.slice(0, -6)}<path d="M3.5 3.5l17 17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`;
 const SERVER_URL: string = import.meta.env.VITE_SERVER_URL || (import.meta.env.DEV ? 'ws://localhost:8787' : '');
 
 /** Shows between the workshop's panels. */
-const WORKSHOP_METAL = 0x4d696b;
+const WORKSHOP_METAL = 0x212427;
+/** Seconds for the register to ring before the drill starts on a part that was just bought. */
+const DRILL_AFTER_SALE = 0.55;
 const SKIN_SAVE_DELAY_MS = 700;
 const ONLINE_POLL_MS = 15_000;
 const TRAINING_SECONDS = 30 * 60;
@@ -51,6 +55,13 @@ function safeStorage(): Storage | null {
   } catch {
     return null;
   }
+}
+
+function memberCodeProblem(error: unknown): string {
+  const status = error instanceof ApiError ? error.status : 0;
+  if (status === 403) return "That's not the member code.";
+  if (status === 429) return 'Too many tries. Please wait a while and try again.';
+  return "Couldn't reach the server. Please try again.";
 }
 
 class Game {
@@ -87,7 +98,6 @@ class Game {
   private garageTab: GarageTab = 'workshop';
   private sideTab: SideTab = 'stats';
   private buyCategory: BuyCategory = 'chassis';
-  private shelf: Slot | null = null;
   private readonly painter = new Painter();
   /** A new paint job is waiting to be saved. */
   private skinDirty = false;
@@ -102,6 +112,7 @@ class Game {
   /** Sits above every other screen, so settings open over whatever is happening. */
   private readonly settingsLayer = document.createElement('div');
   private readonly settingsButton = document.createElement('button');
+  private readonly musicButton = document.createElement('button');
   private partPreview: PartPreview | null = null;
   /** This match is the Training session, which isn't a real fight and doesn't count for anything. */
   private training = false;
@@ -151,7 +162,17 @@ class Game {
       this.settingsButton.blur();
       this.openSettings();
     });
-    document.body.append(this.settingsButton, this.settingsLayer);
+    this.musicButton.className = 'settings-button music-button';
+    this.musicButton.hidden = true;
+    this.musicButton.addEventListener('click', () => {
+      this.musicButton.blur();
+      toggleMusic(this.settings);
+      this.applyMusicSetting();
+      writeSettings(this.storage, this.settings);
+      this.sfx.click();
+    });
+    this.showMusicButton();
+    document.body.append(this.musicButton, this.settingsButton, this.settingsLayer);
     this.keyboard.onMute = () => this.toggleMute();
     window.addEventListener('pointerdown', () => this.sfx.unlock());
     document.addEventListener('visibilitychange', () => {
@@ -164,7 +185,7 @@ class Game {
     this.painter.onChange = (skin, done) => this.onSkinChange(skin, done);
     window.setInterval(() => void this.pollOnline(), ONLINE_POLL_MS);
 
-    this.sfx.setVolumes(this.settings.volume);
+    this.sfx.setVolumes(audibleVolume(this.settings));
     this.sfx.setMuted(this.settings.muted);
     this.setScreen(introScreen(() => this.afterIntro()));
     requestAnimationFrame((t) => this.frame(t));
@@ -189,14 +210,20 @@ class Game {
       return;
     }
     this.setScreen(
-      nameScreen((name) => {
-        this.sfx.click();
+      nameScreen(async (name, code) => {
         this.settings.pilotName = name;
         writeSettings(this.storage, this.settings);
         this.save.name = name;
         writeSave(this.storage, this.save);
+        const problem = code ? await this.joinWithName(name, code) : null;
+        if (problem) {
+          this.sfx.deny();
+          return problem;
+        }
+        this.sfx.click();
         this.showMenu();
-      }),
+        return null;
+      }, this.api !== null),
     );
     this.ui.querySelector<HTMLInputElement>('[data-pilot-name]')?.focus();
   }
@@ -254,7 +281,9 @@ class Game {
           },
           onVolume: (kind, value) => {
             this.settings.volume[kind] = value;
-            this.sfx.setVolumes(this.settings.volume);
+            // Moving the music slider means wanting to hear it.
+            if (kind === 'music') this.settings.musicMuted = false;
+            this.applyMusicSetting();
           },
           onVolumeSet: (kind) => {
             save();
@@ -313,6 +342,20 @@ class Game {
     this.settingsOpen?.();
   }
 
+  private applyMusicSetting(): void {
+    this.sfx.setVolumes(audibleVolume(this.settings));
+    this.showMusicButton();
+  }
+
+  private showMusicButton(): void {
+    const off = musicOff(this.settings);
+    const label = off ? 'Turn music on' : 'Turn music off';
+    this.musicButton.innerHTML = off ? MUSIC_OFF_ICON : MUSIC_ICON;
+    this.musicButton.classList.toggle('music-off', off);
+    this.musicButton.title = label;
+    this.musicButton.setAttribute('aria-label', label);
+  }
+
   private beginTutorial(): void {
     // Training always shows the controls. Elsewhere they're for a player's first match.
     this.tutorial = this.settings.tutorialDone && !this.training ? null : new Tutorial(this.settings.bindings);
@@ -348,6 +391,7 @@ class Game {
   private showMenu(): void {
     this.mode = 'menu';
     this.settingsButton.hidden = false;
+    this.musicButton.hidden = false;
     this.startDemo();
     this.showMenuScreen();
   }
@@ -505,10 +549,9 @@ class Game {
     this.previewRobot();
     const panel = this.ui.querySelector('.ws-panel');
     const scroll = panel ? panel.scrollTop : 0;
-    const shelfScroll = this.ui.querySelector('.shelf-items')?.scrollLeft ?? 0;
-    const buy = (ok: boolean) => {
+    const buy = (ok: boolean, sound: () => void) => {
       if (ok) {
-        this.sfx.click();
+        sound();
         writeSave(this.storage, this.save);
         this.refreshGarage();
       } else {
@@ -516,20 +559,21 @@ class Game {
       }
     };
     /** With an account the server decides, and the browser only shows the outcome. */
-    const change = (action: GarageAction, local: () => boolean) => {
+    const change = (action: GarageAction, local: () => boolean, sound = () => this.sfx.click()) => {
       if (!this.api || !this.profile) {
-        buy(local());
+        buy(local(), sound);
         return;
       }
       this.api
         .garage(action)
         .then((profile) => {
           this.setProfile(profile);
-          this.sfx.click();
+          sound();
           this.refreshGarage();
         })
         .catch(() => this.sfx.deny());
     };
+    const sold = () => this.sfx.chaChing();
     const notice = this.notice || this.softwareWarning;
     this.notice = '';
     this.setScreen(
@@ -538,7 +582,13 @@ class Game {
         {
           onEquip: (slot: Slot, id: string) => {
             this.partPreview = null;
-            change({ type: 'equip', slot, id }, () => buyOrEquip(this.save, slot, id));
+            // A part that doesn't fit yet still gets bought, but nothing gets bolted on.
+            const buying = !(this.save.owned[slot] as string[]).includes(id);
+            const fits = partFits(this.save, slot, id);
+            change({ type: 'equip', slot, id }, () => buyOrEquip(this.save, slot, id), () => {
+              if (buying) this.sfx.chaChing();
+              if (fits) this.sfx.drill(buying ? DRILL_AFTER_SALE : 0);
+            });
           },
           onPreviewPart: (part) => {
             this.partPreview = part;
@@ -547,13 +597,8 @@ class Game {
             this.sfx.click();
             this.refreshGarage();
           },
-          onSell: (slot, id) => change({ type: 'sell', slot, id }, () => sellPart(this.save, slot, id)),
+          onSell: (slot, id) => change({ type: 'sell', slot, id }, () => sellPart(this.save, slot, id), sold),
           onArmour: (armour) => change({ type: 'armour', armour }, () => setArmour(this.save, armour)),
-          onShelf: (shelf) => {
-            this.shelf = shelf;
-            this.sfx.click();
-            this.refreshGarage();
-          },
           onSide: (side) => {
             this.sideTab = side;
             this.sfx.click();
@@ -562,6 +607,7 @@ class Game {
           },
           onBuyCategory: (category) => {
             this.buyCategory = category;
+            this.partPreview = null;
             this.sfx.click();
             this.refreshGarage();
             this.ui.querySelector('.ws-panel')!.scrollTop = 0;
@@ -571,8 +617,8 @@ class Game {
             this.sfx.click();
             this.showMenu();
           },
-          onPowerup: (id) => change({ type: 'powerup', id }, () => buyPowerup(this.save, id)),
-          onUpgrade: (id) => change({ type: 'upgrade', id }, () => buyUpgrade(this.save, id)),
+          onPowerup: (id) => change({ type: 'powerup', id }, () => buyPowerup(this.save, id), sold),
+          onUpgrade: (id) => change({ type: 'upgrade', id }, () => buyUpgrade(this.save, id), sold),
           onFight: () => this.startMatch(),
           onOnline: (queue) => this.startOnline(queue),
           onTraining: () => this.startTraining(),
@@ -603,6 +649,7 @@ class Game {
               return true;
             }),
           onCheat: (code) => this.useCheat(code),
+          onMemberCode: (code) => this.joinMembers(code),
           onName: (name) =>
             {
               this.settings.pilotName = sanitizeName(name);
@@ -636,7 +683,6 @@ class Game {
           tab: this.garageTab,
           side: this.sideTab,
           buyCategory: this.buyCategory,
-          shelf: this.shelf,
           partPreview: this.partPreview,
           online: this.online,
           career: this.career,
@@ -652,8 +698,6 @@ class Game {
     );
     const next = this.ui.querySelector('.ws-panel');
     if (next) next.scrollTop = scroll;
-    const shelfItems = this.ui.querySelector('.shelf-items');
-    if (shelfItems) shelfItems.scrollLeft = shelfScroll;
     this.mountPainter();
     this.mountGoogleButton();
   }
@@ -685,6 +729,38 @@ class Game {
         done(message);
       })
       .catch(() => done(null));
+  }
+
+  /** The account doesn't exist yet on a first visit, so this makes it. Returns what went wrong, if anything. */
+  private async joinWithName(name: string, code: string): Promise<string | null> {
+    await this.connectAccount();
+    if (!this.api || !this.profile) return memberCodeProblem(null);
+    try {
+      // They may have changed the name since a wrong code made the account.
+      this.setProfile(await this.api.garage({ type: 'name', name }));
+      this.setProfile(await this.api.joinMembers(code));
+      return null;
+    } catch (error) {
+      return memberCodeProblem(error);
+    }
+  }
+
+  private joinMembers(code: string): void {
+    this.api
+      ?.joinMembers(code)
+      .then(async (profile) => {
+        this.setProfile(profile);
+        // Before the message, as this redraws the page and a redraw clears it.
+        await this.loadProfileTab();
+        this.sfx.click();
+        this.notice = "You're a member now, and you'll appear on the Highscore and Players lists.";
+        this.refreshGarage();
+      })
+      .catch((error) => {
+        this.sfx.deny();
+        this.notice = memberCodeProblem(error);
+        this.refreshGarage();
+      });
   }
 
   private mountGoogleButton(): void {

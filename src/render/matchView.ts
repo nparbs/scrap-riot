@@ -8,6 +8,8 @@ import { buildRobot, disposeRobot, type RobotModel } from './robots';
 
 const CAM_DISTANCE = 9;
 const CAM_HEIGHT = 4.6;
+/** How far the chase camera stays from a wall, so it never ends up behind one. */
+const CAM_WALL_GAP = 0.6;
 /** Matches the height of the HUD dock, so the action is centered in what's left of the screen. */
 const DOCK_HEIGHT = 136;
 const MAX_WRECKS = 12;
@@ -217,8 +219,17 @@ export class MatchView {
     if (!this.reflections) this.dullMetal(this.arena.scene);
     const bot = match.bots[followId];
     this.camHeading = bot.heading;
-    this.camPos.set(bot.x - Math.sin(bot.heading) * CAM_DISTANCE, CAM_HEIGHT, bot.z - Math.cos(bot.heading) * CAM_DISTANCE);
+    this.camPos.copy(this.keepInsideWalls(new THREE.Vector3(bot.x - Math.sin(bot.heading) * CAM_DISTANCE, CAM_HEIGHT, bot.z - Math.cos(bot.heading) * CAM_DISTANCE)));
     this.camLook.set(bot.x, 1, bot.z);
+  }
+
+  private keepInsideWalls(position: THREE.Vector3): THREE.Vector3 {
+    const { walled, half } = this.arena.def;
+    if (!walled) return position;
+    const limit = half - CAM_WALL_GAP;
+    position.x = THREE.MathUtils.clamp(position.x, -limit, limit);
+    position.z = THREE.MathUtils.clamp(position.z, -limit, limit);
+    return position;
   }
 
   private addBot(bot: Bot): void {
@@ -376,6 +387,7 @@ export class MatchView {
 
     match.bots.forEach((bot) => this.syncBot(bot, frameDt, alpha));
     this.syncHazards(match, frameDt);
+    this.arena.animate(this.spin);
     this.syncProjectiles(match);
     this.syncMines(match);
     this.syncOil(match);
@@ -961,7 +973,7 @@ export class MatchView {
 
     const fx = Math.sin(this.camHeading);
     const fz = Math.cos(this.camHeading);
-    const target = new THREE.Vector3(x - fx * CAM_DISTANCE, CAM_HEIGHT, z - fz * CAM_DISTANCE);
+    const target = this.keepInsideWalls(new THREE.Vector3(x - fx * CAM_DISTANCE, CAM_HEIGHT, z - fz * CAM_DISTANCE));
     this.camPos.lerp(target, Math.min(1, dt * 9));
     this.camLook.lerp(new THREE.Vector3(x + fx * 5, 1.6, z + fz * 5), Math.min(1, dt * 12));
 

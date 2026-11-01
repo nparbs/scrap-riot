@@ -7,6 +7,7 @@ import { ARENA_ORDER, ARENAS, type ArenaId } from '../sim/arena';
 import {
   ARMOUR,
   buildStats,
+  DEFENSES,
   MELEE,
   REWARD,
   TURRETS,
@@ -90,8 +91,11 @@ export function introScreen(onDone: () => void): HTMLElement {
   return el;
 }
 
-/** Asked once, before anything else, until sign-in can take care of it. */
-export function nameScreen(onSubmit: (name: string) => void): HTMLElement {
+/**
+ * Asked once, before anything else, until sign-in can take care of it. `onSubmit` resolves to what
+ * went wrong with the member code, if anything. The code isn't asked for without a game server.
+ */
+export function nameScreen(onSubmit: (name: string, code: string) => Promise<string | null>, askCode: boolean): HTMLElement {
   const el = document.createElement('div');
   el.className = 'screen screen-lobby';
   el.innerHTML = `
@@ -100,10 +104,14 @@ export function nameScreen(onSubmit: (name: string) => void): HTMLElement {
       <h2>Who's driving?</h2>
       <p class="tagline">Pick a name, pilot. Other players will see it, so don't use your real name.</p>
       <input data-pilot-name maxlength="${NAME_MAX}" autocomplete="off" spellcheck="false" placeholder="Your pilot name" aria-label="Pilot name" />
+      ${askCode ? `<p class="tagline name-code-hint">Got a member code? Enter it to appear on the Highscore and Players lists. No code? Leave it blank.</p>
+      <input data-pilot-code maxlength="64" autocomplete="off" spellcheck="false" placeholder="Member code (optional)" aria-label="Member code" />` : ''}
       <p class="name-error" role="alert"></p>
       <button class="btn btn-primary" type="submit">Let's go</button>
     </form>`;
   const input = el.querySelector<HTMLInputElement>('[data-pilot-name]')!;
+  const code = el.querySelector<HTMLInputElement>('[data-pilot-code]');
+  const button = el.querySelector<HTMLButtonElement>('button[type="submit"]')!;
   const error = el.querySelector<HTMLElement>('.name-error')!;
   el.querySelector('form')!.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -113,7 +121,14 @@ export function nameScreen(onSubmit: (name: string) => void): HTMLElement {
       input.focus();
       return;
     }
-    onSubmit(name);
+    error.textContent = '';
+    button.disabled = true;
+    void onSubmit(name, code?.value.trim() ?? '').then((problem) => {
+      if (!problem) return;
+      button.disabled = false;
+      error.textContent = problem;
+      code?.focus();
+    });
   });
   return el;
 }
@@ -181,7 +196,6 @@ export interface GarageActions {
   onPreviewPart: (part: PartPreview | null) => void;
   onSell: (slot: Slot, id: string) => void;
   onArmour: (armour: number) => void;
-  onShelf: (slot: Slot | null) => void;
   onPowerup: (id: PowerupId) => void;
   onUpgrade: (id: UpgradeId) => void;
   onFight: () => void;
@@ -189,6 +203,7 @@ export interface GarageActions {
   onTraining: () => void;
   onName: (name: string) => void;
   onCheat: (code: string) => void;
+  onMemberCode: (code: string) => void;
   onSettings: () => void;
   onTab: (tab: GarageTab) => void;
   onSide: (side: SideTab) => void;
@@ -204,11 +219,11 @@ export interface GarageActions {
   onRear: (rear: boolean) => void;
 }
 
-export type GarageTab = 'workshop' | 'paintshop' | 'buy' | 'sell' | 'bots' | 'stats' | 'help';
+export type GarageTab = 'workshop' | 'paintshop' | 'sell' | 'bots' | 'stats' | 'help';
 export type SideTab = 'stats' | 'highscore' | 'players';
 export type BuyCategory = Slot | 'powerups' | 'upgrades';
 
-const TOP_TABS: [GarageTab, string][] = [['workshop', 'Workshop'], ['paintshop', 'Paintshop'], ['buy', 'Buy Parts'], ['sell', 'Sell Parts']];
+const TOP_TABS: [GarageTab, string][] = [['workshop', 'Workshop'], ['paintshop', 'Paintshop'], ['sell', 'Sell Parts']];
 const SIDE_TABS: [SideTab, string][] = [['stats', 'Specs'], ['highscore', 'Highscore'], ['players', 'Players']];
 const SLOT_LABELS: Record<Slot, string> = {
   chassis: 'Chassis', tower: 'Tower', wheels: 'Wheels', engine: 'Engine', power: 'Power source',
@@ -227,8 +242,6 @@ export interface GarageOptions {
   side: SideTab;
   buyCategory: BuyCategory;
   online: OnlineStatus | null;
-  /** Which part type the shelf is showing, or null for everything. */
-  shelf: Slot | null;
   /** A part being tried out. Nothing is bought or fitted until the player says so. */
   partPreview: PartPreview | null;
   career: CareerProgress;
@@ -283,7 +296,15 @@ function profilePanel(account: GarageOptions['account'], career: CareerProgress)
       return `<tr><td>${new Date(h.endedAt).toLocaleDateString()}</td><td>${escapeText(ARENAS[h.arena]?.name ?? h.arena)}</td><td>${escapeText(MODES[h.mode]?.name ?? h.mode)}</td><td>${ordinal(h.place)}</td><td>${h.kills}/${h.deaths}</td><td>$${h.payout}</td><td>${change}</td></tr>`;
     })
     .join('');
+  const membership = profile.member
+    ? '<p class="settings-hint">You\'re a member, so you appear on the Highscore and Players lists.</p>'
+    : `<p class="settings-hint">Only members appear on the Highscore and Players lists. You can still play everything without being one. Got a code? Enter it here.</p>
+      <form class="cheat-form" data-member>
+        <input data-member-code maxlength="64" autocomplete="off" spellcheck="false" aria-label="Member code" placeholder="Member code" />
+        <button class="plate-btn" type="submit">Join</button>
+      </form>`;
   return `
+    <section><h3>Membership</h3>${membership}</section>
     <section><h3>Account</h3>${signIn}</section>
     <section><h3>Record</h3>
       <div class="stat-row">
@@ -304,22 +325,6 @@ function profilePanel(account: GarageOptions['account'], career: CareerProgress)
       <p class="settings-hint">We store your chosen name, progress and match history. If you sign in with Google, we also store an ID from Google, but not your email or real name. Other players can see your name, paint, rating and stats.</p>
       <button class="mini-btn${confirmDelete ? ' mini-danger' : ''}" data-delete>${confirmDelete ? 'Click again to permanently delete' : 'Delete my account'}</button>
     </section>`;
-}
-
-/** Small line drawings of each part type, for the workshop shelf. */
-const PART_ICONS: Record<Slot, string> = {
-  chassis: '<path d="M6 30 L12 18 H36 L42 30 Z"/><circle cx="14" cy="33" r="5"/><circle cx="34" cy="33" r="5"/>',
-  tower: '<rect x="14" y="22" width="20" height="14"/><path d="M14 22 A10 10 0 0 1 34 22"/><path d="M24 14 V6"/>',
-  wheels: '<circle cx="24" cy="24" r="16"/><circle cx="24" cy="24" r="6"/><path d="M24 8 V18 M24 30 V40 M8 24 H18 M30 24 H40"/>',
-  engine: '<rect x="10" y="16" width="26" height="20"/><path d="M36 22 H42 V30 H36 M16 16 V10 H30 V16 M6 22 V30"/>',
-  power: '<rect x="14" y="12" width="20" height="28"/><rect x="20" y="7" width="8" height="5"/><path d="M26 17 L20 27 H28 L22 36"/>',
-  melee: '<path d="M8 40 L36 8 L40 12 L14 42 Z"/><path d="M6 32 L16 42"/>',
-  turret: '<rect x="8" y="20" width="24" height="12"/><path d="M32 23 H44 M32 29 H44"/><path d="M14 32 V40 H26 V32"/>',
-  defense: '<path d="M24 6 L40 12 V24 C40 34 32 40 24 43 C16 40 8 34 8 24 V12 Z"/>',
-};
-
-function partIcon(slot: Slot): string {
-  return `<svg class="part-icon" viewBox="0 0 48 48" aria-hidden="true">${PART_ICONS[slot]}</svg>`;
 }
 
 function partName(slot: Slot, id: string): string {
@@ -348,80 +353,101 @@ function bar(label: string, fraction: number, over = false): string {
   return `<div class="stat-bar${over ? ' stat-bar-over' : ''}"><label>${label}</label><div><i style="width:${Math.min(100, Math.round(fraction * 100))}%"></i></div></div>`;
 }
 
+function fittedPart(loadout: Save['loadout'], slot: Slot): string {
+  return (loadout as unknown as Record<Slot, string>)[slot] ?? installedParts(loadout)[slot as 'tower'];
+}
+
+/** Every part of one type. Clicking one only tries it on, and nothing is spent without pressing its button. */
+function partCards(save: Save, slot: Slot, preview: PartPreview | null): string {
+  const fitted = fittedPart(save.loadout, slot);
+  const owned = save.owned[slot] as string[];
+  return Object.entries(CATALOG[slot] as Record<string, { name: string; blurb: string; price: number }>)
+    .map(([id, item]) => {
+      const on = id === fitted;
+      const has = owned.includes(id);
+      const trying = preview?.slot === slot && preview.id === id;
+      const broke = !has && save.money < item.price;
+      const fits = partFits(save, slot, id);
+      const about = `<strong>${item.name}</strong><span>${item.blurb}</span><small>${partDetails(slot, id)}</small>`;
+      const action = has
+        ? `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${fits ? '' : 'disabled'}>${fits ? 'Fit' : 'No room'}</button>`
+        : `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${broke ? 'disabled' : ''}>Buy $${item.price}</button>`;
+      return on
+        ? `<div class="card part-card card-on"><div class="part-card-about">${about}</div><em>Fitted</em></div>`
+        : `<div class="card part-card${trying ? ' card-trying' : ''}${broke ? ' card-broke' : ''}"><button class="part-card-about" data-preview-slot="${trying ? '' : slot}" data-preview-id="${id}" aria-pressed="${trying}">${about}</button>${action}</div>`;
+    })
+    .join('');
+}
+
+function powerupCards(save: Save, keys: Bindings): string {
+  return POWERUP_ORDER.map((id, i) => {
+    const def = POWERUPS[id];
+    const n = save.loadout.powerups[id];
+    const full = n >= POWERUP_CAP;
+    const broke = !full && save.money < def.price;
+    return `<button class="card${broke ? ' card-broke' : ''}" data-power="${id}"><strong>[${keyLabel(keys[POWER_ACTIONS[i]])}] ${def.name}</strong><span>${def.blurb}</span><small>Carrying ${n}/${POWERUP_CAP}</small><em>${full ? 'Full' : `$${def.price}`}</em></button>`;
+  }).join('');
+}
+
+function upgradeCards(save: Save): string {
+  return UPGRADE_ORDER.map((id) => {
+    const def = UPGRADES[id];
+    const level = save.loadout.upgrades[id];
+    const cost = upgradeCost(save, id);
+    const broke = cost !== null && save.money < cost;
+    const pips = def.costs.map((_, i) => `<i class="${i < level ? 'pip pip-on' : 'pip'}"></i>`).join('');
+    return `<button class="card${broke ? ' card-broke' : ''}" data-upgrade="${id}"><strong>${def.name}</strong><span>${def.blurb}</span><div class="pips">${pips}</div><em>${cost === null ? 'Maxed' : `$${cost}`}</em></button>`;
+  }).join('');
+}
+
 function workshopPanel(save: Save, options: GarageOptions): string {
   const { loadout } = save;
   const preview = options.partPreview;
-  // Everything on this sheet describes the robot with the part being tried, so it can be compared.
+  const category = options.buyCategory;
+  // The numbers and names describe the robot with the part being tried, so it can be compared.
   const shown = previewLoadout(loadout, preview);
   const parts = installedParts(shown);
   const stats = buildStats(shown);
   const used = spaceUsed(shown);
   const capacity = spaceCapacity(shown);
-  const trying = (slot: Slot) => (preview?.slot === slot ? ' part-trying' : '');
 
-  const row = (slot: Slot, id: string, extra = '') =>
-    `<h4>${SLOT_LABELS[slot]}</h4><div class="part-row${trying(slot)}"><span class="part-name">${partName(slot, id)}</span>${extra}<button class="plate-btn" data-shelf="${slot}">Change</button></div>`;
   const armourFits = spaceUsed({ ...loadout, armour: parts.armour + ARMOUR.step }) <= spaceCapacity(loadout);
   const armour = `<span class="part-armour">Armour:
     <button class="step-btn" data-armour="${parts.armour - ARMOUR.step}" ${parts.armour <= ARMOUR.min ? 'disabled' : ''} aria-label="Less armour">◀</button>
     <b>${parts.armour}</b>
     <button class="step-btn" data-armour="${parts.armour + ARMOUR.step}" ${parts.armour >= ARMOUR.max || !armourFits ? 'disabled' : ''} aria-label="More armour">▶</button></span>`;
-  const weapon = (slot: 'melee' | 'turret' | 'defense', placement: string) =>
-    `<div class="part-row part-weapon${trying(slot)}"><span class="part-name">${partName(slot, shown[slot])}</span>
-      <span class="part-key">Key: <kbd>${keyLabel(options.keys[slot])}</kbd></span>
-      <span class="part-place">Placement: ${placement}</span>
-      <button class="plate-btn" data-shelf="${slot}">Change</button></div>`;
   const rear = loadout.rearMelee === true;
-  const placement = `<select data-placement aria-label="Main weapon placement"><option value="0"${rear ? '' : ' selected'}>Front</option><option value="1"${rear ? ' selected' : ''}>Back</option></select>`;
-
-  const filter = options.shelf;
-  // Every part is on the shelf, owned or not, because trying one out is free. Parts you own come first.
-  const shelfItems = (filter ? [filter] : SLOTS).flatMap((slot) => {
-    const owned = save.owned[slot] as string[];
-    const fitted = (loadout as unknown as Record<Slot, string>)[slot] ?? installedParts(loadout)[slot as 'tower'];
-    const catalog = CATALOG[slot] as Record<string, { blurb: string; price: number }>;
-    return Object.keys(catalog)
-      .filter((id) => id !== fitted)
-      .sort((a, b) => Number(owned.includes(b)) - Number(owned.includes(a)))
-      .map((id) => {
-        const has = owned.includes(id);
-        const fits = partFits(save, slot, id);
-        const { price, blurb } = catalog[id];
-        const on = preview?.slot === slot && preview.id === id;
-        const action = has
-          ? `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${fits ? '' : 'disabled'}>${fits ? 'Use this part' : 'No room'}</button>`
-          : `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${save.money >= price ? '' : 'disabled'}>Buy $${price}</button>`;
-        return `<div class="shelf-item${has ? '' : ' shelf-unowned'}${on ? ' shelf-on' : ''}" title="${SLOT_LABELS[slot]}: ${partName(slot, id)}. ${escapeText(blurb)}">
-          ${partIcon(slot)}<small>${partName(slot, id)}</small>
-          <button class="plate-btn" data-preview-slot="${on ? '' : slot}" data-preview-id="${id}">${on ? 'Stop preview' : 'Preview'}</button>
-          ${action}</div>`;
-      });
-  });
-  const previewNote = preview
-    ? `<div class="preview-note">Previewing <b>${partName(preview.slot, preview.id)}</b>. These numbers and the picture show it fitted, but nothing has changed yet. <button class="plate-btn" data-preview-slot="">Stop preview</button></div>`
+  const placement = {
+    melee: `<select data-placement aria-label="Main weapon placement"><option value="0"${rear ? '' : ' selected'}>Front</option><option value="1"${rear ? ' selected' : ''}>Back</option></select>`,
+    turret: '<b>Fixed forward</b>',
+    defense: DEFENSES[shown.defense].mounted ? `<span><b>${rear ? 'Front' : 'Back'}</b>, opposite main weapon</span>` : '<b>All around</b>',
+  };
+  const weaponRow = category === 'melee' || category === 'turret' || category === 'defense'
+    ? `<div class="part-row part-weapon"><span class="part-key">Key: <kbd>${keyLabel(options.keys[category])}</kbd></span>
+        <span class="part-place">Placement: ${placement[category]}</span></div>`
     : '';
+
+  const tabs = BUY_CATEGORIES.map(([id, label]) => {
+    const current = id === 'powerups' || id === 'upgrades' ? '' : `<small>${partName(id, fittedPart(shown, id))}</small>`;
+    return `<button class="mini-btn part-tab${category === id ? ' mini-on' : ''}${preview?.slot === id ? ' part-trying' : ''}" data-buy="${id}">${label}${current}</button>`;
+  }).join('');
+  const cards = category === 'powerups' ? powerupCards(save, options.keys) : category === 'upgrades' ? upgradeCards(save) : partCards(save, category, preview);
+  const hint = category === 'powerups' || category === 'upgrades'
+    ? ''
+    : `<div class="preview-note">${preview ? `Previewing <b>${partName(preview.slot, preview.id)}</b>. Nothing has changed yet.` : 'Click a part to try it on your robot. Nothing is bought until you press its button.'}</div>`;
   return `
-    <div class="shelf">
-      <div class="shelf-head">${filter ? `<button class="plate-btn" data-shelf="">Show all</button>` : ''}</div>
-      <div class="shelf-items">${shelfItems.join('')}</div>
-    </div>
     <div class="workshop-sheet">
-      ${previewNote}
       <div class="stat-bars">
         ${bar(`Used space (${used}/${capacity})`, used / capacity, used > capacity)}
         ${bar('Max speed', stats.speed / STAT_MAX.speed)}
         ${bar('Armour', stats.hp / STAT_MAX.hp)}
       </div>
-      ${row('chassis', shown.chassis, armour)}
-      ${row('tower', parts.tower)}
-      ${row('wheels', parts.wheels)}
-      ${row('engine', parts.engine)}
-      ${row('power', parts.power)}
-      <h4>Weapons</h4>
-      ${weapon('melee', placement)}
-      ${weapon('turret', '<b>Fixed forward</b>')}
-      ${weapon('defense', '<b>Built in</b>')}
-    </div>`;
+      <div class="part-row">${armour}</div>
+    </div>
+    <div class="part-tabs">${tabs}</div>
+    ${weaponRow}
+    ${hint}
+    <div class="cards">${cards}</div>`;
 }
 
 function statsPanel(save: Save, preview: PartPreview | null): string {
@@ -456,53 +482,15 @@ export function playersPanel(online: OnlineStatus | null): string {
       <div><b>${online.queued}</b><span>In queue</span></div>
       <div><b>${online.playing}</b><span>In a match</span></div>
     </div>
-    <h4 class="players-heading">Recently active</h4>
+    <h4 class="players-heading">Members recently active</h4>
     ${rows ? `<table class="side-table">${rows}</table>` : '<p class="settings-hint">Nobody yet. You could be first.</p>'}`;
 }
 
 function highscorePanel(account: GarageOptions['account']): string {
   if (!account) return '<p class="settings-hint">Connect to a game server to see the highscores.</p>';
   const rows = account.leaderboard.map((row, i) => `<tr><td>${i + 1}. ${escapeText(row.name)}</td><td>${row.rating}</td></tr>`).join('');
-  return rows ? `<table class="side-table">${rows}</table>` : '<p class="settings-hint">Nobody has played an online match yet.</p>';
-}
-
-/** A lit plate for each part in the chosen category, or the powerup and upgrade cards. */
-function buyPanel(save: Save, options: GarageOptions): string {
-  const category = options.buyCategory;
-  const tabs = BUY_CATEGORIES.map(([id, label]) => `<button class="mini-btn${category === id ? ' mini-on' : ''}" data-buy="${id}">${label}</button>`).join('');
-  let cards = '';
-  if (category === 'powerups') {
-    cards = POWERUP_ORDER.map((id, i) => {
-      const def = POWERUPS[id];
-      const n = save.loadout.powerups[id];
-      const full = n >= POWERUP_CAP;
-      const broke = !full && save.money < def.price;
-      return `<button class="card${broke ? ' card-broke' : ''}" data-power="${id}"><strong>[${keyLabel(options.keys[POWER_ACTIONS[i]])}] ${def.name}</strong><span>${def.blurb}</span><small>Carrying ${n}/${POWERUP_CAP}</small><em>${full ? 'Full' : `$${def.price}`}</em></button>`;
-    }).join('');
-  } else if (category === 'upgrades') {
-    cards = UPGRADE_ORDER.map((id) => {
-      const def = UPGRADES[id];
-      const level = save.loadout.upgrades[id];
-      const cost = upgradeCost(save, id);
-      const broke = cost !== null && save.money < cost;
-      const pips = def.costs.map((_, i) => `<i class="${i < level ? 'pip pip-on' : 'pip'}"></i>`).join('');
-      return `<button class="card${broke ? ' card-broke' : ''}" data-upgrade="${id}"><strong>${def.name}</strong><span>${def.blurb}</span><div class="pips">${pips}</div><em>${cost === null ? 'Maxed' : `$${cost}`}</em></button>`;
-    }).join('');
-  } else {
-    const slot = category;
-    const equipped = (save.loadout as unknown as Record<Slot, string>)[slot] ?? installedParts(save.loadout)[slot as 'tower'];
-    const owned = save.owned[slot] as string[];
-    cards = Object.entries(CATALOG[slot] as Record<string, { name: string; blurb: string; price: number }>)
-      .map(([id, item]) => {
-        const has = owned.includes(id);
-        const on = equipped === id;
-        const label = on ? 'Fitted' : has ? 'Fit' : `$${item.price}`;
-        const broke = !has && save.money < item.price;
-        return `<button class="card${on ? ' card-on' : ''}${broke ? ' card-broke' : ''}" data-slot="${slot}" data-id="${id}"><strong>${item.name}</strong><span>${item.blurb}</span><small>${partDetails(slot, id)}</small><em>${label}</em></button>`;
-      })
-      .join('');
-  }
-  return `<div class="choices buy-tabs">${tabs}</div><div class="cards">${cards}</div>`;
+  const table = rows ? `<table class="side-table">${rows}</table>` : '<p class="settings-hint">No members have played an online match yet.</p>';
+  return account.profile.member ? table : `${table}<p class="settings-hint">Only members are listed. Enter a member code on the Stats page to join.</p>`;
 }
 
 function sellPanel(save: Save): string {
@@ -575,6 +563,7 @@ function helpPanel(keys: Bindings): string {
     <section><h3>The basics</h3>${list([
       'Build a robot in the Workshop. Every part takes up room, so a bigger chassis fits more.',
       'Robots only turn while rolling, so a stopped robot has to drive forward or back to change direction.',
+      'Your defense goes on the opposite side from your main weapon, so moving the weapon to the back moves the defense to the front.',
       'Your main weapon does the real damage. Spinners have to reach speed before they bite, so hold the key on the way in.',
       'Guns only fire straight ahead and have few shots per life. Your battery runs your gun and your speed boost.',
       'Strong weapons have a cooldown, shown in red on the panel at the bottom.',
@@ -600,8 +589,6 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     switch (options.tab) {
       case 'paintshop':
         return paintPanel(save);
-      case 'buy':
-        return buyPanel(save, options);
       case 'sell':
         return sellPanel(save);
       case 'bots':
@@ -660,6 +647,10 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     e.preventDefault();
     actions.onCheat(el.querySelector<HTMLInputElement>('[data-cheat-code]')!.value);
   });
+  el.querySelector<HTMLFormElement>('[data-member]')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    actions.onMemberCode(el.querySelector<HTMLInputElement>('[data-member-code]')!.value);
+  });
   el.querySelector<HTMLSelectElement>('[data-placement]')?.addEventListener('change', (e) => {
     actions.onRear((e.target as HTMLSelectElement).value === '1');
   });
@@ -667,12 +658,11 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
   el.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest<HTMLElement>('button');
     if (!target) return;
-    const { slot, id, power, upgrade, tab, side: sideTab, buy, shelf, armour, zoom, sellSlot, sellId, paint: part, paintUse, value, arena, mode, fightId, previewSlot, previewId } = target.dataset;
+    const { slot, id, power, upgrade, tab, side: sideTab, buy, armour, zoom, sellSlot, sellId, paint: part, paintUse, value, arena, mode, fightId, previewSlot, previewId } = target.dataset;
     if (previewSlot !== undefined) actions.onPreviewPart(previewSlot && previewId ? { slot: previewSlot as Slot, id: previewId } : null);
     else if (tab) actions.onTab(tab as GarageTab);
     else if (sideTab) actions.onSide(sideTab as SideTab);
     else if (buy) actions.onBuyCategory(buy as BuyCategory);
-    else if (shelf !== undefined) actions.onShelf((shelf || null) as Slot | null);
     else if (armour) actions.onArmour(Number(armour));
     else if (zoom) actions.onZoom(Number(zoom));
     else if (sellSlot && sellId) actions.onSell(sellSlot as Slot, sellId);
@@ -770,7 +760,7 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
       <h3>Audio</h3>
       ${VOLUME_KINDS.map((kind) => `<label class="settings-row volume-row"><span>${VOLUME_LABELS[kind]}</span>
         <input type="range" min="0" max="100" step="5" value="${settings.volume[kind]}" data-volume="${kind}" aria-label="${VOLUME_LABELS[kind]}" />
-        <b data-volume-value="${kind}">${settings.volume[kind]}%</b></label>`).join('')}
+        <b data-volume-value="${kind}">${kind === 'music' && settings.musicMuted ? 'Off' : `${settings.volume[kind]}%`}</b></label>`).join('')}
       <div class="settings-row"><span>Mute everything (M)</span>
         <button class="mini-btn${settings.muted ? ' mini-on' : ''}" data-mute>${settings.muted ? 'Muted' : 'Off'}</button></div>
       <h3>Keyboard</h3>

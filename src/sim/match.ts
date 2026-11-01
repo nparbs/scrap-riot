@@ -707,6 +707,11 @@ export class Match {
     return bot.loadout.rearMelee ? wrapAngle(bot.heading + Math.PI) : bot.heading;
   }
 
+  /** Defenses always go on the side the main weapon isn't. */
+  private defenseAngle(bot: Bot): number {
+    return wrapAngle(this.meleeAngle(bot) + Math.PI);
+  }
+
   private updateMelee(bot: Bot, dt: number): void {
     const facing = this.meleeAngle(bot);
     const id = bot.loadout.melee;
@@ -1037,10 +1042,11 @@ export class Match {
     // Only these two care about a fresh press. The rest fire whenever they're ready.
     if ((id === 'remote' || id === 'kamikaze') && !pressed) return;
 
-    const backX = bot.x - Math.sin(bot.heading) * (bot.radius + 1);
-    const backZ = bot.z - Math.cos(bot.heading) * (bot.radius + 1);
+    const dropAngle = this.defenseAngle(bot);
+    const dropX = bot.x + Math.sin(dropAngle) * (bot.radius + 1);
+    const dropZ = bot.z + Math.cos(dropAngle) * (bot.radius + 1);
     const pushPatch = (kind: PatchKind) =>
-      this.oil.push({ id: this.nextId++, owner: bot.id, kind, x: backX, z: backZ, r: def.radius, life: def.duration, damage: def.damage });
+      this.oil.push({ id: this.nextId++, owner: bot.id, kind, x: dropX, z: dropZ, r: def.radius, life: def.duration, damage: def.damage });
 
     switch (id) {
       case 'shield':
@@ -1050,7 +1056,7 @@ export class Match {
         const own = this.mines.filter((m) => m.owner === bot.id);
         if (own.length >= 3) this.mines.splice(this.mines.indexOf(own[0]), 1);
         this.mines.push({
-          id: this.nextId++, owner: bot.id, kind: 'mine', x: backX, z: backZ, armT: 0.6,
+          id: this.nextId++, owner: bot.id, kind: 'mine', x: dropX, z: dropZ, armT: 0.6,
           life: def.duration, damage: def.damage * this.damageOutput(bot), radius: def.radius,
         });
         break;
@@ -1101,7 +1107,7 @@ export class Match {
         break;
       case 'minibot':
         this.drones.push({
-          id: this.nextId++, owner: bot.id, x: backX, z: backZ, heading: bot.heading,
+          id: this.nextId++, owner: bot.id, x: dropX, z: dropZ, heading: dropAngle,
           life: def.duration, damage: def.damage * this.damageOutput(bot), radius: def.radius,
         });
         break;
@@ -1115,7 +1121,7 @@ export class Match {
           }
         } else if (charges.length === 0) {
           this.mines.push({
-            id: this.nextId++, owner: bot.id, kind: 'charge', x: backX, z: backZ, armT: 0.4,
+            id: this.nextId++, owner: bot.id, kind: 'charge', x: dropX, z: dropZ, armT: 0.4,
             life: def.duration, damage: def.damage * this.damageOutput(bot), radius: def.radius,
           });
         }
@@ -1168,7 +1174,7 @@ export class Match {
     if (target.megaT > 0) taken *= 1 - MEGA_ABSORB;
     else if (target.shieldT > 0) taken *= 1 - MATCH.shieldAbsorb;
     if (target.loadout.defense === 'steelram' && attacker && attacker !== target) {
-      const facing = Math.abs(relativeBearing(target.x, target.z, target.heading, attacker.x, attacker.z));
+      const facing = Math.abs(relativeBearing(target.x, target.z, this.defenseAngle(target), attacker.x, attacker.z));
       if (facing < 0.9) taken *= DEFENSES.steelram.damage;
     }
     const shielded = taken < amount;
@@ -1296,7 +1302,8 @@ export class Match {
     attacker.ramCd = MATCH.ramCooldown;
     const speed = Math.min(closing, MATCH.ramCapSpeed) - MATCH.ramMinSpeed;
     const spike = attacker.loadout.melee === 'ram' ? MATCH.spikeRamMult : 1;
-    const plate = attacker.loadout.defense === 'steelram' ? 1.3 : 1;
+    // Only a plate on the nose is leading the charge.
+    const plate = attacker.loadout.defense === 'steelram' && attacker.loadout.rearMelee ? 1.3 : 1;
     const amount = speed * MATCH.ramDamage * attacker.mass * spike * plate * this.damageOutput(attacker);
     this.damage(victim, amount, attacker.id);
   }
@@ -1566,7 +1573,7 @@ export class Match {
 
       // A plow throws discs back the way they came.
       if (p.kind === 'disc' && bot.loadout.defense === 'plow') {
-        const angle = Math.abs(relativeBearing(bot.x, bot.z, bot.heading, p.x, p.z));
+        const angle = Math.abs(relativeBearing(bot.x, bot.z, this.defenseAngle(bot), p.x, p.z));
         if (angle < 1) {
           p.vx = -p.vx;
           p.vz = -p.vz;
@@ -1610,7 +1617,7 @@ export class Match {
   private plowHits(bot: Bot, x: number, z: number, radius: number): boolean {
     if (bot.loadout.defense !== 'plow' || !bot.alive) return false;
     if (Math.hypot(bot.x - x, bot.z - z) >= radius + bot.radius + 0.5) return false;
-    return Math.abs(relativeBearing(bot.x, bot.z, bot.heading, x, z)) < 1;
+    return Math.abs(relativeBearing(bot.x, bot.z, this.defenseAngle(bot), x, z)) < 1;
   }
 
   private updateMines(dt: number): void {

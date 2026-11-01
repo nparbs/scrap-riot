@@ -387,7 +387,7 @@ describe('arsenal', () => {
   });
 
   it('a plow clears mines and throws discs back', () => {
-    const match = fight('foundry', {}, { defense: 'plow' });
+    const match = fight('foundry', {}, { defense: 'plow', rearMelee: true });
     const [a, b] = faceOff(match, 6);
     a.x = b.x = -20;
     match.mines.push({ id: 99, owner: a.id, kind: 'mine', x: -20, z: 4, armT: 0, life: 20, damage: 50, radius: 3 });
@@ -396,15 +396,65 @@ describe('arsenal', () => {
     expect(b.hp).toBe(b.maxHp);
   });
 
-  it('steel ram halves damage from ahead, and not from behind', () => {
-    const match = fight('foundry', {}, { defense: 'steelram' });
-    const [a, b] = faceOff(match, 6);
-    match.damage(b, 20, a.id);
-    expect(b.maxHp - b.hp).toBeCloseTo(10);
-    b.hp = b.maxHp;
-    b.heading = 0;
-    match.damage(b, 20, a.id);
-    expect(b.maxHp - b.hp).toBeCloseTo(20);
+  it('a plow only works opposite the main weapon, which is behind by default', () => {
+    /** A mine next to a robot goes off, unless a plow gets to it first. */
+    const blownUp = (rearMelee: boolean, offset: number) => {
+      const match = fight('foundry', {}, { defense: 'plow', rearMelee });
+      const [a, b] = faceOff(match, 6);
+      a.x = b.x = -20;
+      // B faces A, down the z axis, so ahead of B is a lower z.
+      match.mines.push({ id: 99, owner: a.id, kind: 'mine', x: -20, z: b.z + offset, armT: 0, life: 20, damage: 50, radius: 3 });
+      match.step();
+      return b.hp < b.maxHp;
+    };
+    expect(blownUp(false, 2)).toBe(false);
+    expect(blownUp(false, -2)).toBe(true);
+    expect(blownUp(true, -2)).toBe(false);
+    expect(blownUp(true, 2)).toBe(true);
+  });
+
+  it('steel ram halves damage on the side opposite the main weapon', () => {
+    const taken = (rearMelee: boolean, heading: number) => {
+      const match = fight('foundry', {}, { defense: 'steelram', rearMelee });
+      const [a, b] = faceOff(match, 6);
+      // With this heading, A is straight ahead of B or straight behind it.
+      b.heading = heading;
+      match.damage(b, 20, a.id);
+      return b.maxHp - b.hp;
+    };
+    expect(taken(false, Math.PI)).toBeCloseTo(20);
+    expect(taken(false, 0)).toBeCloseTo(10);
+    expect(taken(true, Math.PI)).toBeCloseTo(10);
+    expect(taken(true, 0)).toBeCloseTo(20);
+  });
+
+  it('steel ram only adds to ramming when it is on the nose', () => {
+    const rammed = (rearMelee: boolean) => {
+      const match = fight('foundry', { defense: 'steelram', rearMelee });
+      const [a, b] = faceOff(match, 6);
+      a.x = b.x = -20;
+      b.z = a.radius + b.radius - 0.05;
+      a.vz = 20;
+      a.heading = 0;
+      match.step();
+      return b.maxHp - b.hp;
+    };
+    expect(rammed(false)).toBeGreaterThan(0);
+    expect(rammed(true)).toBeCloseTo(rammed(false) * 1.3, 1);
+  });
+
+  it.each(['mines', 'oil', 'glue', 'nails', 'minibot', 'remote'] as const)('%s comes out opposite the main weapon', (defense) => {
+    const dropped = (rearMelee: boolean) => {
+      const match = fight('foundry', { defense, rearMelee });
+      const [a] = faceOff(match, 30);
+      a.x = -20;
+      a.input.defense = true;
+      match.step();
+      const [item] = [...match.mines, ...match.oil, ...match.drones];
+      return item.z - a.z;
+    };
+    expect(dropped(false)).toBeLessThan(0);
+    expect(dropped(true)).toBeGreaterThan(0);
   });
 
   it('firing breaks your own cloak', () => {

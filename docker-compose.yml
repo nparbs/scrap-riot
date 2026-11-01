@@ -8,6 +8,7 @@ services:
       CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-}
       DATABASE_URL: postgres://scrapriot:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/scrapriot
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      MEMBER_CODE: ${MEMBER_CODE:-}
     depends_on:
       db:
         condition: service_healthy

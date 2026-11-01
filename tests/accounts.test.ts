@@ -11,6 +11,7 @@ import { OFFLINE_PAYOUT_MAX, PROTOCOL_VERSION, type OnlineStatus, type Profile, 
 import { MELEE, TURRETS } from '../src/sim/data';
 
 const CLIENT_ID = 'test-client.apps.googleusercontent.com';
+const MEMBER_CODE = 'Secret Handshake';
 let db: Db;
 let accounts: Accounts;
 let signingKey: CryptoKey;
@@ -23,7 +24,7 @@ beforeAll(async () => {
   signingKey = privateKey as CryptoKey;
   const jwk: JWK = { ...(await exportJWK(publicKey)), kid: 'test', alg: 'RS256', use: 'sig' };
   verify = googleVerifier(CLIENT_ID, createLocalJWKSet({ keys: [jwk] }));
-  accounts = new Accounts(db, verify);
+  accounts = new Accounts(db, verify, MEMBER_CODE);
   await accounts.migrate();
 }, 60_000);
 
@@ -300,6 +301,7 @@ describe('over the network', () => {
     const unnamed = await accounts.createGuest();
     const label = `Seen${Date.now()}`.slice(0, 16);
     await accounts.garage(named.token, { type: 'name', name: label });
+    await accounts.joinMembers(named.token, MEMBER_CODE);
     await accounts.profile(unnamed.token);
 
     const first = raw(s);
@@ -328,9 +330,55 @@ describe('over the network', () => {
     const old = await accounts.createGuest();
     const label = `Old${Date.now()}`.slice(0, 16);
     await accounts.garage(old.token, { type: 'name', name: label });
+    await accounts.joinMembers(old.token, MEMBER_CODE);
     const { accountId } = (await accounts.forMatch(old.token))!;
     await db.query("UPDATE players SET last_seen = now() - interval '8 days' WHERE id = $1", [accountId]);
     expect((await accounts.recentPlayers()).some((p) => p.name === label)).toBe(false);
+  });
+
+  it('lists only members, and joining brings their record with them', async () => {
+    const guest = await accounts.createGuest();
+    const label = `Member${Date.now()}`.slice(0, 16);
+    await accounts.garage(guest.token, { type: 'name', name: label });
+    const { accountId } = (await accounts.forMatch(guest.token))!;
+    await db.query('UPDATE players SET matches = 3, rating = 5000 WHERE id = $1', [accountId]);
+    const listed = async () => [(await accounts.leaderboard(100)).some((p) => p.name === label), (await accounts.recentPlayers()).some((p) => p.name === label)];
+
+    expect((await accounts.profile(guest.token))!.member).toBe(false);
+    expect(await listed()).toEqual([false, false]);
+
+    const joined = await accounts.joinMembers(guest.token, '  secret HANDSHAKE ');
+    expect(joined).toMatchObject({ ok: true, profile: { member: true, rating: 5000 } });
+    expect(await listed()).toEqual([true, true]);
+  });
+
+  it('refuses wrong codes, missing sessions, and everyone when no code is set', async () => {
+    const guest = await accounts.createGuest();
+    for (const code of ['wrong', '', undefined, 7, { code: MEMBER_CODE }]) {
+      expect(await accounts.joinMembers(guest.token, code), String(code)).toEqual({ ok: false, reason: 'rejected' });
+    }
+    expect(await accounts.joinMembers('nope', MEMBER_CODE)).toBeNull();
+    expect(await new Accounts(db, null, null).joinMembers(guest.token, '')).toEqual({ ok: false, reason: 'rejected' });
+    expect((await accounts.profile(guest.token))!.member).toBe(false);
+  });
+
+  it('joins through the API, limits guesses and never reveals the code', async () => {
+    const s = await server();
+    const guest = await (await api(s, '/api/guest', { method: 'POST' })).json();
+    const tryCode = (code: string, token?: string) => api(s, '/api/member', { method: 'POST', body: JSON.stringify({ code }) }, token);
+    expect(JSON.stringify(await (await api(s, '/api/config')).json())).not.toContain(MEMBER_CODE);
+    expect((await tryCode(MEMBER_CODE)).status).toBe(401);
+    const wrong = await tryCode('wrong', guest.token);
+    expect(wrong.status).toBe(403);
+    expect(JSON.stringify(await wrong.json())).not.toContain(MEMBER_CODE);
+    const right = await tryCode(MEMBER_CODE, guest.token);
+    expect(right.status).toBe(200);
+    expect((await right.json()).profile.member).toBe(true);
+    const statuses = [];
+    for (let i = 0; i < 8; i++) statuses.push((await tryCode('wrong', guest.token)).status);
+    expect(statuses.at(-1)).toBe(429);
+    // Even the right code is refused once the limit is hit.
+    expect((await tryCode(MEMBER_CODE, guest.token)).status).toBe(429);
   });
 
   it('runs the whole API flow', async () => {
@@ -440,6 +488,7 @@ describe('over the network', () => {
     await until(() => clients.every((c) => c.state.over));
     const standings = clients[0].c.match!.standings();
     for (const { c, token } of clients) {
+      await accounts.joinMembers(token, MEMBER_CODE);
       const profile = (await accounts.profile(token))!;
       const row = standings.find((st) => st.bot.id === c.player!.id)!;
       expect(profile.save.money).toBe(STARTING_MONEY + row.total);

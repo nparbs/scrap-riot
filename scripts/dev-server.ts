@@ -4,7 +4,7 @@ import { Accounts } from '../server/accounts';
 import { startGameServer } from '../server/gameServer';
 import { embeddedDb } from './embedded-db';
 
-const accounts = new Accounts(embeddedDb(), null);
+const accounts = new Accounts(embeddedDb(), null, process.env.MEMBER_CODE ?? 'member');
 await accounts.migrate();
 const server = await startGameServer({
   port: Number(process.env.PORT ?? 8787),

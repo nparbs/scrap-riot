@@ -272,6 +272,8 @@ export interface DefenseDef {
   radius: number;
   /** Works all the time, with no key needed. */
   passive?: boolean;
+  /** Works on one side of the robot, always the one opposite the main weapon. The rest work all around. */
+  mounted?: boolean;
 }
 
 const defense = (d: Partial<DefenseDef> & Pick<DefenseDef, 'name' | 'blurb' | 'price'>): DefenseDef => ({
@@ -280,12 +282,12 @@ const defense = (d: Partial<DefenseDef> & Pick<DefenseDef, 'name' | 'blurb' | 'p
 
 export const DEFENSES: Record<DefenseId, DefenseDef> = {
   shield: defense({ name: 'Force Field', blurb: 'Blocks 75% of damage for a moment.', price: 0, cooldown: 8, duration: 2.5 }),
-  mines: defense({ name: 'Land Mines', blurb: 'Drops a proximity mine. Three at a time.', price: 300, cooldown: 5, duration: 45, damage: 35, radius: 3.5 }),
-  oil: defense({ name: 'Oil Spreader', blurb: 'Leaves a slippery patch behind you.', price: 350, cooldown: 9, duration: 8, radius: 4.5 }),
-  glue: defense({ name: 'Glue Spreader', blurb: 'Leaves a sticky patch that slows robots to a crawl.', price: 350, cooldown: 8, duration: 8, radius: 4 }),
-  nails: defense({ name: 'Nail Spreader', blurb: 'Scatters nails that hurt anything rolling over them.', price: 300, cooldown: 8, duration: 9, damage: 12, radius: 3.8 }),
-  steelram: defense({ name: 'Steel Ram', blurb: 'A front plate. Halves damage from ahead, always on.', price: 550, damage: 0.5, passive: true }),
-  plow: defense({ name: 'Plow', blurb: 'Clears mines and nails, and throws discs back. Always on.', price: 250, passive: true }),
+  mines: defense({ name: 'Land Mines', blurb: 'Drops a proximity mine. Three at a time.', price: 300, cooldown: 5, duration: 45, damage: 35, radius: 3.5, mounted: true }),
+  oil: defense({ name: 'Oil Spreader', blurb: 'Leaves a slippery patch for whoever is chasing you.', price: 350, cooldown: 9, duration: 8, radius: 4.5, mounted: true }),
+  glue: defense({ name: 'Glue Spreader', blurb: 'Leaves a sticky patch that slows robots to a crawl.', price: 350, cooldown: 8, duration: 8, radius: 4, mounted: true }),
+  nails: defense({ name: 'Nail Spreader', blurb: 'Scatters nails that hurt anything rolling over them.', price: 300, cooldown: 8, duration: 9, damage: 12, radius: 3.8, mounted: true }),
+  steelram: defense({ name: 'Steel Ram', blurb: 'A heavy plate. Halves damage from the side it covers, always on.', price: 550, damage: 0.5, passive: true, mounted: true }),
+  plow: defense({ name: 'Plow', blurb: 'Clears mines and nails, and throws discs back. Always on.', price: 250, passive: true, mounted: true }),
   blades: defense({ name: 'Side Blades', blurb: 'Spin up blades that cut anything alongside you.', price: 500, cooldown: 8, duration: 3, damage: 24, radius: 1.6 }),
   cutter: defense({ name: 'Cutter', blurb: 'One sweeping cut all around you that throws robots back.', price: 500, cooldown: 6, damage: 28, radius: 5 }),
   teleport: defense({ name: 'Teleport', blurb: 'Jump a long way forward in an instant.', price: 800, cooldown: 8, radius: 14 }),
@@ -293,8 +295,8 @@ export const DEFENSES: Record<DefenseId, DefenseDef> = {
   regen: defense({ name: 'Armor Regenerator', blurb: 'Rebuilds armor over five seconds.', price: 700, cooldown: 12, duration: 5, damage: 11 }),
   cloak: defense({ name: 'Cloaking Device', blurb: 'Vanish for a few seconds. Firing breaks it.', price: 800, cooldown: 14, duration: 5 }),
   emp: defense({ name: 'EMP', blurb: 'Stuns every robot around you.', price: 900, cooldown: 14, duration: 1.5, radius: 9 }),
-  minibot: defense({ name: 'Mini-Robot', blurb: 'Releases a small robot that hunts and explodes.', price: 750, cooldown: 9, duration: 8, damage: 22, radius: 3.5 }),
-  remote: defense({ name: 'Remote Charges', blurb: 'Press to plant. Press again to set them all off.', price: 600, cooldown: 1, duration: 60, damage: 40, radius: 5 }),
+  minibot: defense({ name: 'Mini-Robot', blurb: 'Releases a small robot that hunts and explodes.', price: 750, cooldown: 9, duration: 8, damage: 22, radius: 3.5, mounted: true }),
+  remote: defense({ name: 'Remote Charges', blurb: 'Press to plant. Press again to set them all off.', price: 600, cooldown: 1, duration: 60, damage: 40, radius: 5, mounted: true }),
   kamikaze: defense({ name: 'Kamikaze Bomb', blurb: 'Destroys you and everything close by. Last resort.', price: 500, cooldown: 1, duration: 1.2, damage: 95, radius: 8 }),
 };
 

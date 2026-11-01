@@ -19,7 +19,7 @@ export class GarageView {
   private lookY = 0.8;
 
   constructor() {
-    this.scene.background = new THREE.Color(0x1a2326);
+    this.scene.background = new THREE.Color(0x1a1c1e);
     this.scene.add(new THREE.HemisphereLight(0xd0dcf0, 0x2a2622, 1.3));
     const lamp = new THREE.SpotLight(0xfff0d8, 220, 30, 0.6, 0.5);
     lamp.position.set(3, 11, 4);
@@ -31,11 +31,11 @@ export class GarageView {
     this.scene.add(rim);
 
     // A floor, so the robot stands on something instead of floating in the dark.
-    const floor = new THREE.Mesh(new THREE.CircleGeometry(40, 48), new THREE.MeshStandardMaterial({ color: 0x2a3538, metalness: 0.3, roughness: 0.75 }));
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(40, 48), new THREE.MeshStandardMaterial({ color: 0x2c2e31, metalness: 0.3, roughness: 0.75 }));
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     this.scene.add(floor);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(3.4, 3.48, 64), new THREE.MeshBasicMaterial({ color: 0x8c8c26 }));
+    const ring = new THREE.Mesh(new THREE.RingGeometry(3.4, 3.48, 64), new THREE.MeshBasicMaterial({ color: 0xbd4d1c }));
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.01;
     this.scene.add(ring);

@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS players (
   created_at timestamptz NOT NULL DEFAULT now(),
   last_seen timestamptz NOT NULL DEFAULT now()
 );
+-- Only members appear on the public lists. Everyone starts out as a non-member.
+ALTER TABLE players ADD COLUMN IF NOT EXISTS member boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS players_rating ON players (rating DESC) WHERE matches > 0;
 
 CREATE TABLE IF NOT EXISTS sessions (

@@ -85,6 +85,11 @@ export class Api {
     return (await this.request<{ profile: Profile }>('POST', '/api/garage', { action })).profile;
   }
 
+  /** Fails with a 403 for a wrong code and a 429 after too many tries. */
+  async joinMembers(code: string): Promise<Profile> {
+    return (await this.request<{ profile: Profile }>('POST', '/api/member', { code })).profile;
+  }
+
   async history(): Promise<HistoryEntry[]> {
     return (await this.request<{ history: HistoryEntry[] }>('GET', '/api/history')).history;
   }

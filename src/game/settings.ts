@@ -98,12 +98,34 @@ export interface Settings {
   /** Each from 0 to 100. */
   volume: { master: number; music: number; effects: number };
   muted: boolean;
+  /** Silences the music without losing the level its slider is set to. */
+  musicMuted: boolean;
   /** The name this player chose when first asked. Empty until then. */
   pilotName: string;
 }
 
 export function defaultSettings(): Settings {
-  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, tutorialDone: false, volume: { ...DEFAULT_VOLUME }, muted: false, pilotName: '' };
+  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, tutorialDone: false, volume: { ...DEFAULT_VOLUME }, muted: false, musicMuted: false, pilotName: '' };
+}
+
+/** A slider dragged all the way down counts as off too, so the music button always tells the truth. */
+export function musicOff(settings: Settings): boolean {
+  return settings.musicMuted || settings.volume.music === 0;
+}
+
+/** The levels to actually play at. */
+export function audibleVolume(settings: Settings): Settings['volume'] {
+  return settings.musicMuted ? { ...settings.volume, music: 0 } : settings.volume;
+}
+
+/** Turning music back on from a slider at zero needs a level to return to, or nothing would happen. */
+export function toggleMusic(settings: Settings): void {
+  if (!musicOff(settings)) {
+    settings.musicMuted = true;
+    return;
+  }
+  settings.musicMuted = false;
+  if (settings.volume.music === 0) settings.volume.music = DEFAULT_VOLUME.music;
 }
 
 export function activeLevel(settings: Settings): Level {
@@ -128,6 +150,7 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null): Settings
       if (typeof value === 'number' && Number.isFinite(value)) settings.volume[kind] = Math.max(0, Math.min(100, value));
     }
     settings.muted = saved.muted === true;
+    settings.musicMuted = saved.musicMuted === true;
     if (typeof saved.pilotName === 'string') settings.pilotName = saved.pilotName;
     settings.tutorialDone = saved.tutorialDone === true;
   } catch {

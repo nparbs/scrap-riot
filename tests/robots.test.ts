@@ -20,6 +20,34 @@ function hullBox(model: RobotModel): THREE.Box3 {
   return new THREE.Box3().setFromObject(hull!);
 }
 
+describe('defense gear', () => {
+  /** Where each piece sits along the robot, front to back. */
+  const pieces = (defense: DefenseId, rearMelee: boolean) => {
+    const centers: number[] = [];
+    const { root } = buildRobot({ ...build('brawler', 'wedge', defense), melee: 'hammer', rearMelee });
+    root.updateMatrixWorld(true);
+    root.traverse((node) => {
+      if (node instanceof THREE.Mesh) centers.push(new THREE.Box3().setFromObject(node).getCenter(new THREE.Vector3()).z);
+    });
+    return centers;
+  };
+  /** The pieces this defense adds, compared with one that has no model. */
+  const gear = (defense: DefenseId, rearMelee: boolean) => {
+    const plain = pieces('shield', rearMelee).map((z) => z.toFixed(4));
+    return pieces(defense, rearMelee).filter((z) => {
+      const match = plain.indexOf(z.toFixed(4));
+      if (match >= 0) plain.splice(match, 1);
+      return match < 0;
+    });
+  };
+
+  it.each(['steelram', 'plow'] as const)('the %s sits opposite the main weapon', (defense) => {
+    expect(gear(defense, false).length).toBeGreaterThan(0);
+    expect(gear(defense, false).every((z) => z < 0)).toBe(true);
+    expect(gear(defense, true).every((z) => z > 0)).toBe(true);
+  });
+});
+
 describe('body shapes', () => {
   it.each(CHASSIS_IDS)('all fill the same footprint on the %s', (chassis) => {
     const sizes = BODY_IDS.map((body) => hullBox(buildRobot(build(chassis, body))).getSize(new THREE.Vector3()));

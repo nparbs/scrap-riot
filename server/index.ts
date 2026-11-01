@@ -11,7 +11,9 @@ const origins = (process.env.ALLOWED_ORIGINS ?? '')
 const googleClientId = process.env.GOOGLE_CLIENT_ID || undefined;
 let accounts: Accounts | undefined;
 if (process.env.DATABASE_URL) {
-  accounts = new Accounts(connectPostgres(process.env.DATABASE_URL), googleClientId ? googleVerifier(googleClientId) : null);
+  const memberCode = process.env.MEMBER_CODE?.trim() || null;
+  if (!memberCode) console.warn('No MEMBER_CODE: nobody can become a member, so the Highscore and Players lists stay empty.');
+  accounts = new Accounts(connectPostgres(process.env.DATABASE_URL), googleClientId ? googleVerifier(googleClientId) : null, memberCode);
   await accounts.migrate();
 } else {
   console.warn('No DATABASE_URL: running without accounts, so online play is anonymous and nothing is saved.');

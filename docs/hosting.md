@@ -52,7 +52,17 @@ Without this, players can still play and keep progress as guests.
 
 The client ID is public, so it's safe in a config file. No client secret is needed. Google may ask for a privacy policy link on the consent screen, and `docs/privacy.md` is a starting point.
 
-## 4. Start it
+## 4. Set the member code
+
+Only members appear on the Highscore and Players lists, so strangers can play without filling them up. Set `MEMBER_CODE` in `.env` to letters and numbers of your choice, and give it only to people you want listed. Capitals and surrounding spaces don't matter when it's entered. Players enter it on the name screen on their first visit or on the Stats page later, and each address gets 10 tries an hour.
+
+Without a code, nobody can join and both lists stay empty. To change it, edit `.env` and run `docker compose up -d`. Changing it stops new joins with the old code, but people who already joined stay members. To remove someone:
+
+```sh
+docker compose exec db psql -U scrapriot scrapriot -c "UPDATE players SET member = false WHERE name = 'Their name'"
+```
+
+## 5. Start it
 
 ```sh
 docker compose up -d --build
@@ -68,7 +78,7 @@ curl https://game.example.com/health
 
 This returns something like `{"ok":true,"rooms":0,"connections":0}`. `curl https://game.example.com/api/config` should show your Google client ID, or `null` without one.
 
-## 5. Point the game at it
+## 6. Point the game at it
 
 In the GitHub repo, open Settings, then Secrets and variables, then Actions, then Variables, and add:
 

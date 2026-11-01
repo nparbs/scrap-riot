@@ -7,6 +7,8 @@ const MAX_BODY_BYTES = 32 * 1024;
 const WINDOW_MS = 60_000;
 const REQUESTS_PER_WINDOW = 120;
 const GUESTS_PER_HOUR = 20;
+// Few enough that the member code can't be guessed by trying.
+const MEMBER_TRIES_PER_HOUR = 10;
 
 class Limiter {
   private readonly hits = new Map<string, { count: number; resetAt: number }>();
@@ -69,6 +71,7 @@ export type ApiHandler = ((req: IncomingMessage, res: ServerResponse) => void) &
 export function createApi({ accounts, allowedOrigins, googleClientId, clientAddress, presence }: ApiOptions): ApiHandler {
   const general = new Limiter(REQUESTS_PER_WINDOW, WINDOW_MS);
   const guests = new Limiter(GUESTS_PER_HOUR, 60 * WINDOW_MS);
+  const memberTries = new Limiter(MEMBER_TRIES_PER_HOUR, 60 * WINDOW_MS);
 
   const handler = (req: IncomingMessage, res: ServerResponse) => {
     const send = (status: number, body: unknown) => {
@@ -119,6 +122,13 @@ export function createApi({ accounts, allowedOrigins, googleClientId, clientAddr
           if (!result) return send(401, { error: 'session' });
           return result.ok ? send(200, { profile: result.profile }) : send(400, { error: result.reason });
         }
+        case 'POST /api/member': {
+          if (!memberTries.allow(address, now)) return send(429, { error: 'slow-down' });
+          const body = (await readBody(req)) as { code?: unknown };
+          const result = await accounts.joinMembers(token, body?.code);
+          if (!result) return send(401, { error: 'session' });
+          return result.ok ? send(200, { profile: result.profile }) : send(403, { error: 'wrong-code' });
+        }
         case 'GET /api/history': {
           const history = await accounts.history(token);
           return history ? send(200, { history }) : send(401, { error: 'session' });
@@ -149,6 +159,7 @@ export function createApi({ accounts, allowedOrigins, googleClientId, clientAddr
       const now = Date.now();
       general.prune(now);
       guests.prune(now);
+      memberTries.prune(now);
     },
   });
 }

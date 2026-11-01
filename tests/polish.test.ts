@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PLAYLISTS } from '../src/music';
-import { activeLevel, AutoQuality, defaultSettings, DEFAULT_BINDINGS, keyLabel, loadSettings, rebind, writeSettings } from '../src/game/settings';
+import { activeLevel, audibleVolume, AutoQuality, defaultSettings, DEFAULT_BINDINGS, keyLabel, loadSettings, musicOff, rebind, toggleMusic, writeSettings } from '../src/game/settings';
 import { Tutorial, type TutorialInput } from '../src/game/tutorial';
 import { deadzone, PadReader, type PadLike } from '../src/gamepad';
 import { relativeBearing } from '../src/sim/match';
@@ -93,6 +93,31 @@ describe('pilot name and audio settings', () => {
     expect(back.pilotName).toBe('Rusty');
     expect(back.muted).toBe(true);
     expect(back.volume).toEqual({ master: 40, music: 0, effects: 55 });
+    expect(back.musicMuted).toBe(false);
+  });
+
+  it('the music toggle silences the music, and brings back the level it had', () => {
+    const settings = defaultSettings();
+    settings.volume.music = 35;
+    toggleMusic(settings);
+    expect(musicOff(settings)).toBe(true);
+    expect(audibleVolume(settings).music).toBe(0);
+    expect(settings.volume.music).toBe(35);
+    toggleMusic(settings);
+    expect(musicOff(settings)).toBe(false);
+    expect(audibleVolume(settings).music).toBe(35);
+  });
+
+  it('the music toggle turns on from a slider at zero, and is remembered', () => {
+    const settings = defaultSettings();
+    settings.volume.music = 0;
+    expect(musicOff(settings)).toBe(true);
+    toggleMusic(settings);
+    expect(audibleVolume(settings).music).toBeGreaterThan(0);
+    toggleMusic(settings);
+    const storage = memory();
+    writeSettings(storage, settings);
+    expect(loadSettings(storage).musicMuted).toBe(true);
   });
 
   it('keeps bad saved values from reaching the audio', () => {
