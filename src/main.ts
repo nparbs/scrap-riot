@@ -85,7 +85,7 @@ class Game {
   private notice = '';
   private softwareWarning = '';
   private garageTab: GarageTab = 'workshop';
-  private sideTab: SideTab = 'preview';
+  private sideTab: SideTab = 'stats';
   private buyCategory: BuyCategory = 'chassis';
   private shelf: Slot | null = null;
   private readonly painter = new Painter();
@@ -542,8 +542,8 @@ class Game {
           },
           onPreviewPart: (part) => {
             this.partPreview = part;
-            // The picture is what this is for, so make sure it's showing.
-            if (part && this.sideTab !== 'stats') this.sideTab = 'preview';
+            // The numbers are half of what this is for, so make sure they're showing.
+            if (part) this.sideTab = 'stats';
             this.sfx.click();
             this.refreshGarage();
           },

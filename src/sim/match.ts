@@ -11,6 +11,7 @@ import {
   pistonExtension,
   rayBlock,
   SAW_DPS,
+  TRAP_NAMES,
   SAW_KNOCK,
   SAW_RADIUS,
   sawPos,
@@ -46,6 +47,8 @@ import {
   RAGE_TIME,
   REPAIR_FRACTION,
   REWARD,
+  SPECTATE,
+  TRAP,
   SPINNER_KEPT_SPEED,
   SPINNER_MIN_SPEED,
   SPINNER_RECOIL,
@@ -154,6 +157,12 @@ export interface Bot {
   burstT: number;
   /** How long a held weapon has been running without a break. */
   heldT: number;
+  /** Where a knocked-out pilot's target marker is, and how long until each trap is ready. */
+  trapX: number;
+  trapZ: number;
+  strikeCd: number;
+  slickCd: number;
+  pullCd: number;
   /** Seconds left in the air after being thrown. Nothing can steer in the air. */
   airT: number;
   /** Seconds until a flipped robot is back on its wheels, counting the time in the air. It's stunned throughout. */
@@ -287,6 +296,16 @@ export interface BotSetup {
   boss?: { hpMult: number; size: number };
 }
 
+export interface Trap {
+  id: number;
+  owner: number;
+  kind: 'strike' | 'pull';
+  x: number;
+  z: number;
+  /** Seconds until a strike lands, or until a pull lets go. */
+  t: number;
+}
+
 export interface MatchOptions {
   seed: number;
   arena?: ArenaId;
@@ -336,6 +355,7 @@ export class Match {
   readonly projectiles: Projectile[] = [];
   readonly mines: Mine[] = [];
   readonly oil: OilPatch[] = [];
+  readonly traps: Trap[] = [];
   readonly drones: Drone[] = [];
   readonly pickups: Pickup[] = [];
   readonly duration: number;
@@ -398,7 +418,7 @@ export class Match {
       mass: chassis.mass * size,
       alive: true, out: false, forfeited: false, eliminatedAt: 0, respawnT: 0,
       meleeCd: 0, meleeWindup: 0, meleeSwing: 99, meleeActive: false, meleeCharge: 0, lungeT: 0, clawTarget: -1, clawT: 0,
-      ammo: 1, shots: TURRETS[setup.loadout.turret].shots, burstLeft: 0, burstT: 0, heldT: 0, airT: 0, flipT: 0, turretFiring: false, turretCd: 0, defenseCd: 0, defenseHeld: false,
+      ammo: 1, shots: TURRETS[setup.loadout.turret].shots, burstLeft: 0, burstT: 0, heldT: 0, trapX: 0, trapZ: 0, strikeCd: 0, slickCd: 0, pullCd: 0, airT: 0, flipT: 0, turretFiring: false, turretCd: 0, defenseCd: 0, defenseHeld: false,
       shieldT: 0, megaT: 0, boostT: 0, rageT: 0, stunT: 0,
       invulnT: MATCH.spawnInvuln,
       ramCd: 0, pistonCd: 0, flashT: 0, burnT: 0, burnSource: -1, slowT: 0, blindT: 0,
@@ -482,7 +502,10 @@ export class Match {
       bot.prevX = bot.x;
       bot.prevZ = bot.z;
       bot.prevHeading = bot.heading;
-      if (bot.out) continue;
+      if (bot.out) {
+        this.updateSpectator(bot, dt);
+        continue;
+      }
       if (!bot.alive) {
         bot.respawnT -= dt;
         if (bot.respawnT <= 0) this.respawn(bot);
@@ -504,6 +527,7 @@ export class Match {
     this.updateMines(dt);
     this.updatePatches(dt);
     this.updateDrones(dt);
+    this.updateTraps(dt);
     this.updatePickups(dt);
     this.updateHill(dt);
     this.checkEnd();
@@ -1176,6 +1200,8 @@ export class Match {
     if (this.oneLife) {
       bot.out = true;
       bot.eliminatedAt = this.time;
+      bot.trapX = bot.x;
+      bot.trapZ = bot.z;
     }
     const killer = bot.lastAttacker >= 0 && bot.lastAttacker !== bot.id ? this.bots[bot.lastAttacker] : undefined;
     if (killer) {
@@ -1342,6 +1368,59 @@ export class Match {
     if (into < 0) {
       bot.vx -= nx * into * 1.3;
       bot.vz -= nz * into * 1.3;
+    }
+  }
+
+  /** A human knocked out of a match still running is paid to stay, and gets to play with the map. */
+  private updateSpectator(bot: Bot, dt: number): void {
+    if (this.mode !== 'lms' || bot.isAI || bot.forfeited) return;
+    bot.earned += SPECTATE.payPerSecond * dt;
+    bot.strikeCd = Math.max(0, bot.strikeCd - dt);
+    bot.slickCd = Math.max(0, bot.slickCd - dt);
+    bot.pullCd = Math.max(0, bot.pullCd - dt);
+
+    const { input } = bot;
+    const limit = this.arena.half;
+    const clamp = (n: number) => Math.max(-limit, Math.min(limit, n));
+    // The camera looks along +z from above, so these match the screen.
+    bot.trapX = clamp(bot.trapX + Math.max(-1, Math.min(1, input.steer)) * SPECTATE.markerSpeed * dt);
+    bot.trapZ = clamp(bot.trapZ + Math.max(-1, Math.min(1, input.throttle)) * SPECTATE.markerSpeed * dt);
+
+    if (input.melee && bot.strikeCd <= 0) {
+      bot.strikeCd = TRAP.strike.cooldown;
+      this.traps.push({ id: this.nextId++, owner: bot.id, kind: 'strike', x: bot.trapX, z: bot.trapZ, t: TRAP.strike.warning });
+    }
+    if (input.turret && bot.slickCd <= 0) {
+      bot.slickCd = TRAP.slick.cooldown;
+      this.oil.push({ id: this.nextId++, owner: bot.id, kind: TRAP_NAMES[this.arena.id].patch, x: bot.trapX, z: bot.trapZ, r: TRAP.slick.radius, life: TRAP.slick.life, damage: 0 });
+    }
+    if (input.defense && bot.pullCd <= 0) {
+      bot.pullCd = TRAP.pull.cooldown;
+      this.traps.push({ id: this.nextId++, owner: bot.id, kind: 'pull', x: bot.trapX, z: bot.trapZ, t: TRAP.pull.life });
+    }
+  }
+
+  private updateTraps(dt: number): void {
+    for (let i = this.traps.length - 1; i >= 0; i--) {
+      const trap = this.traps[i];
+      trap.t -= dt;
+      for (const bot of this.bots) {
+        if (!bot.alive || bot.airT > 0) continue;
+        const dx = bot.x - trap.x;
+        const dz = bot.z - trap.z;
+        const dist = Math.hypot(dx, dz) || 1;
+        if (trap.kind === 'pull' && dist < TRAP.pull.radius) {
+          bot.vx -= (dx / dist) * (TRAP.pull.force / bot.mass) * dt;
+          bot.vz -= (dz / dist) * (TRAP.pull.force / bot.mass) * dt;
+        } else if (trap.kind === 'strike' && trap.t <= 0 && dist < TRAP.strike.radius + bot.radius) {
+          this.damage(bot, TRAP.strike.damage, trap.owner);
+          bot.vx += (dx / dist) * (TRAP.strike.knockback / bot.mass);
+          bot.vz += (dz / dist) * (TRAP.strike.knockback / bot.mass);
+        }
+      }
+      if (trap.t > 0) continue;
+      if (trap.kind === 'strike') this.events.push({ type: 'explosion', x: trap.x, z: trap.z, big: false });
+      this.traps.splice(i, 1);
     }
   }
 

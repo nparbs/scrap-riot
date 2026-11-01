@@ -205,11 +205,11 @@ export interface GarageActions {
 }
 
 export type GarageTab = 'workshop' | 'paintshop' | 'buy' | 'sell' | 'bots' | 'stats' | 'help';
-export type SideTab = 'preview' | 'stats' | 'highscore' | 'players';
+export type SideTab = 'stats' | 'highscore' | 'players';
 export type BuyCategory = Slot | 'powerups' | 'upgrades';
 
 const TOP_TABS: [GarageTab, string][] = [['workshop', 'Workshop'], ['paintshop', 'Paintshop'], ['buy', 'Buy Parts'], ['sell', 'Sell Parts']];
-const SIDE_TABS: [SideTab, string][] = [['preview', 'Preview'], ['stats', 'Specs'], ['highscore', 'Highscore'], ['players', 'Players']];
+const SIDE_TABS: [SideTab, string][] = [['stats', 'Specs'], ['highscore', 'Highscore'], ['players', 'Players']];
 const SLOT_LABELS: Record<Slot, string> = {
   chassis: 'Chassis', tower: 'Tower', wheels: 'Wheels', engine: 'Engine', power: 'Power source',
   melee: 'Main weapon', turret: 'Gun', defense: 'Defense',
@@ -427,17 +427,19 @@ function workshopPanel(save: Save, options: GarageOptions): string {
 function statsPanel(save: Save, preview: PartPreview | null): string {
   const shown = previewLoadout(save.loadout, preview);
   const stats = buildStats(shown);
-  const rows: [string, string][] = [
+  const used = spaceUsed(shown);
+  const room = spaceCapacity(shown);
+  const rows: [string, string, string?][] = [
     ['Armour', `${Math.round(stats.hp)} HP`],
     ['Top speed', stats.speed.toFixed(1)],
     ['Acceleration', stats.accel.toFixed(1)],
     ['Turning', stats.turn.toFixed(2)],
     ['Weight', `${stats.mass.toFixed(2)} t`],
-    ['Room for parts', String(spaceCapacity(shown))],
+    ['Used space', `${used} / ${room}`, used > room ? 'spec-over' : ''],
     ['Battery recharge', `${Math.round(stats.regen * 100)}%`],
-    ['Wins', `${save.wins} of ${save.matches}`],
+    ['Gun shots', TURRETS[shown.turret].shots > 0 ? String(TURRETS[shown.turret].shots) : 'Battery'],
   ];
-  return `<table class="side-table">${rows.map(([label, value]) => `<tr><td>${label}</td><td>${value}</td></tr>`).join('')}</table>`;
+  return `<dl class="spec-grid">${rows.map(([label, value, cls]) => `<div class="${cls ?? ''}"><dt>${label}</dt><dd>${value}</dd></div>`).join('')}</dl>`;
 }
 
 export function queueLabel(online: OnlineStatus | null, queue: OnlineQueue): string {
@@ -568,12 +570,26 @@ function pilotPanel(save: Save, options: GarageOptions): string {
 }
 
 function helpPanel(keys: Bindings): string {
-  return `<section><h3>How to play</h3>
-      <p class="settings-hint">Build a robot in the Workshop, then fight another pilot on the roof. A duel ends when one robot is wrecked or knocked over the edge. If time runs out, the most armour left wins. An Online Brawl puts up to eight robots on a random map, with bots in any seats no pilot takes, and wrecked robots come back: first to 12 kills wins, or the most when time runs out. Every match you finish pays at least $100, online or offline. Every part takes up room, so a bigger chassis fits more.</p>
-      <p class="settings-hint">Robots can only turn while rolling, so a stopped robot has to drive forward or back to change direction. Your main weapon does the real damage. Spinners have to reach speed before they bite, so hold the key on the way in. Strong weapons have a cooldown, shown in red on the panel at the bottom. Guns only fire straight ahead and have few shots per life. Your battery runs your gun and your speed boost, so spend it carefully.</p>
-      <p class="settings-hint">A flipper lands you upside down. You can't do anything until your robot rights itself, about three seconds later.</p></section>
-    <section><h3>Controls</h3>${controlsTable(keys)}</section>
-    <button class="btn" data-settings>Settings</button>`;
+  const list = (items: string[]) => `<ul class="help-list">${items.map((item) => `<li>${item}</li>`).join('')}</ul>`;
+  return `<div class="help-grid">
+    <section><h3>The basics</h3>${list([
+      'Build a robot in the Workshop. Every part takes up room, so a bigger chassis fits more.',
+      'Robots only turn while rolling, so a stopped robot has to drive forward or back to change direction.',
+      'Your main weapon does the real damage. Spinners have to reach speed before they bite, so hold the key on the way in.',
+      'Guns only fire straight ahead and have few shots per life. Your battery runs your gun and your speed boost.',
+      'Strong weapons have a cooldown, shown in red on the panel at the bottom.',
+      'A flipper lands you upside down, and you can\'t do anything until your robot rights itself about three seconds later.',
+    ])}</section>
+    <section><h3>Ways to play</h3>${list([
+      '<b>Online Duel:</b> one on one on the roof. Wreck them or knock them off. If time runs out, the most armour left wins.',
+      '<b>Online Brawl:</b> up to eight robots on a random map, with bots in any seats no pilot takes. Wrecked robots come back, and first to 12 kills wins.',
+      '<b>Offline vs Bots and Career:</b> pick a map and mode, or climb the ladder of fights.',
+      '<b>Knocked out of Last Robot Standing?</b> Stay and watch from above. You earn money every second, and you can steer a marker and set off the map\'s traps. Leaving means no payout.',
+      'Every match you finish pays at least $100, online or offline.',
+    ])}</section>
+    <section><h3>Controls</h3>${controlsTable(keys)}
+      <button class="btn" data-settings>Settings</button></section>
+  </div>`;
 }
 
 export function garageScreen(save: Save, actions: GarageActions, options: GarageOptions): HTMLElement {
@@ -599,32 +615,32 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     }
   };
   const side = () => {
-    if (options.side === 'stats') return `<div class="side-view">${statsPanel(save, options.partPreview)}</div>`;
     if (options.side === 'highscore') return `<div class="side-view">${highscorePanel(options.account)}</div>`;
     if (options.side === 'players') return `<div class="side-view" data-players>${playersPanel(options.online)}</div>`;
-    return '<div class="preview-window" data-preview></div>';
+    return `<div class="side-view">${statsPanel(save, options.partPreview)}</div>`;
   };
   const topTabs = TOP_TABS.map(([id, label]) => `<button class="top-tab${options.tab === id ? ' top-tab-on' : ''}" data-tab="${id}">${label}</button>`).join('');
   const sideTabs = SIDE_TABS.map(([id, label]) => `<button class="side-tab${options.side === id ? ' side-tab-on' : ''}" data-side="${id}">${label}</button>`).join('');
-  const navButton = (label: string, attr: string) => `<button class="nav-btn" ${attr}>${label}</button>`;
+  const navButton = (label: string, attr: string, extra = '') => `<button class="nav-btn${extra}" ${attr}>${label}</button>`;
   const onlineButton = (label: string, queue: OnlineQueue) =>
-    navButton(`${label}<small data-queue="${queue}">${queueLabel(options.online, queue)}</small>`, options.onlineAvailable ? `data-online="${queue}"` : 'disabled title="No game server is connected"');
+    navButton(`${label}<small data-queue="${queue}">${queueLabel(options.online, queue)}</small>`, options.onlineAvailable ? `data-online="${queue}"` : 'disabled title="No game server is connected"', ' nav-btn-play');
 
   el.innerHTML = `
     <div class="ws">
       <div class="ws-left">
         <nav class="top-tabs">${topTabs}</nav>
-        ${options.notice ? `<div class="garage-notice" role="alert">${escapeText(options.notice)}</div>` : ''}
-        <div class="ws-panel">${body()}</div>
+        <div class="ws-panel">${options.notice ? `<div class="garage-notice" role="alert">${escapeText(options.notice)}</div>` : ''}${body()}</div>
       </div>
       <div class="ws-right">
         <div class="ws-logo">
           ${logoHtml()}
           <div class="garage-money">$${save.money}</div>
         </div>
+        <div class="preview-window" data-preview>
+          <div class="zoom-row"><button class="step-btn" data-zoom="0.15" aria-label="Zoom out">−</button><button class="step-btn" data-zoom="-0.15" aria-label="Zoom in">+</button></div>
+        </div>
         <nav class="side-tabs">${sideTabs}</nav>
         ${side()}
-        <div class="zoom-row">${options.side === 'preview' ? '<button class="step-btn" data-zoom="0.15" aria-label="Zoom out">−</button><span>Zoom</span><button class="step-btn" data-zoom="-0.15" aria-label="Zoom in">+</button>' : ''}</div>
         <div class="nav-btns">
           ${onlineButton('Online Duel', 'duel')}
           ${onlineButton('Online Brawl', 'brawl')}

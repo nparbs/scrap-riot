@@ -23,7 +23,7 @@ import type { BotSetup, GameEvent, Loadout } from '../sim/match';
 import type { Save } from '../game/progress';
 import { decodeSkin } from '../game/skin';
 
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 /** The most a browser can bank for a match it ran itself. */
 export const OFFLINE_PAYOUT_MAX = 10_000;
 export const NAME_MAX = 16;
@@ -79,6 +79,7 @@ export interface SnapshotMessage {
   proj: number[][];
   mines: number[][];
   oil: number[][];
+  traps: number[][];
   drones: number[][];
   pickups: number[][];
   events: GameEvent[];

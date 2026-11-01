@@ -99,6 +99,26 @@ export interface ArenaDef {
 
 export type ArenaId = 'skyscraper' | 'pit' | 'rooftop' | 'furnace' | 'canyon' | 'foundry' | 'glacier';
 
+/** How a map dresses up the spectator traps. */
+export interface TrapNames {
+  strike: string;
+  /** What falls from the sky. */
+  drop: 'anvil' | 'rock' | 'icicle' | 'hammer' | 'bolt' | 'lava';
+  slick: string;
+  patch: 'oil' | 'glue';
+  pull: string;
+}
+
+export const TRAP_NAMES: Record<ArenaId, TrapNames> = {
+  skyscraper: { strike: 'Falling Anvil', drop: 'anvil', slick: 'Roof Tar', patch: 'glue', pull: 'Helicopter Downdraft' },
+  pit: { strike: 'Scrap Drop', drop: 'hammer', slick: 'Oil Slick', patch: 'oil', pull: 'Junkyard Magnet' },
+  rooftop: { strike: 'Lightning Strike', drop: 'bolt', slick: 'Burst Pipe', patch: 'oil', pull: 'Wind Gust' },
+  furnace: { strike: 'Molten Pour', drop: 'lava', slick: 'Slag Spill', patch: 'glue', pull: 'Furnace Draft' },
+  canyon: { strike: 'Rockfall', drop: 'rock', slick: 'Quicksand', patch: 'glue', pull: 'Dust Devil' },
+  foundry: { strike: 'Drop Hammer', drop: 'hammer', slick: 'Coolant Leak', patch: 'oil', pull: 'Crane Magnet' },
+  glacier: { strike: 'Giant Icicle', drop: 'icicle', slick: 'Black Ice', patch: 'oil', pull: 'Blizzard' },
+};
+
 export const SAW_RADIUS = 1.7;
 export const SAW_DPS = 30;
 export const SAW_KNOCK = 14;

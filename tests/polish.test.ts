@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PLAYLISTS } from '../src/music';
 import { activeLevel, AutoQuality, defaultSettings, DEFAULT_BINDINGS, keyLabel, loadSettings, rebind, writeSettings } from '../src/game/settings';
 import { Tutorial, type TutorialInput } from '../src/game/tutorial';
 import { deadzone, PadReader, type PadLike } from '../src/gamepad';
@@ -207,5 +208,28 @@ describe('damage direction', () => {
     expect(relativeBearing(0, 0, 0, 10, 0)).toBeCloseTo(Math.PI / 2);
     expect(relativeBearing(0, 0, 0, -10, 0)).toBeCloseTo(-Math.PI / 2);
     expect(relativeBearing(0, 0, Math.PI / 2, 10, 0)).toBeCloseTo(0);
+  });
+});
+
+describe('music', () => {
+  const songs = [...PLAYLISTS.battle, ...PLAYLISTS.menu];
+
+  it('has several songs for each mood, all properly different', () => {
+    expect(PLAYLISTS.battle.length).toBeGreaterThanOrEqual(3);
+    expect(PLAYLISTS.menu.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(songs.map((song) => song.name)).size).toBe(songs.length);
+    expect(new Set(songs.map((song) => song.bars.join())).size).toBe(songs.length);
+    expect(new Set(songs.map((song) => song.bpm)).size).toBe(songs.length);
+  });
+
+  it('has patterns that fit the bar', () => {
+    for (const song of songs) {
+      expect(song.kick, song.name).toHaveLength(16);
+      expect(song.snare, song.name).toHaveLength(16);
+      if (song.riff.length) expect(song.riff, song.name).toHaveLength(32);
+      expect(song.length % song.bars.length, song.name).toBe(0);
+    }
+    for (const song of PLAYLISTS.battle) expect(song.chug, song.name).toHaveLength(16);
+    for (const song of PLAYLISTS.menu) expect(song.arpeggio, song.name).toHaveLength(8);
   });
 });

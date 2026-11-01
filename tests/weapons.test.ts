@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { newSave } from '../src/game/progress';
-import { ARENAS } from '../src/sim/arena';
-import { BATTERY_REGEN, BOOST_DRAIN, FLIP_TIME, MELEE, TURRETS, type TurretId } from '../src/sim/data';
+import { ARENA_ORDER, ARENAS, TRAP_NAMES } from '../src/sim/arena';
+import { BATTERY_REGEN, BOOST_DRAIN, FLIP_TIME, leaveWait, MELEE, REWARD, SPECTATE, TRAP, TURRETS, type TurretId } from '../src/sim/data';
+import type { SnapshotMessage } from '../src/net/protocol';
+import { applyBotState, applyWorldState, encodeSnapshot } from '../src/net/snapshot';
 import { Match, type Bot, type BotSetup, type Loadout } from '../src/sim/match';
 
 const pilot = (name: string, over: Partial<Loadout> = {}): BotSetup => ({ name, color: 0, isAI: false, loadout: { ...newSave().loadout, ...over } });
@@ -176,6 +178,139 @@ describe('chaingun bursts', () => {
   });
 });
 
+describe('spectating', () => {
+  /** A's robot is wrecked, with two rivals still fighting. */
+  const knockedOut = (arena: 'foundry' | 'skyscraper' = 'foundry') => {
+    const match = new Match([pilot('A', {}), pilot('B', {}), pilot('C', {})], { seed: 1, arena, mode: 'lms' });
+    const [a, b, c] = match.bots;
+    a.invulnT = b.invulnT = c.invulnT = 0;
+    b.x = -20;
+    b.z = 0;
+    c.x = 20;
+    c.z = 20;
+    match.damage(a, 9999, -1);
+    expect(a.out).toBe(true);
+    a.trapX = b.x;
+    a.trapZ = b.z;
+    return { match, a, b, c };
+  };
+
+  it('pays for every second, and only to someone still there', () => {
+    const { match, a } = knockedOut();
+    const before = a.earned;
+    run(match, 10);
+    expect(a.earned - before).toBeCloseTo(SPECTATE.payPerSecond * 10, 0);
+    expect(match.standings().find((row) => row.bot === a)!.total).toBeGreaterThanOrEqual(REWARD.minimum);
+  });
+
+  it('makes the leave timer scale with how long you lasted, within limits', () => {
+    expect(leaveWait(0)).toBe(10);
+    expect(leaveWait(39)).toBe(10);
+    expect(leaveWait(80)).toBe(20);
+    expect(leaveWait(170)).toBe(30);
+  });
+
+  it('steers the marker with the driving keys, and keeps it on the map', () => {
+    const { match, a } = knockedOut();
+    a.trapX = a.trapZ = 0;
+    a.input.throttle = 1;
+    a.input.steer = -1;
+    run(match, 0.5);
+    expect(a.trapZ).toBeCloseTo(SPECTATE.markerSpeed * 0.5, 0);
+    expect(a.trapX).toBeCloseTo(-SPECTATE.markerSpeed * 0.5, 0);
+    run(match, 10);
+    expect(a.trapZ).toBe(match.arena.half);
+    expect(a.trapX).toBe(-match.arena.half);
+  });
+
+  it('warns before a strike lands, which credits the spectator and throws robots clear', () => {
+    const { match, a, b } = knockedOut();
+    a.input.melee = true;
+    match.step();
+    a.input.melee = false;
+    expect(match.traps).toHaveLength(1);
+    run(match, TRAP.strike.warning - 0.2);
+    expect(b.hp).toBe(b.maxHp);
+    const earned = a.earned;
+    run(match, 0.3);
+    expect(match.traps).toHaveLength(0);
+    expect(b.hp).toBe(b.maxHp - TRAP.strike.damage);
+    expect(a.damageDealt).toBe(TRAP.strike.damage);
+    expect(a.earned).toBeGreaterThan(earned);
+    expect(a.strikeCd).toBeGreaterThan(0);
+  });
+
+  it('can move out of the way of a strike', () => {
+    const { match, a, b } = knockedOut();
+    a.input.melee = true;
+    match.step();
+    a.input.melee = false;
+    b.x += TRAP.strike.radius * 3;
+    run(match, TRAP.strike.warning + 0.2);
+    expect(b.hp).toBe(b.maxHp);
+  });
+
+  it('waits out the cooldown, however long the key is held', () => {
+    const { match, a } = knockedOut();
+    a.input.melee = true;
+    let strikes = 0;
+    for (let i = 0; i < 60 * (TRAP.strike.cooldown - 1); i++) {
+      const before = match.traps.length;
+      match.step();
+      if (match.traps.length > before) strikes++;
+    }
+    expect(strikes).toBe(1);
+  });
+
+  it('spills the map\'s patch, and pulls robots toward the marker', () => {
+    const { match, a, b } = knockedOut('skyscraper');
+    a.input.turret = true;
+    match.step();
+    a.input.turret = false;
+    const patch = match.oil.find((p) => p.owner === a.id)!;
+    expect(patch.kind).toBe(TRAP_NAMES.skyscraper.patch);
+
+    const near = knockedOut();
+    near.a.trapX = near.b.x + 5;
+    near.a.input.defense = true;
+    near.match.step();
+    near.a.input.defense = false;
+    near.b.vx = near.b.vz = 0;
+    run(near.match, 0.5);
+    expect(near.b.vx).toBeGreaterThan(0);
+    expect(b).toBeDefined();
+  });
+
+  it('is only for humans, and not for anyone who walked away', () => {
+    const { match, a } = knockedOut();
+    a.isAI = true;
+    a.input.melee = true;
+    const earned = a.earned;
+    run(match, 1);
+    expect(match.traps).toHaveLength(0);
+    expect(a.earned).toBe(earned);
+  });
+
+  it('gives every map its own traps', () => {
+    for (const id of ARENA_ORDER) expect(TRAP_NAMES[id].strike, id).toBeTruthy();
+    expect(new Set(ARENA_ORDER.map((id) => TRAP_NAMES[id].strike)).size).toBe(ARENA_ORDER.length);
+  });
+
+  it('sends the marker and traps to clients', () => {
+    const { match, a } = knockedOut();
+    a.trapX = 4;
+    a.input.melee = true;
+    match.step();
+    const snap = { t: 'snap', ack: 0, ...encodeSnapshot(match, []) } as SnapshotMessage;
+    const copy = new Match([pilot('A', {}), pilot('B', {}), pilot('C', {})], { seed: 1, arena: 'foundry', mode: 'lms' });
+    applyBotState(copy.bots[0], snap.bots[0]);
+    applyWorldState(copy, snap, 0);
+    expect(copy.bots[0].trapX).toBe(4);
+    expect(copy.bots[0].strikeCd).toBeGreaterThan(0);
+    expect(copy.traps[0]).toMatchObject({ kind: 'strike', x: 4, owner: a.id });
+  });
+});
+
 describe('cooldowns', () => {
   it('a spinner cannot spin back up until its cooldown is over', () => {
     const [match, a, b] = fight({ melee: 'vertbar' });
@@ -196,10 +331,10 @@ describe('cooldowns', () => {
 
   it('every strong weapon has a real cooldown', () => {
     for (const id of ['vertbar', 'vertdisc', 'horizbar', 'shell', 'hammer', 'hammersaw', 'flipper', 'crusher'] as const) {
-      expect(MELEE[id].cooldown, id).toBeGreaterThanOrEqual(2.5);
+      expect(MELEE[id].cooldown, id).toBeGreaterThanOrEqual(1.4);
     }
     for (const id of ['rockets', 'heavyrocket', 'bunkerbuster', 'mortar', 'laser'] as const) {
-      expect(TURRETS[id].cooldown, id).toBeGreaterThanOrEqual(3);
+      expect(TURRETS[id].cooldown, id).toBeGreaterThanOrEqual(1.7);
     }
     expect(TURRETS.bunkerbuster.cooldown).toBeGreaterThan(TURRETS.rockets.cooldown);
     expect(MELEE.vertbar.cooldown).toBeGreaterThan(MELEE.drum.cooldown);

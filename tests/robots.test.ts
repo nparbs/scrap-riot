@@ -54,6 +54,7 @@ describe('robot models', () => {
           model.meleePivot.removeFromParent();
           model.shield.removeFromParent();
           const hull = hullBox(model);
+          model.root.updateMatrixWorld(true);
           model.root.traverse((node) => {
             if (!(node instanceof THREE.Mesh)) return;
             const part = new THREE.Box3().setFromObject(node);
