@@ -192,6 +192,15 @@ describe('gamepad', () => {
   });
 });
 
+describe('full screen setting', () => {
+  it('is on unless it was turned off', () => {
+    const stored = (value: object) => ({ getItem: () => JSON.stringify(value) });
+    expect(defaultSettings().fullscreen).toBe(true);
+    expect(loadSettings(stored({})).fullscreen).toBe(true);
+    expect(loadSettings(stored({ fullscreen: false })).fullscreen).toBe(false);
+  });
+});
+
 describe('tutorial', () => {
   const idle: TutorialInput = { throttle: 0, steer: 0, melee: false, defense: false, boost: false };
 
@@ -205,6 +214,23 @@ describe('tutorial', () => {
     expect(t.prompt).toBe(first);
     t.update(1, { ...idle, throttle: 1 });
     expect(t.prompt).not.toBe(first);
+  });
+
+  it('talks about the on-screen controls on a touch device', () => {
+    const t = new Tutorial(DEFAULT_BINDINGS, true);
+    const seen = [t.prompt];
+    t.update(2, { ...idle, throttle: 1 });
+    seen.push(t.prompt);
+    t.update(2, { ...idle, steer: 1, throttle: 1 });
+    seen.push(t.prompt);
+    t.update(2, { ...idle, melee: true });
+    seen.push(t.prompt);
+    t.update(0, { ...idle, defense: true });
+    seen.push(t.prompt);
+    t.update(1, { ...idle, boost: true });
+    seen.push(t.prompt);
+    expect(new Set(seen).size).toBe(6);
+    for (const prompt of seen) expect(prompt).not.toMatch(/\b(key|keys|mouse|click|Space|Shift)\b|\bW\b/i);
   });
 
   it('runs to completion and shows rebound keys', () => {

@@ -33,6 +33,8 @@ import {
 import type { Standing } from '../sim/match';
 import { escapeText, UPGRADE_ORDER } from './hud';
 import { timeAgo } from './timeAgo';
+import { fullscreenSupported, isInstalled } from './fullscreen';
+import { isTouchDevice } from './touch';
 
 const INTRO_MS = 1000;
 const INTRO_SPARKS = 18;
@@ -40,11 +42,29 @@ const NAME_MIN = 2;
 
 const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
 
+/** iPhones have no way for a page to go full screen, so this is the only route there. */
+function homeScreenHint(): string {
+  return isTouchDevice() && !fullscreenSupported() && !isInstalled()
+    ? '<p class="settings-hint">For full screen on this device, tap Share, then Add to Home Screen, and open the game from there.</p>'
+    : '';
+}
+
 function logoHtml(): string {
   return `<img class="logo" src="${logoUrl()}" alt="Scrap Riot" />`;
 }
 
 function controlsTable(keys: Bindings): string {
+  if (isTouchDevice()) {
+    return `
+  <table class="controls">
+    <tr><td><kbd>Stick</kbd></td><td>Drive</td></tr>
+    <tr><td><kbd>Weapon</kbd></td><td>Main weapon</td></tr>
+    <tr><td><kbd>Defense</kbd></td><td>Defense</td></tr>
+    <tr><td><kbd>Boost</kbd></td><td>Speed boost (uses battery)</td></tr>
+    <tr><td><kbd>Rear</kbd></td><td>Look behind</td></tr>
+    <tr><td>Top of the screen</td><td>Tap a powerup to use it</td></tr>
+  </table>`;
+  }
   const key = (action: Action) => `<kbd>${keyLabel(keys[action])}</kbd>`;
   return `
   <table class="controls">
@@ -141,14 +161,14 @@ export function menuScreen(onStart: () => void, onSettings: () => void, keys: Bi
       <p class="tagline">Build a robot. Climb to the roof. Knock the other one off.</p>
       <button class="btn btn-primary" data-start>Enter the workshop</button>
       <button class="btn" data-settings>Settings</button>
-      ${controlsTable(keys)}
+      ${isTouchDevice() ? homeScreenHint() : controlsTable(keys)}
     </div>`;
   el.querySelector('[data-start]')!.addEventListener('click', onStart);
   el.querySelector('[data-settings]')!.addEventListener('click', onSettings);
   return el;
 }
 
-export function pauseScreen(online: boolean, onResume: () => void, onQuit: () => void, keys: Bindings, quitLabel = online ? 'Leave match' : 'Forfeit match'): HTMLElement {
+export function pauseScreen(online: boolean, onResume: () => void, onQuit: () => void, keys: Bindings, onSettings: () => void, quitLabel = online ? 'Leave match' : 'Forfeit match'): HTMLElement {
   const el = document.createElement('div');
   el.className = 'screen screen-pause';
   el.innerHTML = `
@@ -156,9 +176,11 @@ export function pauseScreen(online: boolean, onResume: () => void, onQuit: () =>
       <h2>${online ? 'Menu' : 'Paused'}</h2>
       ${online ? '<p class="tagline">The match keeps running. Leaving counts as a loss.</p>' : ''}
       <button class="btn btn-primary" data-resume>Resume</button>
+      ${isTouchDevice() ? '<button class="btn" data-settings>Settings</button>' : ''}
       <button class="btn" data-quit>${quitLabel}</button>
-      ${controlsTable(keys)}
+      ${isTouchDevice() ? '' : controlsTable(keys)}
     </div>`;
+  el.querySelector('[data-settings]')?.addEventListener('click', onSettings);
   el.querySelector('[data-resume]')!.addEventListener('click', onResume);
   el.querySelector('[data-quit]')!.addEventListener('click', onQuit);
   return el;
@@ -422,7 +444,8 @@ function powerupCards(save: Save, keys: Bindings): string {
     const n = save.loadout.powerups[id];
     const full = n >= POWERUP_CAP;
     const broke = !full && save.money < def.price;
-    return `<button class="card${broke ? ' card-broke' : ''}" data-power="${id}"><strong>[${keyLabel(keys[POWER_ACTIONS[i]])}] ${def.name}</strong><span>${def.blurb}</span><small>Carrying ${n}/${POWERUP_CAP}</small><em>${full ? 'Full' : `$${def.price}`}</em></button>`;
+    const key = isTouchDevice() ? '' : `[${keyLabel(keys[POWER_ACTIONS[i]])}] `;
+    return `<button class="card${broke ? ' card-broke' : ''}" data-power="${id}"><strong>${key}${def.name}</strong><span>${def.blurb}</span><small>Carrying ${n}/${POWERUP_CAP}</small><em>${full ? 'Full' : `$${def.price}`}</em></button>`;
   }).join('');
 }
 
@@ -459,7 +482,7 @@ function workshopPanel(save: Save, options: GarageOptions): string {
     defense: DEFENSES[shown.defense].mounted ? `<span><b>${rear ? 'Front' : 'Back'}</b>, opposite main weapon</span>` : '<b>All around</b>',
   };
   const weaponRow = category === 'melee' || category === 'defense'
-    ? `<div class="part-row part-weapon"><span class="part-key">Controls <kbd>${keyLabel(options.keys[category])}</kbd><kbd>${category === 'melee' ? 'Left click' : 'Right click'}</kbd></span>
+    ? `<div class="part-row part-weapon">${isTouchDevice() ? '' : `<span class="part-key">Controls <kbd>${keyLabel(options.keys[category])}</kbd><kbd>${category === 'melee' ? 'Left click' : 'Right click'}</kbd></span>`}
         <span class="part-place">Placement ${placement[category]}</span></div>`
     : '';
 
@@ -471,7 +494,7 @@ function workshopPanel(save: Save, options: GarageOptions): string {
   const cards = category === 'powerups' ? powerupCards(save, options.keys) : category === 'upgrades' ? upgradeCards(save) : partCards(save, category, preview);
   const hint = category === 'powerups' || category === 'upgrades'
     ? ''
-    : `<p class="preview-note${preview ? ' preview-on' : ''}">${preview ? `Previewing <b>${partName(preview.slot, preview.id)}</b>. Nothing has changed yet.` : 'Click a part to try it on your robot. Nothing is bought until you press its button.'}</p>`;
+    : `<p class="preview-note${preview ? ' preview-on' : ''}">${preview ? `Previewing <b>${partName(preview.slot, preview.id)}</b>. Nothing has changed yet.` : `${isTouchDevice() ? 'Tap' : 'Click'} a part to try it on your robot. Nothing is bought until you press its button.`}</p>`;
   return `
     <div class="shop">
       <nav class="shop-rail">${rail}</nav>
@@ -600,16 +623,17 @@ function pilotPanel(save: Save, options: GarageOptions): string {
 }
 
 function helpPanel(keys: Bindings): string {
+  const touch = isTouchDevice();
   const list = (items: string[]) => `<ul class="help-list">${items.map((item) => `<li>${item}</li>`).join('')}</ul>`;
   return `<div class="help-grid">
     <section><h3>The basics</h3>${list([
       'Build a robot in the Workshop. Every part takes up room, so a bigger chassis fits more.',
       'Robots only turn while rolling, so a stopped robot has to drive forward or back to change direction.',
       'Your defense goes on the opposite side from your main weapon, so moving the weapon to the back moves the defense to the front.',
-      'Your main weapon is how you win. Spinners have to reach speed before they bite, so hold the key on the way in.',
+      `Your main weapon is how you win. Spinners have to reach speed before they bite, so hold the ${touch ? 'button' : 'key'} on the way in.`,
       'There are no guns. Everything is up close, the way real combat robots fight.',
       'Your battery runs your speed boost and any powered weapon, such as the Flamethrower, Tesla Coil and Flipper.',
-      'Strong weapons have a cooldown, shown in red on the panel at the bottom.',
+      `Strong weapons have a cooldown, shown in red on ${touch ? 'their button' : 'the panel at the bottom'}.`,
       'A flipper lands you upside down, and you can\'t do anything until your robot rights itself about three seconds later.',
     ])}</section>
     <section><h3>Ways to play</h3>${list([
@@ -755,6 +779,7 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
 export interface SettingsActions {
   onQuality: (quality: Quality) => void;
   onFps: () => void;
+  onFullscreen: () => void;
   onVolume: (kind: VolumeKind, value: number) => void;
   onVolumeSet: (kind: VolumeKind) => void;
   onMute: () => void;
@@ -791,9 +816,15 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
     return `<div class="settings-row"><span>${label}</span>
       <button class="mini-btn${waiting ? ' mini-wait' : ''}" data-bind="${id}">${waiting ? 'Press a key' : escapeText(keyLabel(settings.bindings[id]))}</button></div>`;
   }).join('');
+  const touch = isTouchDevice();
+  const fullscreenRow = touch && fullscreenSupported() && !isInstalled()
+    ? `<div class="settings-row"><span>Full screen</span>
+        <button class="mini-btn${settings.fullscreen ? ' mini-on' : ''}" data-fullscreen>${settings.fullscreen ? 'On' : 'Off'}</button></div>`
+    : homeScreenHint();
   el.innerHTML = `
     <div class="menu-card settings-card">
       <h2>Settings</h2>
+      ${fullscreenRow}
       <h3>Graphics</h3>
       <div class="settings-row"><span>Quality</span><div class="segmented">${qualities}</div></div>
       ${autoHint}
@@ -803,14 +834,14 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
       ${VOLUME_KINDS.map((kind) => `<label class="settings-row volume-row"><span>${VOLUME_LABELS[kind]}</span>
         <input type="range" min="0" max="100" step="5" value="${settings.volume[kind]}" data-volume="${kind}" aria-label="${VOLUME_LABELS[kind]}" />
         <b data-volume-value="${kind}">${kind === 'music' && settings.musicMuted ? 'Off' : `${settings.volume[kind]}%`}</b></label>`).join('')}
-      <div class="settings-row"><span>Mute everything (M)</span>
+      <div class="settings-row"><span>Mute everything${touch ? '' : ' (M)'}</span>
         <button class="mini-btn${settings.muted ? ' mini-on' : ''}" data-mute>${settings.muted ? 'Muted' : 'Off'}</button></div>
-      <h3>Keyboard</h3>
+      ${touch ? '' : `<h3>Keyboard</h3>
       ${bindings}
       <p class="settings-hint">Esc cancels a rebind. Using a key that's taken swaps the two actions. Esc and M stay reserved for pause and mute, and Ctrl for browser shortcuts. Left click always fires the main weapon and right click the defense.</p>
       <h3>Gamepad</h3>
       <p class="settings-hint">Right and left triggers drive, the left stick steers. A or RB: main weapon, B: defense, X: speed boost, D-pad: first four powerups, LB: Repair Kit, Y: look behind, Start: menu.</p>
-      <button class="btn" data-reset>Reset keys</button>
+      <button class="btn" data-reset>Reset keys</button>`}
       <button class="btn btn-primary" data-back>Done</button>
     </div>`;
   el.addEventListener('click', (e) => {
@@ -820,6 +851,7 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
     if (quality) actions.onQuality(quality as Quality);
     else if (bind) actions.onBind(bind as Action);
     else if ('fps' in target.dataset) actions.onFps();
+    else if ('fullscreen' in target.dataset) actions.onFullscreen();
     else if ('mute' in target.dataset) actions.onMute();
     else if ('reset' in target.dataset) actions.onReset();
     else if ('back' in target.dataset) actions.onBack();

@@ -4,6 +4,7 @@ import { buildRobot, disposeRobot, type RobotModel } from '../render/robots';
 import { CHASSIS, DUEL_INTRO, MELEE } from '../sim/data';
 import type { Bot } from '../sim/match';
 import { escapeText } from './hud';
+import { isTouchDevice } from './touch';
 
 // The beats of the face-off, in seconds. The stylesheet's duel-intro section uses the same times.
 const ENTER_START = 0.2;
@@ -63,7 +64,7 @@ export class DuelIntro {
       <div class="di-vs">VS</div>
       <div class="di-where">${escapeText(arenaName)}</div>
       <div class="di-flash"></div>
-      <div class="di-skip">Click to skip</div>`;
+      <div class="di-skip">${isTouchDevice() ? 'Tap' : 'Click'} to skip</div>`;
     this.root.addEventListener('pointerdown', () => (this.done = true));
     this.buildStage(left, right, pixelRatio);
     this.resize();

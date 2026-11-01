@@ -27,7 +27,7 @@ npm run dev
 | E (hold) | Look behind |
 | M / Esc | Mute / Pause |
 
-These are the default keys. You can rebind them in Settings, which also lists the gamepad layout. On phones and tablets, a thumbstick and buttons appear on screen.
+These are the default keys. You can rebind them in Settings, which also lists the gamepad layout. Phones and tablets get a thumbstick and buttons on screen instead, and go full screen on the first tap (you can turn this off in Settings). Safari on an iPhone doesn't allow that, so add the game to the Home Screen and open it from there.
 
 A duel is one on one with one life each. It ends when a robot is wrecked or falls off the roof, when a pilot surrenders, or when both agree to a draw. If three minutes run out, the most armour left wins. Damage, kills and scrap pickups earn money, and the winner gets a bonus. Progress is saved in the browser's local storage.
 

@@ -1,11 +1,13 @@
 import { sawPos, TRAP_NAMES } from '../sim/arena';
 import { pickLastWords } from '../game/lastWords';
 import { keyLabel, type Action, type Bindings } from '../game/settings';
+import { isTouchDevice } from './touch';
 import { QUICK_CHAT } from '../net/protocol';
-import { COUNTDOWN, DEFENSES, leaveWait, legibleColor, MATCH, MELEE, MODES, POWERUPS, POWERUP_ORDER, RAGDOLL_TIME, SPECTATE, UPGRADES } from '../sim/data';
+import { COUNTDOWN, DEFENSES, leaveWait, legibleColor, MATCH, MELEE, MODES, POWERUPS, POWERUP_ORDER, RAGDOLL_TIME, SPECTATE, TRAP, UPGRADES } from '../sim/data';
 import { relativeBearing, type Bot, type GameEvent, type Match } from '../sim/match';
 
 const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
+type TrapId = keyof typeof TRAP;
 const DAMAGE_MARK_TIME = 1;
 const MAP_INTERVAL = 1 / 20;
 /** A flash dazzles, but the roof stays visible through it. */
@@ -88,12 +90,17 @@ export class Hud {
   private rival: Bot;
 
   private readonly tutorial: HTMLElement;
+  private touchButtons: Record<TrapId, HTMLElement> | null = null;
+  private touchControls: HTMLElement | null = null;
+  /** The thumb buttons have become trap buttons, because this player is out and watching. */
+  private trapButtons = false;
   private readonly damageLayer: HTMLElement;
   /** One indicator per attacker, refreshed while they keep hitting. */
   private readonly damageMarks = new Map<number, { el: HTMLElement; time: number }>();
 
   constructor(private readonly match: Match, private readonly player: Bot, keys: Bindings, actions: HudActions) {
     const { loadout } = player;
+    const touch = isTouchDevice();
     this.duel = match.mode === 'duel';
     this.rival = match.bots.find((bot) => bot !== player) ?? player;
     this.root.className = `hud${this.duel ? ' hud-duel' : ''}`;
@@ -114,7 +121,7 @@ export class Hud {
       <div class="hud-spectate" hidden>
         <h3>Spectating</h3>
         <p class="spectate-earn" data-spectate-earn></p>
-        <p class="spectate-hint"><kbd>${keyLabel(keys.forward)}</kbd><kbd>${keyLabel(keys.left)}</kbd><kbd>${keyLabel(keys.back)}</kbd><kbd>${keyLabel(keys.right)}</kbd> move the marker</p>
+        <p class="spectate-hint">${touch ? 'The stick moves the marker. The buttons set off traps.' : `<kbd>${keyLabel(keys.forward)}</kbd><kbd>${keyLabel(keys.left)}</kbd><kbd>${keyLabel(keys.back)}</kbd><kbd>${keyLabel(keys.right)}</kbd> move the marker`}</p>
         ${this.trapRow(keyLabel(keys.melee), TRAP_NAMES[match.arena.id].strike, 'strike')}
         ${this.trapRow(keyLabel(keys.boost), TRAP_NAMES[match.arena.id].slick, 'slick')}
         ${this.trapRow(keyLabel(keys.defense), TRAP_NAMES[match.arena.id].pull, 'pull')}
@@ -449,6 +456,7 @@ export class Hud {
     const count = this.countdownText(dt);
     const centerText = this.notice || count || (player.alive ? won : dead);
     this.updateLeave(dt);
+    this.updateTrapButtons();
     if (centerText !== this.lastCenter) {
       this.lastCenter = centerText;
       this.center.textContent = centerText;
@@ -499,7 +507,42 @@ export class Hud {
   }
 
   private setCooldown(id: 'melee' | 'defense', fraction: number): void {
-    this.cooldowns[id].style.transform = `scaleY(${Math.min(1, fraction)})`;
+    const transform = `scaleY(${Math.min(1, fraction)})`;
+    this.cooldowns[id].style.transform = transform;
+    if (this.touchButtons && !this.trapButtons) this.fillTouchButton(this.touchButtons[id === 'melee' ? 'strike' : 'pull'], fraction);
+  }
+
+  private fillTouchButton(button: HTMLElement, fraction: number): void {
+    q(button, '.touch-cd').style.transform = `scaleY(${Math.min(1, fraction)})`;
+  }
+
+  /** The dock's weapon slots aren't shown on a phone, so the thumb buttons show the cooldowns instead. */
+  linkTouchControls(controls: HTMLElement): void {
+    this.touchControls = controls;
+    this.touchButtons = { strike: q(controls, '.touch-melee'), slick: q(controls, '.touch-boost'), pull: q(controls, '.touch-defense') };
+  }
+
+  /** Once out of Last Robot Standing, the same three buttons set off this map's traps instead. */
+  private updateTrapButtons(): void {
+    const { touchButtons, touchControls, player } = this;
+    if (!touchButtons || !touchControls) return;
+    const on = player.out && !player.forfeited && !this.match.over && this.match.mode === 'lms';
+    if (on !== this.trapButtons) {
+      this.trapButtons = on;
+      touchControls.classList.toggle('touch-traps', on);
+      const names = TRAP_NAMES[this.match.arena.id];
+      q(touchButtons.strike, 'span').textContent = on ? names.strike : 'Weapon';
+      q(touchButtons.slick, 'span').textContent = on ? names.slick : 'Boost';
+      q(touchButtons.pull, 'span').textContent = on ? names.pull : 'Defense';
+      touchButtons.strike.setAttribute('aria-label', on ? names.strike : 'Main weapon');
+      touchButtons.slick.setAttribute('aria-label', on ? names.slick : 'Speed boost');
+      touchButtons.pull.setAttribute('aria-label', on ? names.pull : 'Defense');
+      if (!on) this.fillTouchButton(touchButtons.slick, 0);
+    }
+    if (!on) return;
+    this.fillTouchButton(touchButtons.strike, player.strikeCd / TRAP.strike.cooldown);
+    this.fillTouchButton(touchButtons.slick, player.slickCd / TRAP.slick.cooldown);
+    this.fillTouchButton(touchButtons.pull, player.pullCd / TRAP.pull.cooldown);
   }
 
   private drawBoard(): void {
