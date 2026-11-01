@@ -36,7 +36,7 @@ A duel is one on one with one life each. It ends when a robot is wrecked or fall
 
 Press **Play Online** in the workshop to wait for an opponent. A duel starts only once a second pilot joins, and there are no bots online. If your connection drops, a bot drives your robot for 20 seconds while you reconnect, after which you forfeit. Leaving a duel counts as a loss. Chat is a short list of preset phrases.
 
-Play as a guest or sign in with Google to keep your progress across browsers. The Garage page shows your rating and match history, and the Highscore tab shows the leaderboard. See [what is stored](docs/privacy.md).
+Play as a guest or sign in with Google to keep your progress across browsers. The Stats page shows your rating and match history, and the Highscore tab shows the leaderboard. See [what is stored](docs/privacy.md).
 
 The server is authoritative: it runs the same simulation as the game, and clients send only their controls. Money, purchases and match results are all decided on the server. To run your own server, see [docs/hosting.md](docs/hosting.md). For local development, run `npm run server:dev` alongside `npm run dev`, which uses an in-memory database.
 
@@ -52,7 +52,7 @@ The server is authoritative: it runs the same simulation as the game, and client
 - **7 maps:** The Skyscraper for duels, plus for Offline vs Bots walled pits, a rooftop and a canyon with lethal drops, a furnace, a piston foundry, and a frozen lake
 - **4 modes:** Duel online, plus for Offline vs Bots Free-for-All, Last Robot Standing and King of the Hill
 - **Career:** 12 fights with medals and 3 boss robots, plus achievements
-- **Customization:** paint colors, patterns, toppers and front or rear weapon mounts, all visible to other players
+- **Customization:** paint colors, patterns, body shapes and front or rear weapon mounts, all visible to other players
 - **Battle damage:** paint scorches and armor plates fall off as a robot gets hurt
 - **AI rivals** that get tougher as you invest in upgrades
 

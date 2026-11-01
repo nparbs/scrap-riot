@@ -2,6 +2,7 @@
 import type { ArenaId } from '../sim/arena';
 import {
   ARMOUR,
+  BODIES,
   CHASSIS,
   DEFAULT_PAINT,
   DEFENSES,
@@ -11,7 +12,6 @@ import {
   PATTERNS,
   POWER_SOURCES,
   POWERUP_ORDER,
-  TOPPERS,
   TOWERS,
   TURRETS,
   WHEELS,
@@ -23,7 +23,7 @@ import type { BotSetup, GameEvent, Loadout } from '../sim/match';
 import type { Save } from '../game/progress';
 import { decodeSkin } from '../game/skin';
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 export const NAME_MAX = 16;
 export const DEFAULT_NAME = 'Pilot';
 /** Clients send input at this rate; each message covers INPUT_STEPS sim steps. */
@@ -125,7 +125,7 @@ export function sanitizePaint(raw: unknown): Paint {
     primary: pickColor(r.primary, DEFAULT_PAINT.primary),
     secondary: pickColor(r.secondary, DEFAULT_PAINT.secondary),
     pattern: pickKey(PATTERNS, r.pattern, DEFAULT_PAINT.pattern),
-    topper: pickKey(TOPPERS, r.topper, DEFAULT_PAINT.topper),
+    body: pickKey(BODIES, r.body, DEFAULT_PAINT.body),
     // Anything that isn't a real paint job is dropped, leaving the robot unpainted.
     ...(typeof r.skin === 'string' && r.skin !== '' && decodeSkin(r.skin) ? { skin: r.skin } : {}),
   };
@@ -186,6 +186,15 @@ export interface HistoryEntry {
   payout: number;
   ratingChange: number;
   endedAt: string;
+}
+
+/** Public, so it holds nothing beyond what other players could see in a match, plus when they were last around. */
+export interface OnlineStatus {
+  /** People waiting for a match right now. */
+  queued: number;
+  /** People in a match right now. */
+  playing: number;
+  recent: { name: string; lastSeen: string }[];
 }
 
 export interface LeaderboardEntry {

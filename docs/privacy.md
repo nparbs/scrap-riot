@@ -21,7 +21,7 @@ This describes what Scrap Riot's game server stores. It is a plain description o
 
 ## Who can see what
 
-Your display name, paint, rating, wins, kills and match count are visible to other players. Pick a name that doesn't identify you.
+Your display name, paint, rating, wins, kills and match count are visible to other players. So is when you were last active, for up to a week, unless you never chose a name. Pick a name that doesn't identify you.
 
 ## Third parties
 

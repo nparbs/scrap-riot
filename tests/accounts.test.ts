@@ -5,8 +5,9 @@ import { Accounts } from '../server/accounts';
 import { connectPostgres, type Db } from '../server/db';
 import { startGameServer, type GameServer } from '../server/gameServer';
 import { googleVerifier } from '../server/google';
+import { STARTING_MONEY } from '../src/game/progress';
 import { NetClient } from '../src/net/client';
-import { PROTOCOL_VERSION, type Profile, type ServerMessage } from '../src/net/protocol';
+import { PROTOCOL_VERSION, type OnlineStatus, type Profile, type ServerMessage } from '../src/net/protocol';
 import { MELEE, TURRETS } from '../src/sim/data';
 
 const CLIENT_ID = 'test-client.apps.googleusercontent.com';
@@ -70,10 +71,10 @@ describe('accounts', () => {
   it('starts guests fresh, and stores only a hash of the session token', async () => {
     const { token, profile } = await accounts.createGuest();
     expect(profile.signedIn).toBe(false);
-    expect(profile.save.money).toBe(250);
+    expect(profile.save.money).toBe(STARTING_MONEY);
     const stored = await db.query<{ token_hash: string }>('SELECT token_hash FROM sessions');
     expect(stored.some((row) => row.token_hash === token)).toBe(false);
-    expect((await accounts.profile(token))?.save.money).toBe(250);
+    expect((await accounts.profile(token))?.save.money).toBe(STARTING_MONEY);
     expect(await accounts.profile('wrong')).toBeNull();
     expect(await accounts.profile(undefined)).toBeNull();
   });
@@ -170,7 +171,7 @@ describe('garage on the server', () => {
   it('refuses what they cannot afford, and bad input', async () => {
     const { token } = await accounts.createGuest();
     const bad: unknown[] = [
-      { type: 'equip', slot: 'turret', id: 'laser' },
+      { type: 'equip', slot: 'chassis', id: 'juggernaut' },
       { type: 'equip', slot: 'melee', id: 'death-ray' },
       { type: 'equip', slot: 'melee', id: 'constructor' },
       { type: 'equip', slot: '__proto__', id: 'x' },
@@ -184,7 +185,7 @@ describe('garage on the server', () => {
       expect(await accounts.garage(token, action as never), JSON.stringify(action)).toMatchObject({ ok: false });
     }
     const save = (await accounts.profile(token))!.save;
-    expect(save.money).toBe(250);
+    expect(save.money).toBe(STARTING_MONEY);
     expect(save.owned.turret).toEqual(['minigun']);
   });
 
@@ -256,13 +257,55 @@ describe('over the network', () => {
     return { ws, inbox, opened: new Promise<void>((resolve) => (ws.onopen = () => resolve())) };
   }
 
+  it('reports who is queued, who is playing and who was around lately, and nothing else', async () => {
+    const s = await server({ minPlayers: 2, capacity: 2, lobbyMs: 300, fullLobbyMs: 300 });
+    const online = async () => (await api(s, '/api/online')).json() as Promise<OnlineStatus>;
+    const empty = await online();
+    expect([empty.queued, empty.playing]).toEqual([0, 0]);
+
+    const named = await accounts.createGuest();
+    const unnamed = await accounts.createGuest();
+    const label = `Seen${Date.now()}`.slice(0, 16);
+    await accounts.garage(named.token, { type: 'name', name: label });
+    await accounts.profile(unnamed.token);
+
+    const first = raw(s);
+    await first.opened;
+    first.ws.send(JSON.stringify({ t: 'join', v: PROTOCOL_VERSION, session: named.token, name: '', loadout: {} }));
+    await until(() => first.inbox.some((m) => m.t === 'queue'));
+    const waiting = await online();
+    expect([waiting.queued, waiting.playing]).toEqual([1, 0]);
+    const row = waiting.recent.find((p) => p.name === label)!;
+    expect(row).toBeTruthy();
+    expect(Object.keys(row).sort()).toEqual(['lastSeen', 'name']);
+    expect(new Date(row.lastSeen).getTime()).toBeGreaterThan(Date.now() - 60_000);
+    // Guests who never picked a name aren't anyone to list.
+    expect(waiting.recent.every((p) => p.name !== 'Pilot')).toBe(true);
+
+    const second = raw(s);
+    await second.opened;
+    second.ws.send(JSON.stringify({ t: 'join', v: PROTOCOL_VERSION, session: unnamed.token, name: '', loadout: {} }));
+    await until(() => first.inbox.some((m) => m.t === 'start'));
+    const fighting = await online();
+    expect([fighting.queued, fighting.playing]).toEqual([0, 2]);
+  });
+
+  it('does not list players who have been gone a long time', async () => {
+    const old = await accounts.createGuest();
+    const label = `Old${Date.now()}`.slice(0, 16);
+    await accounts.garage(old.token, { type: 'name', name: label });
+    const { accountId } = (await accounts.forMatch(old.token))!;
+    await db.query("UPDATE players SET last_seen = now() - interval '8 days' WHERE id = $1", [accountId]);
+    expect((await accounts.recentPlayers()).some((p) => p.name === label)).toBe(false);
+  });
+
   it('runs the whole API flow', async () => {
     const s = await server();
     const config = await (await api(s, '/api/config')).json();
     expect(config.googleClientId).toBe(CLIENT_ID);
 
     const guest = await (await api(s, '/api/guest', { method: 'POST' })).json();
-    expect(guest.profile.save.money).toBe(250);
+    expect(guest.profile.save.money).toBe(STARTING_MONEY);
     expect((await api(s, '/api/me', {}, guest.token)).status).toBe(200);
     expect((await api(s, '/api/me', {}, 'nope')).status).toBe(401);
     expect((await api(s, '/api/me')).status).toBe(401);
@@ -365,7 +408,7 @@ describe('over the network', () => {
     for (const { c, token } of clients) {
       const profile = (await accounts.profile(token))!;
       const row = standings.find((st) => st.bot.id === c.player!.id)!;
-      expect(profile.save.money).toBe(250 + row.total);
+      expect(profile.save.money).toBe(STARTING_MONEY + row.total);
       expect(profile.save.matches).toBe(1);
       expect(profile.rating).not.toBe(1000);
       const history = await accounts.history(token);
@@ -389,7 +432,7 @@ describe('over the network', () => {
     q.connect();
     c.connect();
     await until(() => over);
-    expect((await accounts.profile(quitter.token))!.save.money).toBe(250);
+    expect((await accounts.profile(quitter.token))!.save.money).toBe(STARTING_MONEY);
     expect((await accounts.profile(quitter.token))!.save.matches).toBe(0);
     expect((await accounts.profile(stayer.token))!.save.matches).toBe(1);
   });

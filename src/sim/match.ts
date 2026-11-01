@@ -36,6 +36,7 @@ import {
   DEFENSES,
   DUEL_MIN_PAID_TIME,
   DUEL_OUTRO,
+  FLIP_TIME,
   HILL_TARGET,
   MATCH,
   MEGA_ABSORB,
@@ -69,6 +70,8 @@ import {
 import { makeRng, type Rng } from './rng';
 
 export const STEP = 1 / 60;
+/** How fast a robot must be rolling, forward or back, to turn at its full rate. */
+const TURN_FULL_SPEED = 4;
 
 export interface Loadout {
   chassis: ChassisId;
@@ -152,6 +155,8 @@ export interface Bot {
   heldT: number;
   /** Seconds left in the air after being thrown. Nothing can steer in the air. */
   airT: number;
+  /** Seconds until a flipped robot is back on its wheels, counting the time in the air. It's stunned throughout. */
+  flipT: number;
   turretFiring: boolean;
   turretCd: number;
   defenseCd: number;
@@ -387,7 +392,7 @@ export class Match {
       mass: chassis.mass * size,
       alive: true, out: false, eliminatedAt: 0, respawnT: 0,
       meleeCd: 0, meleeWindup: 0, meleeSwing: 99, meleeActive: false, meleeCharge: 0, lungeT: 0, clawTarget: -1, clawT: 0,
-      ammo: 1, shots: TURRETS[setup.loadout.turret].shots, burstLeft: 0, burstT: 0, heldT: 0, airT: 0, turretFiring: false, turretCd: 0, defenseCd: 0, defenseHeld: false,
+      ammo: 1, shots: TURRETS[setup.loadout.turret].shots, burstLeft: 0, burstT: 0, heldT: 0, airT: 0, flipT: 0, turretFiring: false, turretCd: 0, defenseCd: 0, defenseHeld: false,
       shieldT: 0, megaT: 0, boostT: 0, rageT: 0, stunT: 0,
       invulnT: MATCH.spawnInvuln,
       ramCd: 0, pistonCd: 0, flashT: 0, burnT: 0, burnSource: -1, slowT: 0, blindT: 0,
@@ -522,6 +527,7 @@ export class Match {
     bot.megaT = down(bot.megaT);
     bot.boostT = down(bot.boostT);
     bot.airT = down(bot.airT);
+    bot.flipT = down(bot.flipT);
     bot.rageT = down(bot.rageT);
     bot.stunT = down(bot.stunT);
     bot.invulnT = down(bot.invulnT);
@@ -613,7 +619,10 @@ export class Match {
     const reverse = throttle < 0 ? 0.65 : 1;
     const grip = this.arena.grip * (bot.oiled ? 0.35 : 1);
 
-    bot.heading = wrapAngle(bot.heading + steer * c.turn * (bot.oiled ? 1.35 : 1) * dt);
+    // Wheels only turn a robot that's rolling. Reversing steers the way a car does, so the tail goes where you steer.
+    const rolling = bot.vx * Math.sin(bot.heading) + bot.vz * Math.cos(bot.heading);
+    const turning = Math.max(-1, Math.min(1, rolling / TURN_FULL_SPEED));
+    bot.heading = wrapAngle(bot.heading + steer * turning * c.turn * (bot.oiled ? 1.35 : 1) * dt);
     const fx = Math.sin(bot.heading);
     const fz = Math.cos(bot.heading);
     const lx = fz;
@@ -743,7 +752,13 @@ export class Match {
           other.stunT = Math.max(other.stunT, def.stun);
           other.vx += (fx * def.knockback) / other.mass;
           other.vz += (fz * def.knockback) / other.mass;
-          if (def.launch && other.invulnT <= 0) other.airT = Math.max(other.airT, def.launch);
+          if (def.launch && other.invulnT <= 0) {
+            other.airT = Math.max(other.airT, def.launch);
+            if (def.flips) {
+              other.flipT = other.airT + FLIP_TIME;
+              other.stunT = Math.max(other.stunT, other.flipT);
+            }
+          }
         }
       }
     } else if (pressed && bot.meleeCd <= 0 && bot.ammo >= (def.battery ?? 0)) {
@@ -1182,7 +1197,7 @@ export class Match {
     bot.hp = bot.maxHp;
     bot.invulnT = MATCH.spawnInvuln;
     bot.lastAttacker = -1;
-    bot.stunT = bot.boostT = bot.rageT = bot.shieldT = bot.megaT = bot.airT = bot.meleeCharge = 0;
+    bot.stunT = bot.boostT = bot.rageT = bot.shieldT = bot.megaT = bot.airT = bot.flipT = bot.meleeCharge = 0;
     bot.slowT = bot.blindT = bot.cloakT = bot.bladesT = bot.regenT = 0;
     bot.ammo = 1;
     bot.shots = TURRETS[bot.loadout.turret].shots;

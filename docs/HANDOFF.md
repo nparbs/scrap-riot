@@ -1,0 +1,126 @@
+# Project handoff
+
+Where Scrap Riot stands, for picking the work up in a new session. Last updated 1 November 2026. [ROADMAP.md](../ROADMAP.md) has the full plan, and [README.md](../README.md) describes the game.
+
+## Shipping an update
+
+1. Commit on a branch and open a PR. Wait for CI, then merge.
+2. The page deploys itself on merge.
+3. Update the server from the user's PC, which needs its home network: `ssh -i ~/.ssh/scrap-riot-deploy deb@<VM address>`. That key can only run `~/deploy-scrap-riot.sh` on the VM, which pulls `main` and rebuilds, so connecting always deploys. The address is in Claude's private memory on that PC rather than here, because this repo is public.
+
+Update the page and server together whenever `PROTOCOL_VERSION` changes.
+
+## Latest work (protocol 6)
+
+- **Sound levels matched:** every weapon sound was rendered and measured with A-weighting, then given a level in `MELEE_LEVEL` and `GUN_LEVEL` in `src/audio.ts`. The spinner whine dropped from 45 dB to 24 dB. Weapon families now sit within about 4–5 dB.
+- **Audio settings:** Master, Music and Sound Effects sliders plus Mute, saved per browser.
+- **Queue count:** "N in queue" on the Play Online button, refreshed every 15 seconds.
+- **Players tab:** beside Highscore, showing who is in the queue or a match and who was recently active. It comes from `GET /api/online`, which returns only names and last-seen times, for the past 7 days. Guests still named "Pilot" are left out.
+- **Flash Bomb weakened:** 1.2 seconds instead of 2.5, radius 8 instead of 11, cooldown 14 seconds instead of 10. It can no longer fully white out the screen.
+- **Starting money:** $1,000 instead of $250. Existing accounts keep what they have.
+- **Laser sound fixed:** it was using the arc coil's sound.
+- **Turning:** robots turn only while rolling. The rate scales with rolling speed, reaching full at `TURN_FULL_SPEED` (4 units/s) in `src/sim/match.ts`. Reversing steers like a car, so the turn direction flips. This is the user's request, but the reverse direction was our call.
+- **Clear decks:** toppers are gone, along with rails, bolts, fins, roll hoops, exhausts and all deck-mounted defense gear. Only the tower and gun sit on top. Defenses at the front or sides (Steel Ram, Plow, Side Blades, Cutter) still have models, so opponents can no longer see the others by looking.
+- **Body shapes:** Wedge, Slab and Turtle, chosen in the Paintshop. They live in `Paint`, which the rules never read, and a test checks that fights play out identically. The five chassis keep their different hitboxes, because size is balanced against their stats.
+- **Smooth shading:** materials are no longer flat-shaded, and hulls use creased normals, like Blender's smooth by angle. Canyon rock and snow stay faceted on purpose.
+- **Self-righting:** a Flipper hit sets `flipT`, which stuns the target through the throw plus `FLIP_TIME` (2.5 seconds on the ground). 3 seconds on the ground made the Flipper win 84% of bot duels. Vertical spinners, drums and eggbeaters still throw robots without flipping them.
+- **Settings button:** a gear in the top right corner, on every screen after the name prompt. It pauses offline matches, while online matches carry on underneath. Keys rebound during a match work at once, but the HUD shows the old key names until the next match.
+- **Part previews:** the workshop shelf lists every part, and Preview shows it on the robot and in the numbers without buying or fitting it.
+- **Renames:** the Garage page is now Stats, so the robot's numbers in the side panel became Specs.
+
+## Earlier work
+
+Shipped before the latest work, and still true unless it says otherwise above.
+
+- **1v1 online:** Play Online is always a Duel on The Skyscraper with no bots. A match starts only once a second player joins.
+- **Three ways to play:** Play Online, Offline vs Bots (choice of map and mode, plus Career) and Training (a practice dummy, no payout).
+- **Workshop:** in the style of the original, with Chassis, Tower, Wheels, Engine, Power Source and an Armour dial, limited by Used Space.
+- **Paintshop:** paint on an unfolded robot with drawing tools and a 120-colour palette. Opponents see it. Paint jobs are in `src/game/skin.ts`.
+- **Melee first:** 20 main weapons, including spinners that store energy, a flipper, a crusher and forks.
+- **Guns:** fixed forward with no tracking, few shots per life, and a cooldown. The chaingun fires 10 rounds per press.
+- **Battery:** runs guns and the Shift boost.
+- **Look and sound:** BattleBots-style robots, a redrawn logo, synthesized sound and music, a 3-second intro, and a name prompt on first visit.
+- **Netcode:** fixed the online stutter with an input queue on the server and blended prediction on the client.
+- **Graphics:** Auto quality steps down on slower machines.
+
+### Controls
+
+WASD to drive, Space main weapon, Shift boost, Q gun, R defense, E look behind, 1–6 powerups, M mute, Esc menu. Players can rebind them in Settings, except that Ctrl can't be bound, because Ctrl+W closes the tab.
+
+## What the user wants next
+
+They were about to test by hand, and their feedback should drive what comes next. Open items, roughly by priority:
+
+1. **Human playtest:** nobody has played the new weapons by hand against another person. Balance has only been tuned against bots.
+2. **Sound by ear:** levels were measured but never listened to by the person building them, so the user's opinion overrides the numbers.
+3. **Google sign-in:** the name prompt is a stopgap until this exists. `GOOGLE_CLIENT_ID` isn't set on the server.
+4. **Name and paint moderation:** there is no filter on names and no report button for paint jobs. This is needed before sharing widely. The original had a Report Abuse button.
+5. **Custom domain:** `scrapriot.parbs.online` was discussed but not set up. DNS, GitHub Pages and the server's `ALLOWED_ORIGINS` would all need changing.
+6. **Database backups:** the nightly backup in [hosting.md](hosting.md) was never set up on the VM.
+7. **Roadmap items:** modular robots with two main weapons, weight as a stat.
+
+### Known weak spots
+
+- **Weapon balance:** the turning change reshuffled bot-only duels, so the numbers need a fresh look. Axe (about 76%) and Ring Spinner (about 71%) lead, Flipper is about 65%, and Magnet and Lifting Forks still trail at about 15%. Run `npm run balance -- 42 6` for current numbers.
+- **Bot driving:** bots can't turn on the spot either, so `mindTheEdge` in `src/sim/ai.ts` slows them for turns near a ledge and backs them away. Without it, about 70% of bot duels ended in a fall. It's now about 10%, except for the Flipper at about 60%, where falls are the point. Maps with pits rely on the older steering away from hazards, and weren't measured separately.
+- **Mini-Robot:** it still hunts on its own. The user asked for no gun tracking, and this is a drone, so it was left alone and flagged to them. They have not said either way.
+- **Windows Sticky Keys:** tapping Shift five times can bring up the prompt.
+- **Frame rate:** the Skyscraper was measured only in a software renderer, never on a weak real GPU. A friend of the user had low frame rates before Auto quality was added, and the result on their PC is unconfirmed.
+- **Promo video:** it shows the old game and needs re-rendering. Its files are in `C:\Users\N P\Projects\scrap-riot-promo\`.
+- **Open PRs #26–28:** these are old and can be closed.
+
+## Things worth knowing
+
+### Hosting
+
+| Piece | Where |
+| --- | --- |
+| Page | https://nparbs.github.io/scrap-riot/, GitHub Pages, deployed on push to `main` |
+| Server | `wss://game.parbs.online`, on the user's Debian VM on Proxmox, in `~/scrap-riot`, as user `deb` |
+| Tunnel | Cloudflare, routing `game.parbs.online` to `http://server:8787` |
+| Build setting | Repo variable `GAME_SERVER_URL` |
+
+- **Reaching the VM:** deploys go over the restricted SSH key above, which can do nothing else. For anything more, a Claude session called `deb-soft-haven` runs on the VM. It lacked Docker access last time, because it started before `deb` joined the `docker` group.
+- **Use `sg docker` on the VM, not `sudo`:** root's Docker context points at an old Docker Desktop socket, and `sudo git pull` can leave root-owned files in the repo.
+- **Passwords:** the database password is in `.env`, which is gitignored. Never put it in commits, docs or chat.
+
+### Working agreements
+
+- Commit or push only when the user asks, and branch first.
+- The user wants to be told plainly what's verified and what isn't.
+- Merging from a session may be blocked as "Merge Without Review". If it is, the user clicks merge. Don't route around it or ask another session to do it.
+- Saves don't need migrating, because the game is in early development. Bump the storage key instead (`SAVE_KEY`, `SETTINGS_KEY`).
+- Change `PROTOCOL_VERSION` when the page and server can no longer talk to each other, and say so, as both must then update.
+
+### Running and testing
+
+```sh
+npm run dev          # the game, on the port Vite prints
+npm run server:dev   # local server with a temporary database
+npm test
+npm run balance -- 42 6
+```
+
+For a second local player, use a private window. Two normal tabs share an account and get rejected.
+
+`smoke/full.mjs` in this session's scratchpad covers the settings button, renames, part previews, body shapes and flips. It's at `C:\Users\NPFFCD~1\AppData\Local\Temp\claude\c--Users-N-P-Projects\7dd40e2a-93f9-4282-8e5e-ed62253bce2b\scratchpad\smoke\`, and expects Vite on port 5208.
+
+Older browser test scripts are **not in the repo** either. They use `playwright-core` with headless Edge and a software renderer, and they are in a temporary folder that may not last:
+`C:\Users\NPFFCD~1\AppData\Local\Temp\claude\c--Users-N-P-Projects\539cd780-c477-41da-bf3d-55afad7e860c\scratchpad\smoke\`
+
+The useful ones are `final.mjs` (first-run flow and settings), `duel.mjs` (two-player match), `paint.mjs`, `robots.mjs` (contact sheets of every robot) and `loudness.mjs` (ranks sounds by A-weighted level). They expect Vite on port 5199. If they matter long-term, move them into the repo. In `final.mjs`, the "the buttons are right" check needs updating, because the Play Online button now includes the queue count.
+
+### Where things are
+
+| Area | Files |
+| --- | --- |
+| Balance and parts | `src/sim/data.ts` |
+| Rules (no DOM or three.js) | `src/sim/match.ts`, `src/sim/ai.ts`, `src/sim/arena.ts` |
+| Netcode | `server/room.ts`, `src/net/client.ts`, `src/net/protocol.ts`, `src/net/snapshot.ts` |
+| Accounts and API | `server/accounts.ts`, `server/api.ts` |
+| Robots and maps | `src/render/robots.ts`, `src/render/arenaScene.ts` |
+| Screens and HUD | `src/ui/screens.ts`, `src/ui/hud.ts`, `src/ui/painter.ts` |
+| Sound | `src/audio.ts`, `src/music.ts` |
+| Logo | `src/render/logo.ts` |
+
+The research behind the weapons is in [original-research.md](original-research.md). The privacy notes are in [privacy.md](privacy.md).

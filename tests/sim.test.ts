@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ARENA_ORDER, ARENAS } from '../src/sim/arena';
 import { DEFENSES, MATCH, MELEE, TURRETS, type DefenseId, type MeleeId, type TurretId } from '../src/sim/data';
-import { Match, type Bot, type BotSetup, type Loadout } from '../src/sim/match';
+import { Match, STEP, type Bot, type BotSetup, type Loadout } from '../src/sim/match';
 import { makeRivals, newSave } from '../src/game/progress';
 
 const ARENA = ARENAS.pit;
@@ -50,9 +50,48 @@ describe('driving', () => {
     const match = duel();
     const bot = match.bots[0];
     bot.heading = 0;
+    bot.input.throttle = 1;
+    bot.input.steer = 1;
+    run(match, 0.3);
+    expect(bot.heading).toBeGreaterThan(0);
+  });
+
+  it('cannot turn while stopped, whatever the steering says', () => {
+    const match = duel();
+    const bot = match.bots[0];
+    bot.heading = 0;
+    bot.input.steer = 1;
+    run(match, 1);
+    expect(bot.heading).toBe(0);
+  });
+
+  it('turns slowly at a crawl and at the full rate once rolling', () => {
+    const match = duel();
+    const bot = match.bots[0];
+    bot.heading = 0;
+    bot.vz = 1;
+    bot.input.throttle = 0.08;
     bot.input.steer = 1;
     match.step();
-    expect(bot.heading).toBeGreaterThan(0);
+    const crawl = bot.heading;
+    bot.heading = 0;
+    bot.vx = 0;
+    bot.vz = 10;
+    bot.input.throttle = 1;
+    match.step();
+    expect(crawl).toBeGreaterThan(0);
+    expect(crawl).toBeLessThan(bot.heading / 2);
+    expect(bot.heading).toBeCloseTo(bot.chassis.turn * STEP, 5);
+  });
+
+  it('steers the other way in reverse, as a car does', () => {
+    const match = duel();
+    const bot = match.bots[0];
+    bot.heading = 0;
+    bot.input.throttle = -1;
+    bot.input.steer = 1;
+    run(match, 0.3);
+    expect(bot.heading).toBeLessThan(0);
   });
 
   it('cannot leave the arena or sit inside a pillar', () => {

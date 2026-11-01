@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { newSave } from '../src/game/progress';
 import { ARENAS } from '../src/sim/arena';
-import { BATTERY_REGEN, BOOST_DRAIN, MELEE, TURRETS, type TurretId } from '../src/sim/data';
+import { BATTERY_REGEN, BOOST_DRAIN, FLIP_TIME, MELEE, TURRETS, type TurretId } from '../src/sim/data';
 import { Match, type Bot, type BotSetup, type Loadout } from '../src/sim/match';
 
 const pilot = (name: string, over: Partial<Loadout> = {}): BotSetup => ({ name, color: 0, isAI: false, loadout: { ...newSave().loadout, ...over } });
@@ -232,6 +232,29 @@ describe('cooldowns', () => {
   });
 });
 
+describe('flash bomb', () => {
+  it('is brief, short range and slow to come back', () => {
+    const [match, a, b] = fight({ defense: 'flash' });
+    b.z = a.z + 6;
+    a.input.defense = true;
+    match.step();
+    a.input.defense = false;
+    expect(b.blindT).toBeGreaterThan(0);
+    expect(b.blindT).toBeLessThanOrEqual(1.2);
+    run(match, 1.3);
+    expect(b.blindT).toBe(0);
+    expect(a.defenseCd).toBeGreaterThan(10);
+  });
+
+  it('does not reach far', () => {
+    const [match, a, b] = fight({ defense: 'flash' });
+    b.z = a.z + 12;
+    a.input.defense = true;
+    match.step();
+    expect(b.blindT).toBe(0);
+  });
+});
+
 describe('speed boost', () => {
   const topSpeed = (boost: boolean) => {
     const [match, a, b] = fight();
@@ -411,6 +434,50 @@ describe('thrown robots', () => {
     run(match, 1.6);
     expect(b.alive).toBe(false);
     expect(a.kills).toBe(1);
+  });
+
+  it('a flipped robot lands helpless, then rights itself after a few seconds', () => {
+    const [match, a, b] = fight({ melee: 'flipper' });
+    b.z = a.z + 3;
+    a.input.melee = true;
+    run(match, 0.2);
+    a.input.melee = false;
+    expect(b.flipT).toBeGreaterThan(0);
+    const landsAt = b.airT;
+    run(match, landsAt + 1);
+    expect(b.airT).toBe(0);
+    expect(b.flipT).toBeGreaterThan(0);
+
+    // Back on the ground but still on its back, so the wheels do nothing and nor do the weapons.
+    const { x, z, heading } = b;
+    b.vx = b.vz = 0;
+    b.input.throttle = 1;
+    b.input.steer = 1;
+    b.input.turret = true;
+    run(match, 1);
+    expect(Math.hypot(b.x - x, b.z - z)).toBeLessThan(0.01);
+    expect(b.heading).toBe(heading);
+    expect(match.projectiles.filter((p) => p.owner === b.id)).toHaveLength(0);
+
+    run(match, FLIP_TIME);
+    expect(b.flipT).toBe(0);
+    expect(b.stunT).toBe(0);
+    const before = { x: b.x, z: b.z };
+    run(match, 0.5);
+    expect(Math.hypot(b.x - before.x, b.z - before.z)).toBeGreaterThan(0.5);
+  });
+
+  it('a flipper can never keep a robot on its back forever', () => {
+    expect(MELEE.flipper.cooldown).toBeGreaterThan((MELEE.flipper.launch ?? 0) + FLIP_TIME);
+  });
+
+  it('only the flipper leaves robots upside down', () => {
+    const [match, a, b] = fight({ melee: 'vertbar' });
+    b.z = a.z + 3;
+    a.input.melee = true;
+    run(match, 3);
+    expect(b.hp).toBeLessThan(b.maxHp);
+    expect(b.flipT).toBe(0);
   });
 
   it('a flipper with an empty battery does nothing', () => {

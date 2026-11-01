@@ -70,23 +70,42 @@ describe('settings storage', () => {
   });
 });
 
-describe('pilot name and music settings', () => {
-  it('starts with no name, music on, and remembers both', () => {
+describe('pilot name and audio settings', () => {
+  const memory = () => {
     const store = new Map<string, string>();
-    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    return { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+  };
+
+  it('starts with no name and audible sound, and remembers changes', () => {
+    const storage = memory();
     const fresh = loadSettings(storage);
     expect(fresh.pilotName).toBe('');
-    expect(fresh.music).toBe(true);
+    expect(fresh.muted).toBe(false);
+    expect(fresh.volume.master).toBeGreaterThan(0);
+    expect(fresh.volume.music).toBeGreaterThan(0);
+    expect(fresh.volume.effects).toBeGreaterThan(0);
     fresh.pilotName = 'Rusty';
-    fresh.music = false;
+    fresh.muted = true;
+    fresh.volume = { master: 40, music: 0, effects: 55 };
     writeSettings(storage, fresh);
     const back = loadSettings(storage);
     expect(back.pilotName).toBe('Rusty');
-    expect(back.music).toBe(false);
+    expect(back.muted).toBe(true);
+    expect(back.volume).toEqual({ master: 40, music: 0, effects: 55 });
   });
 
-  it('ignores a corrupt name', () => {
-    expect(loadSettings({ getItem: () => JSON.stringify({ pilotName: 42 }) }).pilotName).toBe('');
+  it('keeps bad saved values from reaching the audio', () => {
+    const odd = loadSettings({ getItem: () => JSON.stringify({ pilotName: 42, muted: 'yes', volume: { master: 900, music: -5, effects: 'loud' } }) });
+    expect(odd.pilotName).toBe('');
+    expect(odd.muted).toBe(false);
+    expect(odd.volume.master).toBe(100);
+    expect(odd.volume.music).toBe(0);
+    expect(odd.volume.effects).toBe(defaultSettings().volume.effects);
+  });
+
+  it('settings changed on one copy do not leak into the defaults', () => {
+    defaultSettings().volume.master = 1;
+    expect(defaultSettings().volume.master).toBe(100);
   });
 });
 
@@ -165,7 +184,7 @@ describe('tutorial', () => {
   it('runs to completion and shows rebound keys', () => {
     const t = new Tutorial({ ...DEFAULT_BINDINGS, power1: 'KeyZ' });
     t.update(2, { ...idle, throttle: 1 });
-    t.update(2, { ...idle, steer: 1 });
+    t.update(2, { ...idle, steer: 1, throttle: 1 });
     t.update(2, { ...idle, turret: true });
     t.update(2, { ...idle, melee: true });
     t.update(0, { ...idle, defense: true });

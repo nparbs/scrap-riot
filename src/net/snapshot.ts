@@ -7,7 +7,7 @@ const MOTION = ['x', 'z', 'heading', 'vx', 'vz'] as const;
 const STATE = [
   'hp', 'respawnT', 'meleeCd', 'turretCd', 'defenseCd', 'shieldT', 'megaT', 'boostT', 'rageT', 'stunT',
   'invulnT', 'flashT', 'burnT', 'slowT', 'blindT', 'cloakT', 'xrayT', 'regenT', 'bladesT', 'kamikazeT',
-  'meleeWindup', 'meleeSwing', 'lungeT', 'ammo', 'shots', 'airT', 'meleeCharge', 'hillScore', 'kills', 'deaths', 'damageDealt', 'earned', 'eliminatedAt',
+  'meleeWindup', 'meleeSwing', 'lungeT', 'ammo', 'shots', 'airT', 'flipT', 'meleeCharge', 'hillScore', 'kills', 'deaths', 'damageDealt', 'earned', 'eliminatedAt',
 ] as const;
 const FLAGS = ['alive', 'out', 'meleeActive', 'turretFiring', 'oiled', 'glued'] as const;
 

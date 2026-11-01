@@ -15,6 +15,9 @@ const WRECK_LIFE = 12;
 const FALL_TIME = 1;
 const ENVIRONMENT_INTENSITY = 0.55;
 const THROW_HEIGHT = 3.2;
+/** How long a flipped robot takes to roll onto its back, and to roll back onto its wheels. */
+const ROLL_OVER_TIME = 0.4;
+const RIGHTING_TIME = 0.5;
 const MATTE_METALNESS = 0.15;
 const FILL_LIGHT = 1.3;
 
@@ -29,6 +32,9 @@ interface BotVisual {
   fallT: number;
   /** The longest it has been thrown for in this flight, to shape the arc. */
   airPeak: number;
+  flipPeak: number;
+  /** How far round the robot has rolled: half a turn is upside down, and a full turn is back on its wheels. */
+  roll: number;
   /** How many armor plates have come off so far. */
   platesLost: number;
 }
@@ -181,7 +187,7 @@ export class MatchView {
     const label = nameSprite(bot.name, bot.color);
     label.renderOrder = 12;
     this.arena.scene.add(model.root, barBack, barFront, label);
-    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, fallT: 0, airPeak: 0, platesLost: 0 });
+    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, fallT: 0, airPeak: 0, flipPeak: 0, roll: 0, platesLost: 0 });
   }
 
   private clearMatch(): void {
@@ -382,14 +388,28 @@ export class MatchView {
     const self = bot === viewer;
     const hidden = bot.cloakT > 0 && !self && viewer.xrayT <= 0;
     model.root.visible = showing && !hidden && !(bot.invulnT > 0 && Math.floor(this.spin * 14) % 2 === 0);
-    if (!showing) return;
+    if (!showing) {
+      v.roll = 0;
+      return;
+    }
     this.setCloakLook(model, bot.cloakT > 0);
 
     const x = bot.prevX + (bot.x - bot.prevX) * alpha;
     const z = bot.prevZ + (bot.z - bot.prevZ) * alpha;
     v.airPeak = bot.airT > 0 ? Math.max(v.airPeak, bot.airT) : 0;
     const flight = v.airPeak > 0 ? Math.sin(Math.PI * (1 - bot.airT / v.airPeak)) : 0;
-    model.root.position.set(x, THROW_HEIGHT * flight, z);
+    // Snapshots only arrive 20 times a second online, so the roll eases toward where it should be.
+    let rollTo = v.roll > 0 ? Math.PI * 2 : 0;
+    if (bot.flipT > 0) {
+      v.flipPeak = Math.max(v.flipPeak, bot.flipT);
+      rollTo = bot.flipT < RIGHTING_TIME ? Math.PI * (2 - bot.flipT / RIGHTING_TIME) : Math.PI * Math.min(1, (v.flipPeak - bot.flipT) / ROLL_OVER_TIME);
+    } else {
+      v.flipPeak = 0;
+    }
+    v.roll += (rollTo - v.roll) * Math.min(1, dt * 14);
+    if (bot.flipT <= 0 && v.roll > Math.PI * 1.98) v.roll = 0;
+    model.root.position.set(x, THROW_HEIGHT * flight + model.rollHeight * Math.sin(v.roll / 2), z);
+    model.root.rotation.z = v.roll;
     model.root.rotation.y = lerpAngle(bot.prevHeading, bot.heading, alpha);
     model.root.rotation.x = -0.5 * flight;
 

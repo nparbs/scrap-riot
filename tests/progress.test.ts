@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, upgradeCost, writeSave } from '../src/game/progress';
-import { MELEE, POWERUP_CAP } from '../src/sim/data';
+import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, previewLoadout, STARTING_MONEY, upgradeCost, writeSave } from '../src/game/progress';
+import { buildStats, CHASSIS, MELEE, POWERUP_CAP, TOWERS, TURRETS } from '../src/sim/data';
+
+describe('trying out parts', () => {
+  it('shows the part without buying or fitting it, even with no money', () => {
+    const save = newSave();
+    save.money = 0;
+    const before = JSON.stringify(save);
+    const shown = previewLoadout(save.loadout, { slot: 'chassis', id: 'juggernaut' });
+    expect(shown.chassis).toBe('juggernaut');
+    expect(buildStats(shown).hp).toBeGreaterThan(buildStats(save.loadout).hp);
+    expect(JSON.stringify(save)).toBe(before);
+  });
+
+  it('leaves the robot alone with nothing being tried', () => {
+    const save = newSave();
+    expect(previewLoadout(save.loadout, null)).toBe(save.loadout);
+  });
+});
 
 describe('garage', () => {
   it('buys once, then equips for free', () => {
@@ -36,7 +53,7 @@ describe('garage', () => {
   it('banks results and spends used powerups', () => {
     const save = newSave();
     applyResult(save, 500, 1, { rage: 0, megashield: 0, cloaking: 0, xray: 0, repair: 0, battery: 1 });
-    expect(save.money).toBe(750);
+    expect(save.money).toBe(STARTING_MONEY + 500);
     expect(save.wins).toBe(1);
     expect(save.loadout.powerups.repair).toBe(0);
   });
@@ -65,5 +82,14 @@ describe('rivals', () => {
     vet.loadout.upgrades = { armor: 5, engine: 5, weapons: 5 };
     expect(makeRivals(rookie, 3, 1)[0].loadout.upgrades.armor).toBe(0);
     expect(makeRivals(vet, 3, 1)[0].loadout.upgrades.armor).toBe(5);
+  });
+});
+
+describe('a new player', () => {
+  it('can afford a couple of parts straight away', () => {
+    const { money } = newSave();
+    expect(money).toBeGreaterThanOrEqual(MELEE.vertdisc.price + TOWERS.small.price);
+    expect(money).toBeGreaterThanOrEqual(MELEE.drum.price + TURRETS.grenade.price);
+    expect(money).toBeLessThan(CHASSIS.juggernaut.price);
   });
 });

@@ -1,5 +1,7 @@
 # Roadmap
 
+For where the work stands right now, see [the handoff notes](docs/HANDOFF.md).
+
 Each milestone below has a matching GitHub milestone, and its open items are tracked as issues.
 
 ## How close is this to the original?
@@ -36,10 +38,23 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] Synthesized music for the menus and for battle
 - [x] Cooldowns on strong weapons, and a 10-round burst for the chaingun
 - [x] A short intro, and asking for a name when the game first opens
+- [x] A paintshop for drawing on the unfolded robot, shown to opponents
+- [x] 1v1 online with no bots, plus separate Offline vs Bots and Training
+- [x] Loudness-matched weapon sounds, with volume settings for master, music and effects
+- [x] A weaker Flash Bomb, and $1,000 to start with
+- [x] Players waiting in the queue shown on the Play Online button, and a list of recent players
+- [x] Robots only turn while rolling, and steer like a car in reverse
+- [x] Clear decks: toppers and clutter gone, leaving only the tower and gun on top
+- [x] Three body shapes, for looks only: Wedge, Slab and Turtle
+- [x] Smooth shading on robots and maps, with hard edges kept where they belong
+- [x] A settings button in the corner, usable at any time, including during a match
+- [x] Preview any part in the workshop before you can afford it
+- [x] The Garage page renamed Stats, and the robot's numbers renamed Specs
 - [ ] Replace the name prompt with Google sign-in, and add a name filter
+- [ ] A report button or a way to hide other players' paint jobs
 - [ ] Sparks and visible damage from spinner hits
 - [ ] Modular robots: two main weapons at once, front and back, as in the original's weapon slots
-- [ ] Self-righting: robots that land upside down
+- [x] Self-righting: a Flipper lands robots upside down, and they right themselves about 3 seconds later
 - [ ] Weight as a stat, as the original's parts had
 
 ## v0.1: Playable slice (done)
@@ -73,7 +88,7 @@ The current tuning comes from AI-versus-AI data and has not had a human playtest
 - [x] Five new maps: rooftop, furnace, canyon, foundry, frozen lake
 - [x] Every weapon found in the original games ([notes](docs/original-research.md))
 - [x] Ammo for turrets
-- [x] Paint shop: colors, patterns, toppers
+- [x] Paint shop: colors, patterns, body shapes
 - [x] Rear-mounted weapon option
 - [x] Battle damage: scorched paint and armor plates falling off
 
@@ -101,7 +116,7 @@ The original was built around online play, so this was moved to the front of the
 ## v1.0: Release
 
 - [ ] Touch controls for phones and tablets
-- [ ] Music
+- [x] Music
 - [ ] Accessibility: color-blind palette, reduced screen shake
 - [ ] Trademark and name check before wide release
 - [ ] Launch on the web and itch.io

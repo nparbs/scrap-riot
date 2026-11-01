@@ -7,13 +7,13 @@ import {
   ENGINES,
   MELEE,
   PAINT_COLORS,
+  BODIES,
   PATTERNS,
   POWER_SOURCES,
   POWERUPS,
   POWERUP_CAP,
   spaceCapacity,
   spaceUsed,
-  TOPPERS,
   TOWERS,
   TURRETS,
   UPGRADES,
@@ -27,7 +27,7 @@ import {
   type PatternId,
   type PowerId,
   type PowerupId,
-  type TopperId,
+  type BodyId,
   type TowerId,
   type TurretId,
   type UpgradeId,
@@ -63,11 +63,13 @@ export interface Save {
 export const CATALOG = { chassis: CHASSIS, tower: TOWERS, wheels: WHEELS, engine: ENGINES, power: POWER_SOURCES, melee: MELEE, turret: TURRETS, defense: DEFENSES };
 
 const SELL_RATE = 0.5;
+/** Enough to buy a couple of parts straight away. */
+export const STARTING_MONEY = 1000;
 
 export function newSave(): Save {
   return {
     name: 'Pilot',
-    money: 250,
+    money: STARTING_MONEY,
     matches: 0,
     wins: 0,
     owned: { chassis: ['brawler'], tower: ['medium'], wheels: ['large4'], engine: ['medium'], power: ['alkaline'], melee: ['chainsaw'], turret: ['minigun'], defense: ['shield'] },
@@ -110,9 +112,19 @@ export function writeSave(storage: Pick<Storage, 'setItem'> | null, save: Save):
 const priceOf = (slot: Slot, id: string) => (CATALOG[slot] as Record<string, { price: number }>)[id].price;
 
 /** Would the robot still have room with this one part changed? */
+export interface PartPreview {
+  slot: Slot;
+  id: string;
+}
+
 export function partFits(save: Save, slot: Slot, id: string): boolean {
   const next = { ...save.loadout, [slot]: id };
   return spaceUsed(next) <= spaceCapacity(next);
+}
+
+/** The robot as it would be with this part, for trying one out without buying or fitting it. */
+export function previewLoadout<T extends object>(loadout: T, part: PartPreview | null): T {
+  return part ? { ...loadout, [part.slot]: part.id } : loadout;
 }
 
 /** Buys the part if needed, then fits it. A part with no room goes on the shelf until there is. */
@@ -200,7 +212,7 @@ function rivalPaint(color: number, rng: () => number): Paint {
     primary: color,
     secondary: pick(PAINT_COLORS, rng),
     pattern: pick(Object.keys(PATTERNS) as PatternId[], rng),
-    topper: pick(Object.keys(TOPPERS) as TopperId[], rng),
+    body: pick(Object.keys(BODIES) as BodyId[], rng),
   };
 }
 
