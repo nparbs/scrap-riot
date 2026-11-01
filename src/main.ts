@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Sfx } from './audio';
-import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, sellPart, setArmour, writeSave, type Save, type Slot } from './game/progress';
+import { applyResult, buyOrEquip, buyPowerup, buyUpgrade, loadSave, makeRivals, newSave, previewLoadout, sellPart, setArmour, writeSave, type PartPreview, type Save, type Slot } from './game/progress';
 import { awardMedal, careerResult, fightSetups, loadCareer, writeCareer, type Fight } from './game/career';
 import { activeLevel, AutoQuality, DEFAULT_BINDINGS, loadSettings, QUALITY, rebind, writeSettings, type Action } from './game/settings';
 import { Tutorial } from './game/tutorial';
 import { Keyboard } from './input';
 import { Api, ApiError } from './net/api';
 import { NetClient, type NetFailure } from './net/client';
-import { sanitizeName, type GarageAction, type HistoryEntry, type LeaderboardEntry, type Profile } from './net/protocol';
+import { sanitizeName, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineStatus, type Profile } from './net/protocol';
 import { GarageView } from './render/garageView';
 import { installLogoIcon } from './render/logo';
 import { MatchView } from './render/matchView';
@@ -17,16 +17,18 @@ import { emptyInput, Match, STEP, type Bot, type BotSetup, type GameEvent } from
 import { renderGoogleButton } from './ui/google';
 import { Hud } from './ui/hud';
 import { Painter } from './ui/painter';
-import { garageScreen, introScreen, lobbyScreen, menuScreen, nameScreen, pauseScreen, resultsScreen, settingsScreen, type BuyCategory, type GarageTab, type SideTab } from './ui/screens';
+import { garageScreen, introScreen, lobbyScreen, menuScreen, nameScreen, pauseScreen, playersPanel, queueLabel, resultsScreen, settingsScreen, type BuyCategory, type GarageTab, type SideTab } from './ui/screens';
 
 type Mode = 'intro' | 'menu' | 'garage' | 'lobby' | 'match' | 'paused' | 'results';
 
 /** Without a configured server, the build simply offers no online mode. */
+const SETTINGS_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-1.7-1L15 3.5h-4L10.6 6a7.6 7.6 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 1.7 1l.3 2.5h4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.4 1 2-3.4zM13 15.2a3.2 3.2 0 1 1 0-6.4 3.2 3.2 0 0 1 0 6.4z" transform="translate(-1 0)"/></svg>';
 const SERVER_URL: string = import.meta.env.VITE_SERVER_URL || (import.meta.env.DEV ? 'ws://localhost:8787' : '');
 
 /** Shows between the workshop's panels. */
 const WORKSHOP_METAL = 0x4d696b;
 const SKIN_SAVE_DELAY_MS = 700;
+const ONLINE_POLL_MS = 15_000;
 const TRAINING_SECONDS = 30 * 60;
 /** How far away another robot's continuous sounds can be heard. */
 const SOUND_RANGE = 40;
@@ -91,6 +93,15 @@ class Game {
   private skinTimer = 0;
   private skinSave: Promise<void> | null = null;
   private wasFiring = false;
+  private online: OnlineStatus | null = null;
+  /** Redraws the settings page, while it's open. */
+  private settingsOpen: (() => void) | null = null;
+  /** Settings paused an offline match, so closing them should carry on with it. */
+  private settingsPaused = false;
+  /** Sits above every other screen, so settings open over whatever is happening. */
+  private readonly settingsLayer = document.createElement('div');
+  private readonly settingsButton = document.createElement('button');
+  private partPreview: PartPreview | null = null;
   /** This match is the Training session, which isn't a real fight and doesn't count for anything. */
   private training = false;
   private tutorial: Tutorial | null = null;
@@ -127,8 +138,20 @@ class Game {
     document.body.appendChild(this.fpsEl);
 
     this.keyboard.onFirstInput = () => this.sfx.unlock();
-    this.keyboard.onPause = () => this.togglePause();
-    this.keyboard.onMute = () => this.sfx.toggleMute();
+    this.keyboard.onPause = () => (this.settingsOpen ? this.closeSettings() : this.togglePause());
+    this.settingsLayer.className = 'settings-layer';
+    this.settingsButton.className = 'settings-button';
+    this.settingsButton.innerHTML = SETTINGS_ICON;
+    this.settingsButton.title = 'Settings';
+    this.settingsButton.setAttribute('aria-label', 'Settings');
+    this.settingsButton.hidden = true;
+    this.settingsButton.addEventListener('click', () => {
+      // A focused button would swallow the driving keys afterwards.
+      this.settingsButton.blur();
+      this.openSettings();
+    });
+    document.body.append(this.settingsButton, this.settingsLayer);
+    this.keyboard.onMute = () => this.toggleMute();
     window.addEventListener('pointerdown', () => this.sfx.unlock());
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden || this.mode !== 'match') return;
@@ -138,8 +161,10 @@ class Game {
     });
     this.view.onEvent = (event) => this.onMatchEvent(event);
     this.painter.onChange = (skin, done) => this.onSkinChange(skin, done);
+    window.setInterval(() => void this.pollOnline(), ONLINE_POLL_MS);
 
-    this.sfx.setMusicEnabled(this.settings.music);
+    this.sfx.setVolumes(this.settings.volume);
+    this.sfx.setMuted(this.settings.muted);
     this.setScreen(introScreen(() => this.afterIntro()));
     requestAnimationFrame((t) => this.frame(t));
   }
@@ -196,11 +221,18 @@ class Game {
     this.applyQuality();
   }
 
-  private openSettings(back: () => void): void {
+  private openSettings(): void {
+    if (this.settingsOpen) return;
+    // Online the match carries on for the other player, so only an offline one can wait.
+    if (this.mode === 'match' && !this.net) {
+      this.mode = 'paused';
+      this.settingsPaused = true;
+      this.sfx.silence();
+    }
     let waiting: Action | null = null;
     const save = () => writeSettings(this.storage, this.settings);
     const render = () => {
-      this.setScreen(
+      this.settingsLayer.replaceChildren(
         settingsScreen(this.settings, waiting, {
           onQuality: (quality) => {
             this.settings.quality = quality;
@@ -219,12 +251,16 @@ class Game {
             save();
             render();
           },
-          onMusic: () => {
-            this.settings.music = !this.settings.music;
-            this.sfx.setMusicEnabled(this.settings.music);
-            save();
-            render();
+          onVolume: (kind, value) => {
+            this.settings.volume[kind] = value;
+            this.sfx.setVolumes(this.settings.volume);
           },
+          onVolumeSet: (kind) => {
+            save();
+            // A sample at the new level, since nothing else may be playing. The music speaks for itself.
+            if (kind !== 'music') this.sfx.meleeHit('hammer', 1);
+          },
+          onMute: () => this.toggleMute(),
           onBind: (action) => {
             waiting = action;
             render();
@@ -245,15 +281,35 @@ class Game {
             save();
             render();
           },
-          onBack: () => {
-            this.keyboard.cancelCapture();
-            back();
-          },
+          onBack: () => this.closeSettings(),
         }),
       );
     };
+    this.settingsOpen = render;
     this.sfx.click();
     render();
+  }
+
+  private closeSettings(): void {
+    this.sfx.click();
+    this.keyboard.cancelCapture();
+    this.settingsOpen = null;
+    this.settingsLayer.replaceChildren();
+    if (this.settingsPaused) {
+      this.settingsPaused = false;
+      this.mode = 'match';
+      this.keyboard.clear();
+    }
+    // Key names are shown on these screens, and may have just changed.
+    if (this.mode === 'garage') this.refreshGarage();
+    else if (this.mode === 'menu') this.showMenuScreen();
+  }
+
+  private toggleMute(): void {
+    this.settings.muted = !this.settings.muted;
+    this.sfx.setMuted(this.settings.muted);
+    writeSettings(this.storage, this.settings);
+    this.settingsOpen?.();
   }
 
   private beginTutorial(): void {
@@ -290,13 +346,14 @@ class Game {
 
   private showMenu(): void {
     this.mode = 'menu';
+    this.settingsButton.hidden = false;
     this.startDemo();
     this.showMenuScreen();
   }
 
   private showMenuScreen(): void {
     this.setScreen(
-      menuScreen(() => this.showGarage(), () => this.openSettings(() => this.showMenuScreen()), this.settings.bindings),
+      menuScreen(() => this.showGarage(), () => this.openSettings(), this.settings.bindings),
     );
   }
 
@@ -318,7 +375,22 @@ class Game {
     this.sfx.silence();
     this.sfx.setTrack('menu');
     this.refreshGarage();
-    void this.connectAccount();
+    void this.connectAccount().then(() => this.pollOnline());
+  }
+
+  /** Updates just the parts of the page that show this, so nothing being done there is interrupted. */
+  private async pollOnline(): Promise<void> {
+    if (!this.api || this.mode !== 'garage' || document.hidden) return;
+    try {
+      this.online = await this.api.online();
+    } catch {
+      // An older server or a blip. Whatever is showing stays until the next try.
+      return;
+    }
+    const queue = this.ui.querySelector('[data-queue]');
+    if (queue) queue.textContent = queueLabel(this.online);
+    const players = this.ui.querySelector('[data-players]');
+    if (players) players.innerHTML = playersPanel(this.online);
   }
 
   private setProfile(profile: Profile): void {
@@ -365,7 +437,7 @@ class Game {
   }
 
   private previewRobot(): void {
-    const { chassis, melee, turret, defense, paint = DEFAULT_PAINT, rearMelee, tower, wheels } = this.save.loadout;
+    const { chassis, melee, turret, defense, paint = DEFAULT_PAINT, rearMelee, tower, wheels } = previewLoadout(this.save.loadout, this.partPreview);
     this.garage.setBuild({ chassis, melee, turret, defense, paint, rearMelee, tower, wheels, color: paint.primary });
   }
 
@@ -404,7 +476,7 @@ class Game {
     if (!this.api || !this.profile) return;
     try {
       [this.history, this.leaderboard] = await Promise.all([this.api.history(), this.api.leaderboard()]);
-      if (this.mode === 'garage' && (this.garageTab === 'garage' || this.sideTab === 'highscore')) this.refreshGarage();
+      if (this.mode === 'garage' && (this.garageTab === 'stats' || this.sideTab === 'highscore')) this.refreshGarage();
     } catch {
       // The tab still shows the player's own stats without these.
     }
@@ -431,6 +503,7 @@ class Game {
     this.previewRobot();
     const panel = this.ui.querySelector('.ws-panel');
     const scroll = panel ? panel.scrollTop : 0;
+    const shelfScroll = this.ui.querySelector('.shelf-items')?.scrollLeft ?? 0;
     const buy = (ok: boolean) => {
       if (ok) {
         this.sfx.click();
@@ -461,7 +534,17 @@ class Game {
       garageScreen(
         this.save,
         {
-          onEquip: (slot: Slot, id: string) => change({ type: 'equip', slot, id }, () => buyOrEquip(this.save, slot, id)),
+          onEquip: (slot: Slot, id: string) => {
+            this.partPreview = null;
+            change({ type: 'equip', slot, id }, () => buyOrEquip(this.save, slot, id));
+          },
+          onPreviewPart: (part) => {
+            this.partPreview = part;
+            // The picture is what this is for, so make sure it's showing.
+            if (part && this.sideTab !== 'stats') this.sideTab = 'preview';
+            this.sfx.click();
+            this.refreshGarage();
+          },
           onSell: (slot, id) => change({ type: 'sell', slot, id }, () => sellPart(this.save, slot, id)),
           onArmour: (armour) => change({ type: 'armour', armour }, () => setArmour(this.save, armour)),
           onShelf: (shelf) => {
@@ -491,13 +574,14 @@ class Game {
           onFight: () => this.startMatch(),
           onOnline: () => this.startOnline(),
           onTraining: () => this.startTraining(),
-          onSettings: () => this.openSettings(() => this.refreshGarage()),
+          onSettings: () => this.openSettings(),
           onTab: (tab) => {
             this.garageTab = tab;
+            this.partPreview = null;
             this.sfx.click();
             this.refreshGarage();
             this.ui.querySelector('.ws-panel')!.scrollTop = 0;
-            if (tab === 'garage') void this.loadProfileTab();
+            if (tab === 'stats') void this.loadProfileTab();
           },
           onPaint: (paint) =>
             change({ type: 'paint', paint }, () => {
@@ -550,6 +634,8 @@ class Game {
           side: this.sideTab,
           buyCategory: this.buyCategory,
           shelf: this.shelf,
+          partPreview: this.partPreview,
+          online: this.online,
           career: this.career,
           account: this.profile && {
             profile: this.profile,
@@ -563,6 +649,8 @@ class Game {
     );
     const next = this.ui.querySelector('.ws-panel');
     if (next) next.scrollTop = scroll;
+    const shelfItems = this.ui.querySelector('.shelf-items');
+    if (shelfItems) shelfItems.scrollLeft = shelfScroll;
     this.mountPainter();
     this.mountGoogleButton();
   }
@@ -755,7 +843,7 @@ class Game {
         this.sfx.arc(near(event.points[0].x, event.points[0].z));
         break;
       case 'beam':
-        this.sfx.arc(near(event.x1, event.z1));
+        this.sfx.shot('laser', near(event.x1, event.z1));
         break;
       case 'pulse':
         this.sfx.meleeHit('hammer', near(event.x, event.z));

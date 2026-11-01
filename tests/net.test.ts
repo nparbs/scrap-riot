@@ -217,11 +217,11 @@ describe('online match', () => {
     const s = await server();
     const { ws, inbox, opened } = raw(s.port);
     await opened;
-    const paint = { primary: 0x35d0e6, secondary: 123456, pattern: 'flames', topper: '<script>' };
+    const paint = { primary: 0x35d0e6, secondary: 123456, pattern: 'flames', body: '<script>' };
     ws.send(JSON.stringify({ t: 'join', v: PROTOCOL_VERSION, name: 'Painter', loadout: { paint } }));
     await until(() => inbox.some((m) => m.t === 'start'));
     const start = inbox.find((m) => m.t === 'start') as unknown as { setups: { loadout: { paint: Record<string, unknown> } }[] };
-    expect(start.setups[0].loadout.paint).toEqual({ primary: 0x35d0e6, secondary: 0x33363b, pattern: 'flames', topper: 'none' });
+    expect(start.setups[0].loadout.paint).toEqual({ primary: 0x35d0e6, secondary: 0x33363b, pattern: 'flames', body: 'wedge' });
   });
 
   it('puts two players in one match and fills the rest with bots', async () => {

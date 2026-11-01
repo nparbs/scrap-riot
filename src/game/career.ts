@@ -117,7 +117,7 @@ export function fightSetups(fight: Fight, seed: number): BotSetup[] {
         turret,
         defense,
         powerups: { rage: 1, megashield: 1, cloaking: 0, xray: 0, repair: 1, battery: 1 },
-        paint: { primary: color, secondary: 0x33363b, pattern: 'hazard', topper: 'crown' },
+        paint: { primary: color, secondary: 0x33363b, pattern: 'hazard', body: 'slab' },
       },
     },
     ...rivals.slice(1),

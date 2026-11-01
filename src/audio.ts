@@ -2,11 +2,33 @@ import { Music, type Track } from './music';
 import type { MeleeId, TurretId } from './sim/data';
 
 const MASTER_VOLUME = 0.6;
-const MUSIC_VOLUME = 0.3;
+const MUSIC_VOLUME = 0.6;
 /** Fast weapons can land hits every frame, and a sound for each would be a buzz. */
 const HIT_GAP = 0.05;
 
 /** What the continuous sounds should be doing right now. */
+// Each sound is built differently, so the same volume number comes out at very different loudness.
+// These levels were set by rendering every sound and measuring it with A-weighting, which follows
+// how sensitive hearing is at each pitch. Peak level alone misses that a whine at 1 kHz sounds far
+// louder than a thud with the same peak. Re-measure after changing how a sound is made.
+const MELEE_LEVEL: Record<MeleeId, number> = {
+  vertbar: 1.23, vertdisc: 1.26, shell: 1.26, horizbar: 1.29, flipper: 1.07, axe: 1.66, hammer: 1.7, undercutter: 1.7, crusher: 1.7,
+  hammersaw: 1.74, drum: 1.78, eggbeater: 1.78, ram: 2.16, chainsaw: 2.66, drill: 2.66, rollingpin: 2.66, dagger: 2.69, magnet: 2.72, claw: 3, forks: 3,
+};
+const GUN_LEVEL: Record<TurretId, number> = {
+  bunkerbuster: 0.65, heavyrocket: 0.91, rockets: 1.05, minigun: 0.72, laser: 1, discs: 1.86, spear: 2.54, mortar: 2.57, grenade: 3.1, arc: 2, flamethrower: 1,
+};
+
+/** Each from 0 to 100, as set in Settings. */
+export interface Volumes {
+  master: number;
+  music: number;
+  effects: number;
+}
+
+/** Hearing is roughly logarithmic, so a squared slider feels even all the way along. */
+const sliderGain = (value: number) => (value / 100) ** 2;
+
 export interface LoopState {
   /** How hard the engine is working, from 0 to 1. Below zero is off. */
   engine: number;
@@ -30,7 +52,7 @@ export class Sfx {
   private musicBus: GainNode | null = null;
   private music: Music | null = null;
   private wantedTrack: Track | null = null;
-  private musicOn = true;
+  private volumes: Volumes = { master: 100, music: 70, effects: 100 };
   private noise: AudioBuffer | null = null;
   private engineGain: GainNode | null = null;
   private engineOsc: OscillatorNode | null = null;
@@ -40,7 +62,7 @@ export class Sfx {
   private flameGain: GainNode | null = null;
   private spinGain: GainNode | null = null;
   private spinOsc: OscillatorNode | null = null;
-  private lastHit = 0;
+  private lastHit = -1;
 
   /** Browsers only allow audio after a user gesture, so call this from input handlers. */
   unlock(): void {
@@ -53,7 +75,6 @@ export class Sfx {
     const ctx = new AudioCtor();
     this.ctx = ctx;
     this.master = ctx.createGain();
-    this.master.gain.value = this.muted ? 0 : MASTER_VOLUME;
     // Keeps a big pile-up of explosions and music from clipping.
     const limiter = ctx.createDynamicsCompressor();
     limiter.threshold.value = -10;
@@ -62,8 +83,8 @@ export class Sfx {
     this.effects = ctx.createGain();
     this.effects.connect(this.master);
     this.musicBus = ctx.createGain();
-    this.musicBus.gain.value = MUSIC_VOLUME;
     this.musicBus.connect(this.master);
+    this.applyVolumes();
 
     const buffer = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -81,7 +102,7 @@ export class Sfx {
     this.engineOsc.connect(filter).connect(this.engineGain).connect(this.effects);
     this.engineOsc.start();
 
-    this.sawGain = this.noiseLoop(buffer, 'bandpass', 2400, 3);
+    this.sawGain = this.noiseLoop(buffer, 'bandpass', 1700, 2);
     this.flameGain = this.noiseLoop(buffer, 'lowpass', 900, 1);
     const boost = this.noiseLoop(buffer, 'bandpass', 700, 1.5);
     this.boostGain = boost;
@@ -93,7 +114,7 @@ export class Sfx {
     this.spinOsc.frequency.value = 80;
     const spinFilter = ctx.createBiquadFilter();
     spinFilter.type = 'bandpass';
-    spinFilter.frequency.value = 1300;
+    spinFilter.frequency.value = 850;
     spinFilter.Q.value = 0.8;
     this.spinGain = ctx.createGain();
     this.spinGain.gain.value = 0;
@@ -101,7 +122,7 @@ export class Sfx {
     this.spinOsc.start();
 
     this.music = new Music(ctx, this.musicBus, buffer);
-    if (this.musicOn) this.music.play(this.wantedTrack);
+    this.music.play(this.volumes.music > 0 ? this.wantedTrack : null);
   }
 
   /** The filter of the loop made most recently, for the one loop that sweeps. */
@@ -124,21 +145,28 @@ export class Sfx {
     return gain;
   }
 
-  toggleMute(): boolean {
-    this.muted = !this.muted;
-    if (this.master) this.master.gain.value = this.muted ? 0 : MASTER_VOLUME;
-    return this.muted;
+  private applyVolumes(): void {
+    if (this.master) this.master.gain.value = this.muted ? 0 : MASTER_VOLUME * sliderGain(this.volumes.master);
+    if (this.effects) this.effects.gain.value = sliderGain(this.volumes.effects);
+    if (this.musicBus) this.musicBus.gain.value = MUSIC_VOLUME * sliderGain(this.volumes.music);
+  }
+
+  setVolumes(volumes: Volumes): void {
+    this.volumes = { ...volumes };
+    this.applyVolumes();
+    // With the music all the way down, there's no point playing it at all.
+    this.music?.play(volumes.music > 0 ? this.wantedTrack : null);
+  }
+
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    this.applyVolumes();
   }
 
   /** Chooses what plays. It waits for the first click or key press if the browser requires one. */
   setTrack(track: Track | null): void {
     this.wantedTrack = track;
-    if (this.musicOn) this.music?.play(track);
-  }
-
-  setMusicEnabled(on: boolean): void {
-    this.musicOn = on;
-    this.music?.play(on ? this.wantedTrack : null);
+    if (this.volumes.music > 0) this.music?.play(track);
   }
 
   private burst(volume: number, duration: number, freq: number, type: BiquadFilterType, sweepTo?: number): void {
@@ -175,7 +203,7 @@ export class Sfx {
 
   /** Struck metal: a sharp click, then a few out-of-tune ringing partials that die away. */
   private clang(volume: number, pitch: number, ring: number): void {
-    this.burst(volume * 0.7, 0.05, 3500, 'highpass');
+    this.burst(volume * 0.7, 0.05, 2400, 'bandpass');
     for (const [ratio, level] of [[1, 1], [2.76, 0.6], [5.4, 0.35]] as const) {
       this.tone(volume * 0.22 * level, ring / ratio ** 0.5, pitch * ratio, pitch * ratio * 0.985, 'triangle');
     }
@@ -186,7 +214,8 @@ export class Sfx {
     this.burst(volume * 0.6, duration * 0.7, 420, 'lowpass');
   }
 
-  shot(kind: TurretId, volume: number): void {
+  shot(kind: TurretId, distanceVolume: number): void {
+    const volume = distanceVolume * GUN_LEVEL[kind];
     switch (kind) {
       case 'rockets':
       case 'heavyrocket':
@@ -210,7 +239,7 @@ export class Sfx {
         break;
       case 'discs':
         this.tone(0.14 * volume, 0.16, 1400, 2600, 'triangle');
-        this.burst(0.1 * volume, 0.08, 5000, 'highpass');
+        this.burst(0.1 * volume, 0.08, 3000, 'bandpass');
         break;
       case 'laser':
         this.tone(0.2 * volume, 0.22, 2400, 180, 'sawtooth');
@@ -218,14 +247,15 @@ export class Sfx {
         break;
       default:
         // A crack with a little body, short enough to stay clean through a fast burst.
-        this.burst(0.3 * volume, 0.045, 3000, 'highpass');
+        this.burst(0.3 * volume, 0.045, 1900, 'bandpass');
         this.tone(0.14 * volume, 0.04, 320, 110, 'square');
     }
   }
 
-  arc(volume: number): void {
+  arc(distanceVolume: number): void {
+    const volume = distanceVolume * GUN_LEVEL.arc;
     this.tone(0.14 * volume, 0.14, 1800, 300, 'sawtooth');
-    this.burst(0.22 * volume, 0.16, 4000, 'highpass');
+    this.burst(0.22 * volume, 0.16, 2600, 'bandpass');
   }
 
   /** Damage landing. Small hits are pings, and big ones ring out. */
@@ -233,12 +263,13 @@ export class Sfx {
     const now = this.ctx?.currentTime ?? 0;
     if (now - this.lastHit < HIT_GAP) return;
     this.lastHit = now;
-    if (amount >= 15) this.clang(0.5 * volume, 300 + Math.random() * 80, 0.4);
-    else this.tone(0.1 * volume, 0.05, 700 + Math.random() * 300, 300);
+    if (amount >= 15) this.clang(0.7 * volume, 300 + Math.random() * 80, 0.4);
+    else this.tone(0.16 * volume, 0.05, 700 + Math.random() * 300, 300);
   }
 
   /** The sound of a main weapon connecting. Each family hits differently. */
-  meleeHit(id: MeleeId, volume: number): void {
+  meleeHit(id: MeleeId, distanceVolume: number): void {
+    const volume = distanceVolume * MELEE_LEVEL[id];
     switch (id) {
       case 'vertdisc':
       case 'vertbar':
@@ -262,7 +293,7 @@ export class Sfx {
         break;
       case 'flipper':
         // A blast of air, then a clang as the plate slams up.
-        this.burst(0.55 * volume, 0.4, 5000, 'highpass', 1000);
+        this.burst(0.55 * volume, 0.35, 2600, 'bandpass', 700);
         this.clang(0.45 * volume, 200, 0.3);
         break;
       case 'crusher':
@@ -285,9 +316,9 @@ export class Sfx {
   }
 
   explosion(volume: number): void {
-    this.burst(1 * volume, 0.9, 1800, 'lowpass', 120);
-    this.tone(0.6 * volume, 0.6, 120, 28, 'sine');
-    this.clang(0.25 * volume, 150, 0.8);
+    this.burst(0.8 * volume, 0.9, 1800, 'lowpass', 120);
+    this.tone(0.5 * volume, 0.6, 120, 28, 'sine');
+    this.clang(0.2 * volume, 150, 0.8);
   }
 
   /** A falling whistle, for a robot going over the edge. */
@@ -311,11 +342,11 @@ export class Sfx {
   }
 
   win(): void {
-    [440, 554, 659, 880].forEach((freq, i) => this.tone(0.2, 0.32, freq, freq, 'square', i * 0.13));
+    [440, 554, 659, 880].forEach((freq, i) => this.tone(0.075, 0.32, freq, freq, 'square', i * 0.13));
   }
 
   lose(): void {
-    [392, 349, 311, 220].forEach((freq, i) => this.tone(0.18, 0.4, freq, freq * 0.98, 'sawtooth', i * 0.18));
+    [392, 349, 311, 220].forEach((freq, i) => this.tone(0.07, 0.4, freq, freq * 0.98, 'sawtooth', i * 0.18));
   }
 
   click(): void {
@@ -334,12 +365,12 @@ export class Sfx {
     const revs = state.engine + (state.boosting ? 0.5 : 0);
     engineOsc.frequency.setTargetAtTime(44 + revs * 70, now, 0.08);
     engineGain.gain.setTargetAtTime(state.engine < 0 ? 0 : 0.07 + state.engine * 0.1, now, 0.08);
-    sawGain.gain.setTargetAtTime(0.28 * state.saw, now, 0.03);
-    boostGain.gain.setTargetAtTime(state.boosting ? 0.22 : 0, now, 0.06);
+    sawGain.gain.setTargetAtTime(0.15 * state.saw, now, 0.03);
+    boostGain.gain.setTargetAtTime(state.boosting ? 0.11 : 0, now, 0.06);
     boostFilter?.frequency.setTargetAtTime(state.boosting ? 1500 : 600, now, 0.2);
-    flameGain.gain.setTargetAtTime(state.flame ? 0.3 : 0, now, 0.05);
+    flameGain.gain.setTargetAtTime(state.flame ? 0.17 : 0, now, 0.05);
     spinOsc.frequency.setTargetAtTime(70 + state.spinSpeed * 520, now, 0.1);
-    spinGain.gain.setTargetAtTime(1.1 * state.spinLevel * Math.min(1, state.spinSpeed * 2.5), now, 0.08);
+    spinGain.gain.setTargetAtTime(0.09 * state.spinLevel * Math.min(1, state.spinSpeed * 2.5), now, 0.08);
   }
 
   /** Stops every continuous sound, for leaving a match. */

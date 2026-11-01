@@ -7,6 +7,8 @@ import { relativeBearing, type Bot, type GameEvent, type Match } from '../sim/ma
 const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
 const DAMAGE_MARK_TIME = 1;
 const MAP_INTERVAL = 1 / 20;
+/** A flash dazzles, but the roof stays visible through it. */
+const BLIND_MAX = 0.55;
 const q = (root: HTMLElement, selector: string) => root.querySelector<HTMLElement>(selector)!;
 
 function hex(color: number): string {
@@ -298,7 +300,7 @@ export class Hud {
     // The flamethrower is limited only by the battery.
     this.setText(this.shots, TURRETS[loadout.turret].shots > 0 ? String(player.shots) : '');
     this.updateRival();
-    this.blind.style.opacity = String(Math.min(1, player.blindT * 1.2));
+    this.blind.style.opacity = String(Math.min(BLIND_MAX, player.blindT * BLIND_MAX * 1.2));
     POWERUP_ORDER.forEach((id, i) => {
       const n = player.powerups[id];
       const el = this.powerCounts[i];
@@ -317,7 +319,8 @@ export class Hud {
     if (player.cloakT > 0) tags.push('CLOAKED');
     if (player.xrayT > 0) tags.push('X-RAY');
     if (player.regenT > 0) tags.push('REPAIRING');
-    if (player.stunT > 0) tags.push('STUNNED');
+    if (player.flipT > 0) tags.push('UPSIDE DOWN');
+    else if (player.stunT > 0) tags.push('STUNNED');
     if (player.blindT > 0) tags.push('BLINDED');
     if (player.burnT > 0) tags.push('BURNING');
     if (player.kamikazeT > 0) tags.push('DETONATING');

@@ -1,7 +1,7 @@
 import { ACHIEVEMENTS, CAREER, isUnlocked, type AchievementStats, type CareerProgress, type Fight, type Medal } from '../game/career';
-import { canSell, CATALOG, partFits, sellPrice, upgradeCost, type Save, type Slot } from '../game/progress';
-import { ACTIONS, activeLevel, keyLabel, LEVELS, QUALITY, type Action, type Bindings, type Quality, type Settings } from '../game/settings';
-import { DEFAULT_NAME, NAME_MAX, sanitizeName, type HistoryEntry, type LeaderboardEntry, type Profile } from '../net/protocol';
+import { canSell, CATALOG, partFits, previewLoadout, sellPrice, upgradeCost, type PartPreview, type Save, type Slot } from '../game/progress';
+import { ACTIONS, activeLevel, keyLabel, LEVELS, QUALITY, VOLUME_KINDS, type Action, type Bindings, type Quality, type Settings, type VolumeKind } from '../game/settings';
+import { DEFAULT_NAME, NAME_MAX, sanitizeName, type HistoryEntry, type LeaderboardEntry, type OnlineStatus, type Profile } from '../net/protocol';
 import { logoUrl } from '../render/logo';
 import { ARENA_ORDER, ARENAS, type ArenaId } from '../sim/arena';
 import {
@@ -13,13 +13,13 @@ import {
   DUEL_MIN_PAID_TIME,
   installedParts,
   MODES,
+  BODIES,
   PATTERNS,
   POWERUPS,
   POWERUP_CAP,
   POWERUP_ORDER,
   spaceCapacity,
   spaceUsed,
-  TOPPERS,
   UPGRADES,
   weaponSpace,
   type MeleeId,
@@ -31,6 +31,7 @@ import {
 } from '../sim/data';
 import type { Standing } from '../sim/match';
 import { escapeText, UPGRADE_ORDER } from './hud';
+import { timeAgo } from './timeAgo';
 
 const INTRO_MS = 3000;
 const NAME_MIN = 2;
@@ -167,6 +168,7 @@ export function lobbyScreen(onCancel: () => void, hasAccount: boolean): { el: HT
 
 export interface GarageActions {
   onEquip: (slot: Slot, id: string) => void;
+  onPreviewPart: (part: PartPreview | null) => void;
   onSell: (slot: Slot, id: string) => void;
   onArmour: (armour: number) => void;
   onShelf: (slot: Slot | null) => void;
@@ -191,12 +193,12 @@ export interface GarageActions {
   onRear: (rear: boolean) => void;
 }
 
-export type GarageTab = 'workshop' | 'paintshop' | 'buy' | 'sell' | 'bots' | 'garage' | 'help';
-export type SideTab = 'preview' | 'stats' | 'highscore';
+export type GarageTab = 'workshop' | 'paintshop' | 'buy' | 'sell' | 'bots' | 'stats' | 'help';
+export type SideTab = 'preview' | 'stats' | 'highscore' | 'players';
 export type BuyCategory = Slot | 'powerups' | 'upgrades';
 
 const TOP_TABS: [GarageTab, string][] = [['workshop', 'Workshop'], ['paintshop', 'Paintshop'], ['buy', 'Buy Parts'], ['sell', 'Sell Parts']];
-const SIDE_TABS: [SideTab, string][] = [['preview', 'Preview'], ['stats', 'Stats'], ['highscore', 'Highscore']];
+const SIDE_TABS: [SideTab, string][] = [['preview', 'Preview'], ['stats', 'Specs'], ['highscore', 'Highscore'], ['players', 'Players']];
 const SLOT_LABELS: Record<Slot, string> = {
   chassis: 'Chassis', tower: 'Tower', wheels: 'Wheels', engine: 'Engine', power: 'Power source',
   melee: 'Main weapon', turret: 'Gun', defense: 'Defense',
@@ -213,8 +215,11 @@ export interface GarageOptions {
   tab: GarageTab;
   side: SideTab;
   buyCategory: BuyCategory;
+  online: OnlineStatus | null;
   /** Which part type the shelf is showing, or null for everything. */
   shelf: Slot | null;
+  /** A part being tried out. Nothing is bought or fitted until the player says so. */
+  partPreview: PartPreview | null;
   career: CareerProgress;
   /** Absent when progress is only saved on this device. */
   account: {
@@ -334,20 +339,24 @@ function bar(label: string, fraction: number, over = false): string {
 
 function workshopPanel(save: Save, options: GarageOptions): string {
   const { loadout } = save;
-  const parts = installedParts(loadout);
-  const stats = buildStats(loadout);
-  const used = spaceUsed(loadout);
-  const capacity = spaceCapacity(loadout);
+  const preview = options.partPreview;
+  // Everything on this sheet describes the robot with the part being tried, so it can be compared.
+  const shown = previewLoadout(loadout, preview);
+  const parts = installedParts(shown);
+  const stats = buildStats(shown);
+  const used = spaceUsed(shown);
+  const capacity = spaceCapacity(shown);
+  const trying = (slot: Slot) => (preview?.slot === slot ? ' part-trying' : '');
 
   const row = (slot: Slot, id: string, extra = '') =>
-    `<h4>${SLOT_LABELS[slot]}</h4><div class="part-row"><span class="part-name">${partName(slot, id)}</span>${extra}<button class="plate-btn" data-shelf="${slot}">Change</button></div>`;
-  const armourFits = spaceUsed({ ...loadout, armour: parts.armour + ARMOUR.step }) <= capacity;
+    `<h4>${SLOT_LABELS[slot]}</h4><div class="part-row${trying(slot)}"><span class="part-name">${partName(slot, id)}</span>${extra}<button class="plate-btn" data-shelf="${slot}">Change</button></div>`;
+  const armourFits = spaceUsed({ ...loadout, armour: parts.armour + ARMOUR.step }) <= spaceCapacity(loadout);
   const armour = `<span class="part-armour">Armour:
     <button class="step-btn" data-armour="${parts.armour - ARMOUR.step}" ${parts.armour <= ARMOUR.min ? 'disabled' : ''} aria-label="Less armour">◀</button>
     <b>${parts.armour}</b>
     <button class="step-btn" data-armour="${parts.armour + ARMOUR.step}" ${parts.armour >= ARMOUR.max || !armourFits ? 'disabled' : ''} aria-label="More armour">▶</button></span>`;
   const weapon = (slot: 'melee' | 'turret' | 'defense', placement: string) =>
-    `<div class="part-row part-weapon"><span class="part-name">${partName(slot, loadout[slot])}</span>
+    `<div class="part-row part-weapon${trying(slot)}"><span class="part-name">${partName(slot, shown[slot])}</span>
       <span class="part-key">Key: <kbd>${keyLabel(options.keys[slot])}</kbd></span>
       <span class="part-place">Placement: ${placement}</span>
       <button class="plate-btn" data-shelf="${slot}">Change</button></div>`;
@@ -355,29 +364,44 @@ function workshopPanel(save: Save, options: GarageOptions): string {
   const placement = `<select data-placement aria-label="Main weapon placement"><option value="0"${rear ? '' : ' selected'}>Front</option><option value="1"${rear ? ' selected' : ''}>Back</option></select>`;
 
   const filter = options.shelf;
-  const shelfItems = (filter ? [filter] : SLOTS).flatMap((slot) =>
-    (save.owned[slot] as string[])
-      .filter((id) => (loadout as unknown as Record<Slot, string>)[slot] !== id)
+  // Every part is on the shelf, owned or not, because trying one out is free. Parts you own come first.
+  const shelfItems = (filter ? [filter] : SLOTS).flatMap((slot) => {
+    const owned = save.owned[slot] as string[];
+    const fitted = (loadout as unknown as Record<Slot, string>)[slot] ?? installedParts(loadout)[slot as 'tower'];
+    const catalog = CATALOG[slot] as Record<string, { blurb: string; price: number }>;
+    return Object.keys(catalog)
+      .filter((id) => id !== fitted)
+      .sort((a, b) => Number(owned.includes(b)) - Number(owned.includes(a)))
       .map((id) => {
+        const has = owned.includes(id);
         const fits = partFits(save, slot, id);
-        return `<div class="shelf-item${fits ? '' : ' shelf-full'}" title="${SLOT_LABELS[slot]}: ${partName(slot, id)}">
+        const { price, blurb } = catalog[id];
+        const on = preview?.slot === slot && preview.id === id;
+        const action = has
+          ? `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${fits ? '' : 'disabled'}>${fits ? 'Use this part' : 'No room'}</button>`
+          : `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${save.money >= price ? '' : 'disabled'}>Buy $${price}</button>`;
+        return `<div class="shelf-item${has ? '' : ' shelf-unowned'}${on ? ' shelf-on' : ''}" title="${SLOT_LABELS[slot]}: ${partName(slot, id)}. ${escapeText(blurb)}">
           ${partIcon(slot)}<small>${partName(slot, id)}</small>
-          <button class="plate-btn" data-slot="${slot}" data-id="${id}" ${fits ? '' : 'disabled'}>${fits ? 'Use this part' : 'No room'}</button></div>`;
-      }),
-  );
-  const shelfEmpty = `<p class="shelf-empty">${filter ? `No other ${SLOT_LABELS[filter].toLowerCase()} on the shelf.` : 'Nothing on the shelf.'} Parts you buy but don't fit are kept here.</p>`;
+          <button class="plate-btn" data-preview-slot="${on ? '' : slot}" data-preview-id="${id}">${on ? 'Stop preview' : 'Preview'}</button>
+          ${action}</div>`;
+      });
+  });
+  const previewNote = preview
+    ? `<div class="preview-note">Previewing <b>${partName(preview.slot, preview.id)}</b>. These numbers and the picture show it fitted, but nothing has changed yet. <button class="plate-btn" data-preview-slot="">Stop preview</button></div>`
+    : '';
   return `
     <div class="shelf">
       <div class="shelf-head">${filter ? `<button class="plate-btn" data-shelf="">Show all</button>` : ''}</div>
-      <div class="shelf-items">${shelfItems.join('') || shelfEmpty}</div>
+      <div class="shelf-items">${shelfItems.join('')}</div>
     </div>
     <div class="workshop-sheet">
+      ${previewNote}
       <div class="stat-bars">
         ${bar(`Used space (${used}/${capacity})`, used / capacity, used > capacity)}
         ${bar('Max speed', stats.speed / STAT_MAX.speed)}
         ${bar('Armour', stats.hp / STAT_MAX.hp)}
       </div>
-      ${row('chassis', loadout.chassis, armour)}
+      ${row('chassis', shown.chassis, armour)}
       ${row('tower', parts.tower)}
       ${row('wheels', parts.wheels)}
       ${row('engine', parts.engine)}
@@ -385,23 +409,40 @@ function workshopPanel(save: Save, options: GarageOptions): string {
       <h4>Weapons</h4>
       ${weapon('melee', placement)}
       ${weapon('turret', '<b>Fixed forward</b>')}
-      ${weapon('defense', '<b>Top</b>')}
+      ${weapon('defense', '<b>Built in</b>')}
     </div>`;
 }
 
-function statsPanel(save: Save): string {
-  const stats = buildStats(save.loadout);
+function statsPanel(save: Save, preview: PartPreview | null): string {
+  const shown = previewLoadout(save.loadout, preview);
+  const stats = buildStats(shown);
   const rows: [string, string][] = [
     ['Armour', `${Math.round(stats.hp)} HP`],
     ['Top speed', stats.speed.toFixed(1)],
     ['Acceleration', stats.accel.toFixed(1)],
     ['Turning', stats.turn.toFixed(2)],
     ['Weight', `${stats.mass.toFixed(2)} t`],
-    ['Room for parts', String(spaceCapacity(save.loadout))],
+    ['Room for parts', String(spaceCapacity(shown))],
     ['Battery recharge', `${Math.round(stats.regen * 100)}%`],
     ['Wins', `${save.wins} of ${save.matches}`],
   ];
   return `<table class="side-table">${rows.map(([label, value]) => `<tr><td>${label}</td><td>${value}</td></tr>`).join('')}</table>`;
+}
+
+export function queueLabel(online: OnlineStatus | null): string {
+  return online ? `${online.queued} in queue` : '';
+}
+
+/** Who's around now, and who was recently. */
+export function playersPanel(online: OnlineStatus | null): string {
+  if (!online) return '<p class="settings-hint">Connect to a game server to see who is playing.</p>';
+  const rows = online.recent.map((player) => `<tr><td>${escapeText(player.name)}</td><td>${timeAgo(player.lastSeen)}</td></tr>`).join('');
+  return `<div class="stat-row players-now">
+      <div><b>${online.queued}</b><span>In queue</span></div>
+      <div><b>${online.playing}</b><span>In a match</span></div>
+    </div>
+    <h4 class="players-heading">Recently active</h4>
+    ${rows ? `<table class="side-table">${rows}</table>` : '<p class="settings-hint">Nobody yet. You could be first.</p>'}`;
 }
 
 function highscorePanel(account: GarageOptions['account']): string {
@@ -461,11 +502,11 @@ function sellPanel(save: Save): string {
 }
 
 function paintPanel(save: Save): string {
-  const paint = save.loadout.paint ?? DEFAULT_PAINT;
+  const paint = { ...DEFAULT_PAINT, ...save.loadout.paint };
   const chip = (part: 'primary' | 'secondary', label: string) => `
     <div class="paint-color"><i style="background:#${paint[part].toString(16).padStart(6, '0')}"></i><span>${label}</span>
       <button class="plate-btn" data-paint-use="${part}">Use selected color</button></div>`;
-  const choice = (part: 'pattern' | 'topper', table: Record<string, string>) =>
+  const choice = (part: 'pattern' | 'body', table: Record<string, string>) =>
     Object.entries(table)
       .map(([id, label]) => `<button class="mini-btn${paint[part] === id ? ' mini-on' : ''}" data-paint="${part}" data-value="${id}">${label}</button>`)
       .join('');
@@ -476,8 +517,8 @@ function paintPanel(save: Save): string {
       <div class="paint-options">
         <section><h3>Colors</h3>${chip('primary', 'Body and tower')}${chip('secondary', 'Trim')}</section>
         <section><h3>Pattern</h3><div class="choices">${choice('pattern', PATTERNS)}</div></section>
-        <section><h3>Topper</h3><div class="choices">${choice('topper', TOPPERS)}</div></section>
-        <p class="settings-hint">Paint is free, and your opponent sees it. Your painting goes over the pattern.</p>
+        <section><h3>Body shape</h3><div class="choices">${choice('body', BODIES)}</div></section>
+        <p class="settings-hint">Paint and body shape are free, and your opponent sees them. Your painting goes over the pattern. Body shape is only for looks.</p>
       </div>
     </div>`;
 }
@@ -501,7 +542,7 @@ function botsPanel(save: Save, options: GarageOptions): string {
     ${careerPanel(options.career, options.account === null)}`;
 }
 
-function garagePanel(save: Save, options: GarageOptions): string {
+function pilotPanel(save: Save, options: GarageOptions): string {
   return `<section><h3>Pilot</h3>
       <label class="garage-name">Name <input data-name maxlength="${NAME_MAX}" value="${escapeText(save.name)}" autocomplete="off" spellcheck="false" /></label>
       <p class="settings-hint">${save.wins} wins from ${save.matches} matches.</p></section>
@@ -511,7 +552,8 @@ function garagePanel(save: Save, options: GarageOptions): string {
 function helpPanel(keys: Bindings): string {
   return `<section><h3>How to play</h3>
       <p class="settings-hint">Build a robot in the Workshop, then fight another pilot on the roof. A duel ends when one robot is wrecked or knocked over the edge. If time runs out, the most armour left wins. Every part takes up room, so a bigger chassis fits more.</p>
-      <p class="settings-hint">Your main weapon does the real damage. Spinners have to reach speed before they bite, so hold the key on the way in. Strong weapons have a cooldown, shown in red on the panel at the bottom. Guns only fire straight ahead and have few shots per life. Your battery runs your gun and your speed boost, so spend it carefully.</p></section>
+      <p class="settings-hint">Robots can only turn while rolling, so a stopped robot has to drive forward or back to change direction. Your main weapon does the real damage. Spinners have to reach speed before they bite, so hold the key on the way in. Strong weapons have a cooldown, shown in red on the panel at the bottom. Guns only fire straight ahead and have few shots per life. Your battery runs your gun and your speed boost, so spend it carefully.</p>
+      <p class="settings-hint">A flipper lands you upside down. You can't do anything until your robot rights itself, about three seconds later.</p></section>
     <section><h3>Controls</h3>${controlsTable(keys)}</section>
     <button class="btn" data-settings>Settings</button>`;
 }
@@ -530,8 +572,8 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
         return sellPanel(save);
       case 'bots':
         return botsPanel(save, options);
-      case 'garage':
-        return garagePanel(save, options);
+      case 'stats':
+        return pilotPanel(save, options);
       case 'help':
         return helpPanel(options.keys);
       default:
@@ -539,8 +581,9 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     }
   };
   const side = () => {
-    if (options.side === 'stats') return `<div class="side-view">${statsPanel(save)}</div>`;
+    if (options.side === 'stats') return `<div class="side-view">${statsPanel(save, options.partPreview)}</div>`;
     if (options.side === 'highscore') return `<div class="side-view">${highscorePanel(options.account)}</div>`;
+    if (options.side === 'players') return `<div class="side-view" data-players>${playersPanel(options.online)}</div>`;
     return '<div class="preview-window" data-preview></div>';
   };
   const topTabs = TOP_TABS.map(([id, label]) => `<button class="top-tab${options.tab === id ? ' top-tab-on' : ''}" data-tab="${id}">${label}</button>`).join('');
@@ -563,10 +606,10 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
         ${side()}
         <div class="zoom-row">${options.side === 'preview' ? '<button class="step-btn" data-zoom="0.15" aria-label="Zoom out">−</button><span>Zoom</span><button class="step-btn" data-zoom="-0.15" aria-label="Zoom in">+</button>' : ''}</div>
         <div class="nav-btns">
-          ${navButton('Play Online', options.onlineAvailable ? 'data-online' : 'disabled title="No game server is connected"')}
+          ${navButton(`Play Online<small data-queue>${queueLabel(options.online)}</small>`, options.onlineAvailable ? 'data-online' : 'disabled title="No game server is connected"')}
           ${navButton('Offline vs Bots', 'data-tab="bots"')}
           ${navButton('Training', 'data-training')}
-          ${navButton('Garage', 'data-tab="garage"')}
+          ${navButton('Stats', 'data-tab="stats"')}
           ${navButton('Help', 'data-tab="help"')}
           ${navButton('Quit', 'data-quit')}
         </div>
@@ -583,8 +626,9 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
   el.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest<HTMLElement>('button');
     if (!target) return;
-    const { slot, id, power, upgrade, tab, side: sideTab, buy, shelf, armour, zoom, sellSlot, sellId, paint: part, paintUse, value, arena, mode, fightId } = target.dataset;
-    if (tab) actions.onTab(tab as GarageTab);
+    const { slot, id, power, upgrade, tab, side: sideTab, buy, shelf, armour, zoom, sellSlot, sellId, paint: part, paintUse, value, arena, mode, fightId, previewSlot, previewId } = target.dataset;
+    if (previewSlot !== undefined) actions.onPreviewPart(previewSlot && previewId ? { slot: previewSlot as Slot, id: previewId } : null);
+    else if (tab) actions.onTab(tab as GarageTab);
     else if (sideTab) actions.onSide(sideTab as SideTab);
     else if (buy) actions.onBuyCategory(buy as BuyCategory);
     else if (shelf !== undefined) actions.onShelf((shelf || null) as Slot | null);
@@ -638,15 +682,31 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
 export interface SettingsActions {
   onQuality: (quality: Quality) => void;
   onFps: () => void;
-  onMusic: () => void;
+  onVolume: (kind: VolumeKind, value: number) => void;
+  onVolumeSet: (kind: VolumeKind) => void;
+  onMute: () => void;
   onBind: (action: Action) => void;
   onReset: () => void;
   onBack: () => void;
 }
 
+const VOLUME_LABELS: Record<VolumeKind, string> = { master: 'Master volume', music: 'Music', effects: 'Sound effects' };
+
 export function settingsScreen(settings: Settings, waitingFor: Action | null, actions: SettingsActions): HTMLElement {
   const el = document.createElement('div');
   el.className = 'screen screen-pause';
+  // Sliders update as they move, without redrawing the page, or the drag would stop.
+  el.addEventListener('input', (e) => {
+    const slider = e.target as HTMLInputElement;
+    const kind = slider.dataset.volume as VolumeKind | undefined;
+    if (!kind) return;
+    el.querySelector(`[data-volume-value="${kind}"]`)!.textContent = `${slider.value}%`;
+    actions.onVolume(kind, Number(slider.value));
+  });
+  el.addEventListener('change', (e) => {
+    const kind = (e.target as HTMLInputElement).dataset.volume as VolumeKind | undefined;
+    if (kind) actions.onVolumeSet(kind);
+  });
   const qualities = (['auto', ...LEVELS] as Quality[])
     .map((q) => `<button class="mini-btn${settings.quality === q ? ' mini-on' : ''}" data-quality="${q}">${q === 'auto' ? 'Auto' : QUALITY[q].label}</button>`)
     .join('');
@@ -666,9 +726,12 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
       ${autoHint}
       <div class="settings-row"><span>Show frame rate</span>
         <button class="mini-btn${settings.showFps ? ' mini-on' : ''}" data-fps>${settings.showFps ? 'On' : 'Off'}</button></div>
-      <h3>Sound</h3>
-      <div class="settings-row"><span>Music</span>
-        <button class="mini-btn${settings.music ? ' mini-on' : ''}" data-music>${settings.music ? 'On' : 'Off'}</button></div>
+      <h3>Audio</h3>
+      ${VOLUME_KINDS.map((kind) => `<label class="settings-row volume-row"><span>${VOLUME_LABELS[kind]}</span>
+        <input type="range" min="0" max="100" step="5" value="${settings.volume[kind]}" data-volume="${kind}" aria-label="${VOLUME_LABELS[kind]}" />
+        <b data-volume-value="${kind}">${settings.volume[kind]}%</b></label>`).join('')}
+      <div class="settings-row"><span>Mute everything (M)</span>
+        <button class="mini-btn${settings.muted ? ' mini-on' : ''}" data-mute>${settings.muted ? 'Muted' : 'Off'}</button></div>
       <h3>Keyboard</h3>
       ${bindings}
       <p class="settings-hint">Esc cancels a rebind. Using a key that's taken swaps the two actions. Esc and M stay reserved for pause and mute, and Ctrl for browser shortcuts.</p>
@@ -684,7 +747,7 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
     if (quality) actions.onQuality(quality as Quality);
     else if (bind) actions.onBind(bind as Action);
     else if ('fps' in target.dataset) actions.onFps();
-    else if ('music' in target.dataset) actions.onMusic();
+    else if ('mute' in target.dataset) actions.onMute();
     else if ('reset' in target.dataset) actions.onReset();
     else if ('back' in target.dataset) actions.onBack();
   });

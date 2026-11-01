@@ -1,4 +1,4 @@
-import type { GarageAction, HistoryEntry, LeaderboardEntry, Profile } from './protocol';
+import type { GarageAction, HistoryEntry, LeaderboardEntry, OnlineStatus, Profile } from './protocol';
 
 const TOKEN_KEY = 'scrap-riot.session';
 const TIMEOUT_MS = 6000;
@@ -91,6 +91,10 @@ export class Api {
 
   async leaderboard(): Promise<LeaderboardEntry[]> {
     return (await this.request<{ leaderboard: LeaderboardEntry[] }>('GET', '/api/leaderboard')).leaderboard;
+  }
+
+  online(): Promise<OnlineStatus> {
+    return this.request<OnlineStatus>('GET', '/api/online');
   }
 
   /** Signing out of a Google account leaves this browser on a new, empty guest. */

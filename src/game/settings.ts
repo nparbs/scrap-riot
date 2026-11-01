@@ -84,6 +84,10 @@ export class AutoQuality {
   }
 }
 
+export const VOLUME_KINDS = ['master', 'music', 'effects'] as const;
+export type VolumeKind = (typeof VOLUME_KINDS)[number];
+const DEFAULT_VOLUME: Record<VolumeKind, number> = { master: 100, music: 70, effects: 100 };
+
 export interface Settings {
   bindings: Bindings;
   quality: Quality;
@@ -91,13 +95,15 @@ export interface Settings {
   autoLevel: Level;
   showFps: boolean;
   tutorialDone: boolean;
-  music: boolean;
+  /** Each from 0 to 100. */
+  volume: { master: number; music: number; effects: number };
+  muted: boolean;
   /** The name this player chose when first asked. Empty until then. */
   pilotName: string;
 }
 
 export function defaultSettings(): Settings {
-  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, tutorialDone: false, music: true, pilotName: '' };
+  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, tutorialDone: false, volume: { ...DEFAULT_VOLUME }, muted: false, pilotName: '' };
 }
 
 export function activeLevel(settings: Settings): Level {
@@ -117,7 +123,11 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null): Settings
     if (saved.quality === 'auto' || (saved.quality && saved.quality in QUALITY)) settings.quality = saved.quality;
     if (saved.autoLevel && saved.autoLevel in QUALITY) settings.autoLevel = saved.autoLevel;
     settings.showFps = saved.showFps === true;
-    settings.music = saved.music !== false;
+    for (const kind of VOLUME_KINDS) {
+      const value = saved.volume?.[kind];
+      if (typeof value === 'number' && Number.isFinite(value)) settings.volume[kind] = Math.max(0, Math.min(100, value));
+    }
+    settings.muted = saved.muted === true;
     if (typeof saved.pilotName === 'string') settings.pilotName = saved.pilotName;
     settings.tutorialDone = saved.tutorialDone === true;
   } catch {

@@ -25,9 +25,9 @@ const STEPS: Step[] = [
     done: (input) => input.throttle !== 0,
   },
   {
-    prompt: (b) => `Use ${k(b.left)} and ${k(b.right)} to turn`,
+    prompt: (b) => `Hold ${k(b.forward)} or ${k(b.back)} and use ${k(b.left)} and ${k(b.right)} to turn. You can only turn while moving.`,
     hold: 0.6,
-    done: (input) => input.steer !== 0,
+    done: (input) => input.steer !== 0 && input.throttle !== 0,
   },
   {
     prompt: (b) => `Press ${k(b.turret)} to fire your gun. It shoots straight ahead, and shots are limited.`,

@@ -69,8 +69,18 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
   /** Which player each account is, so one account can't enter a match twice. */
   const accountPlayers = new Map<string, { room: Room; player: Player }>();
   const addressOf = (req: IncomingMessage) => clientAddress(req, options.clientIpHeader);
+  const presence = () => {
+    let queued = 0;
+    let playing = 0;
+    for (const room of rooms) {
+      if (room.finished) continue;
+      if (room.match) playing += room.connected;
+      else queued += room.players.size;
+    }
+    return { queued, playing };
+  };
   const api = accounts
-    ? createApi({ accounts, allowedOrigins: allowed, googleClientId: options.googleClientId ?? null, clientAddress: addressOf })
+    ? createApi({ accounts, allowedOrigins: allowed, googleClientId: options.googleClientId ?? null, clientAddress: addressOf, presence })
     : null;
 
   const http: Server = createServer((req, res) => {

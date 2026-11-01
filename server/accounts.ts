@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { buyOrEquip, buyPowerup, buyUpgrade, CATALOG, newSave, sellPart, setArmour, type Save, type Slot } from '../src/game/progress';
-import { sanitizeName, sanitizePaint, type GarageAction, type HistoryEntry, type LeaderboardEntry, type Profile } from '../src/net/protocol';
+import { DEFAULT_NAME, sanitizeName, sanitizePaint, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineStatus, type Profile } from '../src/net/protocol';
 import { isArenaId } from '../src/sim/arena';
 import { DEFAULT_PAINT, MODES, POWERUPS, UPGRADES, type ModeId, type PowerupId, type UpgradeId } from '../src/sim/data';
 import { SCHEMA, type Db, type Queryable } from './db';
@@ -12,6 +12,8 @@ const GUEST_RETENTION_DAYS = 60;
 /** A guest that never played a match is cleaned up much sooner. */
 const UNPLAYED_GUEST_DAYS = 7;
 const RATING_BY_PLACE = [25, -15];
+const RECENT_DAYS = 7;
+const RECENT_LIMIT = 12;
 
 interface PlayerRow {
   id: string;
@@ -247,6 +249,16 @@ export class Accounts {
     return this.db.query<LeaderboardEntry>(
       'SELECT name, rating, wins, matches, kills FROM players WHERE matches > 0 ORDER BY rating DESC, wins DESC, created_at ASC LIMIT $1',
       [limit],
+    );
+  }
+
+  /** Public. Guests who never chose a name are left out, as there's nobody to recognise. */
+  recentPlayers(): Promise<OnlineStatus['recent']> {
+    return this.db.query<OnlineStatus['recent'][number]>(
+      `SELECT name, last_seen AS "lastSeen" FROM players
+       WHERE name <> $1 AND last_seen > now() - interval '${RECENT_DAYS} days'
+       ORDER BY last_seen DESC LIMIT $2`,
+      [DEFAULT_NAME, RECENT_LIMIT],
     );
   }
 

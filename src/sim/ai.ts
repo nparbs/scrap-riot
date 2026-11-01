@@ -5,6 +5,9 @@ import { bearing, wrapAngle, type Bot, type Match } from './match';
 const THINK_INTERVAL = 0.2;
 const RETARGET_INTERVAL = 1.5;
 /** How wide a berth to give big obstacles when driving round them. */
+/** How much room a robot keeps between itself and a ledge, and how far before that it slows for a turn. */
+const EDGE_CLEARANCE = 3;
+const EDGE_SLOW_ZONE = 6;
 const ROUTE_MARGIN = 1.5;
 const ROUTE_REACHED = 2;
 
@@ -208,7 +211,7 @@ export class BotBrain {
     const speed = Math.hypot(bot.vx, bot.vz);
     if (this.reverseT > 0) {
       this.reverseT -= dt;
-      bot.input.throttle = -1;
+      bot.input.throttle = !arena.walled && this.roomTo(-1) < EDGE_CLEARANCE ? 1 : -1;
       bot.input.steer = this.strafeSign;
       return;
     }
@@ -221,16 +224,36 @@ export class BotBrain {
     const diff = wrapAngle(Math.atan2(dirX, dirZ) - bot.heading);
     bot.input.steer = Math.max(-1, Math.min(1, diff * 3));
     bot.input.throttle = Math.abs(diff) > 1.4 ? 0.25 : 1;
-    // Don't build up speed heading for an edge.
-    if (!arena.walled && this.nearEdge(10 * caution) && Math.abs(diff) > 0.5) bot.input.throttle = -0.3;
+    if (!arena.walled) this.mindTheEdge(diff, caution);
   }
 
-  private nearEdge(distance: number): boolean {
+  /**
+   * Robots can't turn on the spot, so a ledge has to be dealt with early: slow down to tighten the
+   * turn, and if there's no room left to make it, back away first.
+   */
+  private mindTheEdge(diff: number, caution: number): void {
+    const { bot } = this;
+    const forward = bot.vx * Math.sin(bot.heading) + bot.vz * Math.cos(bot.heading);
+    const stopping = (forward * Math.abs(forward) * 0.5) / Math.max(bot.chassis.accel * this.match.arena.grip, 1);
+    const ahead = this.roomTo(1);
+    if (ahead < (EDGE_CLEARANCE + Math.max(stopping, 0)) * caution && this.roomTo(-1) > EDGE_CLEARANCE) {
+      bot.input.throttle = -1;
+      // Steering works the other way round in reverse, and this swings the nose toward the goal.
+      bot.input.steer = -bot.input.steer;
+    } else if (ahead < (EDGE_CLEARANCE + EDGE_SLOW_ZONE + Math.max(stopping, 0)) * caution && Math.abs(diff) > 0.25) {
+      bot.input.throttle = Math.min(bot.input.throttle, 0.35);
+    }
+  }
+
+  /** How far the robot can roll, forward (1) or back (-1), before it reaches the edge of the map. */
+  private roomTo(direction: 1 | -1): number {
     const { bot, match } = this;
-    const look = 1.5;
-    const x = bot.x + bot.vx * look;
-    const z = bot.z + bot.vz * look;
-    return Math.abs(x) > match.arena.half - distance / 3 || Math.abs(z) > match.arena.half - distance / 3;
+    const dx = Math.sin(bot.heading) * direction;
+    const dz = Math.cos(bot.heading) * direction;
+    const limit = match.arena.half - bot.radius;
+    const across = dx > 1e-6 ? (limit - bot.x) / dx : dx < -1e-6 ? (-limit - bot.x) / dx : Infinity;
+    const along = dz > 1e-6 ? (limit - bot.z) / dz : dz < -1e-6 ? (-limit - bot.z) / dz : Infinity;
+    return Math.min(across, along);
   }
 
   private fight(dt: number): void {

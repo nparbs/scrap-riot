@@ -380,7 +380,7 @@ function addSkylight(scene: THREE.Scene, b: Block): void {
   curb.position.set(b.x, 0.25, b.z);
   curb.castShadow = true;
   scene.add(curb);
-  const glass = new THREE.MeshStandardMaterial({ color: 0xcfd9c0, emissive: 0x4a5040, roughness: 0.25, metalness: 0.2, transparent: true, opacity: 0.72, side: THREE.DoubleSide, flatShading: true });
+  const glass = new THREE.MeshStandardMaterial({ color: 0xcfd9c0, emissive: 0x4a5040, roughness: 0.25, metalness: 0.2, transparent: true, opacity: 0.72, side: THREE.DoubleSide });
   const frame = new THREE.MeshStandardMaterial({ color: 0xe0e0d0, roughness: 0.6 });
   const panes = 3;
   const width = b.w / panes;
@@ -416,7 +416,7 @@ function addBunker(scene: THREE.Scene, b: Block, stripes: THREE.Texture): void {
   shape.closePath();
   const hut = new THREE.Mesh(
     new THREE.ExtrudeGeometry(shape, { depth: b.w, bevelEnabled: false }),
-    new THREE.MeshStandardMaterial({ color: 0x25261f, roughness: 0.95, flatShading: true }),
+    new THREE.MeshStandardMaterial({ color: 0x25261f, roughness: 0.95 }),
   );
   // The profile is drawn sideways, so it turns to run along the block's width.
   hut.rotation.y = Math.PI / 2;
@@ -475,7 +475,7 @@ function hazardTexture(): THREE.CanvasTexture {
 /** Builds a saw blade whose spin axis is the object's local Y. */
 export function buildSaw(): THREE.Group {
   const saw = new THREE.Group();
-  const steel = new THREE.MeshStandardMaterial({ color: 0xbfc6cc, metalness: 0.95, roughness: 0.25, flatShading: true });
+  const steel = new THREE.MeshStandardMaterial({ color: 0xbfc6cc, metalness: 0.95, roughness: 0.25 });
   const disc = new THREE.Mesh(new THREE.CylinderGeometry(SAW_RADIUS * 0.85, SAW_RADIUS * 0.85, 0.12, 24), steel);
   disc.castShadow = true;
   saw.add(disc);
@@ -538,7 +538,7 @@ function buildBackdrop(scene: THREE.Scene, def: ArenaDef): void {
 
   // Open maps sit on top of a tall column, so the drop looks as lethal as it is.
   const base = theme.backdrop === 'city' ? 0x3a4250 : theme.backdrop === 'canyon' ? 0xa86a3e : 0x8fa8c2;
-  const columnMat = new THREE.MeshStandardMaterial({ color: base, roughness: 1, flatShading: true });
+  const columnMat = new THREE.MeshStandardMaterial({ color: base, roughness: 1 });
   add(half * 2, 200, half * 2, 0, -100.05, 0, columnMat);
 
   // Fixed spacing rather than random placement, so every player sees the same scenery.
@@ -637,7 +637,7 @@ export function buildArena(def: ArenaDef): ArenaScene {
     scene.add(outer);
 
     // Walls, each topped with a band of hazard paint.
-    const wallMat = new THREE.MeshStandardMaterial({ color: theme.wall, metalness: 0.6, roughness: 0.6, flatShading: true });
+    const wallMat = new THREE.MeshStandardMaterial({ color: theme.wall, metalness: 0.6, roughness: 0.6 });
     const h = def.wallHeight;
     const t = 1.2;
     const sides: [number, number, number, number][] = [
@@ -688,12 +688,12 @@ export function buildArena(def: ArenaDef): ArenaScene {
   }
 
   // Pillars with glowing caps.
-  const pillarMat = new THREE.MeshStandardMaterial({ color: theme.wall, metalness: 0.5, roughness: 0.6, flatShading: true });
+  const pillarMat = new THREE.MeshStandardMaterial({ color: theme.wall, metalness: 0.5, roughness: 0.6 });
   const capMat = new THREE.MeshStandardMaterial({ color: 0xc86a18, emissive: 0xff7a10, emissiveIntensity: 0.7 });
-  const barrelMat = new THREE.MeshStandardMaterial({ color: 0x4a3224, metalness: 0.2, roughness: 0.85, flatShading: true });
+  const barrelMat = new THREE.MeshStandardMaterial({ color: 0x4a3224, metalness: 0.2, roughness: 0.85 });
   for (const p of def.pillars) {
     if (p.prop === 'barrel') {
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(p.r, p.r, 2.1, 12), barrelMat);
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(p.r, p.r, 2.1, 24), barrelMat);
       barrel.position.set(p.x, 1.05, p.z);
       barrel.castShadow = true;
       scene.add(barrel);
@@ -706,18 +706,18 @@ export function buildArena(def: ArenaDef): ArenaScene {
       continue;
     }
     if (p.prop === 'pole') {
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(p.r * 0.7, p.r, 9, 6), barrelMat);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(p.r * 0.7, p.r, 9, 16), barrelMat);
       pole.position.set(p.x, 4.5, p.z);
       pole.castShadow = true;
       scene.add(pole);
       continue;
     }
-    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(p.r, p.r * 1.1, 5, 10), pillarMat);
+    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(p.r, p.r * 1.1, 5, 24), pillarMat);
     pillar.position.set(p.x, 2.5, p.z);
     pillar.castShadow = true;
     pillar.receiveShadow = true;
     scene.add(pillar);
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(p.r * 0.7, p.r * 0.7, 0.25, 10), capMat);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(p.r * 0.7, p.r * 0.7, 0.25, 24), capMat);
     cap.position.set(p.x, 5.1, p.z);
     scene.add(cap);
   }
@@ -765,7 +765,7 @@ export function buildArena(def: ArenaDef): ArenaScene {
   }
 
   const pistons: THREE.Group[] = [];
-  const headMat = new THREE.MeshStandardMaterial({ color: 0xe6b422, metalness: 0.5, roughness: 0.5, flatShading: true });
+  const headMat = new THREE.MeshStandardMaterial({ color: 0xe6b422, metalness: 0.5, roughness: 0.5 });
   const rodMat = new THREE.MeshStandardMaterial({ color: 0xc0c6cc, metalness: 0.9, roughness: 0.3 });
   for (const p of def.pistons) {
     const group = new THREE.Group();
@@ -782,13 +782,13 @@ export function buildArena(def: ArenaDef): ArenaScene {
     pistons.push(group);
   }
 
-  const sentryBody = new THREE.MeshStandardMaterial({ color: 0x3a2a24, metalness: 0.5, roughness: 0.6, flatShading: true });
+  const sentryBody = new THREE.MeshStandardMaterial({ color: 0x3a2a24, metalness: 0.5, roughness: 0.6 });
   for (const s of def.sentries) {
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.5, 2.6, 8), sentryBody);
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.5, 2.6, 24), sentryBody);
     base.position.set(s.x, 1.3, s.z);
     base.castShadow = true;
     scene.add(base);
-    const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 0.5, 8), fire);
+    const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 0.5, 20), fire);
     nozzle.position.set(s.x, 2.8, s.z);
     scene.add(nozzle);
     const warn = new THREE.Mesh(new THREE.RingGeometry(s.range - 0.2, s.range, 40), new THREE.MeshBasicMaterial({ color: 0xff6a1a, transparent: true, opacity: 0.4 }));

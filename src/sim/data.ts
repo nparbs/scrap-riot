@@ -164,6 +164,8 @@ export interface MeleeDef {
   slow?: number;
   /** Seconds the target spends in the air, unable to drive. */
   launch?: number;
+  /** Hits land the target upside down, helpless until it rights itself. */
+  flips?: boolean;
   /** A hammer-saw's blade: damage per second to whatever is under it while the key is held. */
   saw?: number;
   /** Fraction of the battery each strike uses. */
@@ -198,7 +200,7 @@ export const MELEE: Record<MeleeId, MeleeDef> = {
   eggbeater: melee({ name: 'Eggbeater', type: 'Eggbeater', blurb: 'A lighter, toothier drum. More hit, less spin.', price: 500, kind: 'spinner', range: 2.8, arc: 0.45, damage: 34, cooldown: 1.2, windup: 0.7, knockback: 10, launch: 0.35 }),
   shell: melee({ name: 'Ring Spinner', type: 'Full body spinner', blurb: 'Hits from every side, but it is slow to wind up and slows you down.', price: 1000, kind: 'spinner', range: 2.7, arc: Math.PI, damage: 62, cooldown: 3, windup: 2, knockback: 22, drive: 0.85 }),
   hammersaw: melee({ name: 'Hammer Saw', type: 'Hammer saw', blurb: 'Slams a spinning blade down, then keeps cutting while you hold.', price: 750, kind: 'strike', range: 3.0, arc: 0.5, damage: 24, cooldown: 3.5, windup: 0.3, stun: 0.4, knockback: 5, saw: 22 }),
-  flipper: melee({ name: 'Pneumatic Flipper', type: 'Flipper', blurb: 'Hurls robots through the air. Little damage, but deadly near an edge. Uses battery.', price: 800, kind: 'strike', range: 2.8, arc: 0.55, damage: 8, cooldown: 4, windup: 0.05, stun: 0.3, knockback: 15, launch: 0.55, battery: 0.14 }),
+  flipper: melee({ name: 'Pneumatic Flipper', type: 'Flipper', blurb: 'Hurls robots through the air, and they land upside down until they right themselves. Little damage, but deadly near an edge. Uses battery.', price: 800, kind: 'strike', range: 2.8, arc: 0.55, damage: 8, cooldown: 4, windup: 0.05, stun: 0.3, knockback: 15, launch: 0.55, flips: true, battery: 0.14 }),
   crusher: melee({ name: 'Hydraulic Crusher', type: 'Crusher', blurb: 'Bites down and holds on. Enormous damage if you can catch them.', price: 900, kind: 'claw', range: 2.9, arc: 0.45, damage: 58, cooldown: 7, windup: 1.6 }),
   forks: melee({ name: 'Lifting Forks', type: 'Lifter', blurb: 'Scoop a robot up and drive it wherever you like. Almost no damage.', price: 400, kind: 'claw', range: 3.1, arc: 0.6, damage: 6, cooldown: 4, windup: 3.5 }),
 };
@@ -255,6 +257,8 @@ export const BURST_GAP = 0.05;
 export const SPINNER_MIN_SPEED = 0.2;
 /** How much speed a spinner keeps after a hit. */
 export const SPINNER_KEPT_SPEED = 0.2;
+/** Seconds a flipped robot spends upside down after it lands, before it rights itself. Shorter than the flipper's cooldown, so it can't be held down forever. */
+export const FLIP_TIME = 2.5;
 /** How hard a hit throws the spinner's own robot back, as a share of what the target takes. */
 export const SPINNER_RECOIL = 0.35;
 
@@ -285,7 +289,7 @@ export const DEFENSES: Record<DefenseId, DefenseDef> = {
   blades: defense({ name: 'Side Blades', blurb: 'Spin up blades that cut anything alongside you.', price: 500, cooldown: 8, duration: 3, damage: 24, radius: 1.6 }),
   cutter: defense({ name: 'Cutter', blurb: 'One sweeping cut all around you that throws robots back.', price: 500, cooldown: 6, damage: 28, radius: 5 }),
   teleport: defense({ name: 'Teleport', blurb: 'Jump a long way forward in an instant.', price: 800, cooldown: 8, radius: 14 }),
-  flash: defense({ name: 'Flash Bomb', blurb: 'Whites out the view of nearby pilots.', price: 450, cooldown: 10, duration: 2.5, radius: 11 }),
+  flash: defense({ name: 'Flash Bomb', blurb: 'Briefly dazzles pilots close by.', price: 450, cooldown: 14, duration: 1.2, radius: 8 }),
   regen: defense({ name: 'Armor Regenerator', blurb: 'Rebuilds armor over five seconds.', price: 700, cooldown: 12, duration: 5, damage: 11 }),
   cloak: defense({ name: 'Cloaking Device', blurb: 'Vanish for a few seconds. Firing breaks it.', price: 800, cooldown: 14, duration: 5 }),
   emp: defense({ name: 'EMP', blurb: 'Stuns every robot around you.', price: 900, cooldown: 14, duration: 1.5, radius: 9 }),
@@ -410,25 +414,23 @@ export const PAINT_COLORS: number[] = [
 ];
 
 export type PatternId = 'solid' | 'stripes' | 'hazard' | 'flames' | 'camo' | 'checker' | 'bolt' | 'rust';
-export type TopperId = 'none' | 'antenna' | 'horns' | 'siren' | 'spoiler' | 'crest' | 'crown' | 'flag';
+export type BodyId = 'wedge' | 'slab' | 'turtle';
 
 export const PATTERNS: Record<PatternId, string> = {
   solid: 'Solid', stripes: 'Racing Stripes', hazard: 'Hazard', flames: 'Flames',
   camo: 'Camo', checker: 'Checker', bolt: 'Lightning', rust: 'Rust Bucket',
 };
 
-export const TOPPERS: Record<TopperId, string> = {
-  none: 'None', antenna: 'Antenna', horns: 'Horns', siren: 'Siren',
-  spoiler: 'Spoiler', crest: 'Crest', crown: 'Crown', flag: 'Flag',
-};
+/** Only how the robot looks. The rules never read this, so no shape has an advantage. */
+export const BODIES: Record<BodyId, string> = { wedge: 'Wedge', slab: 'Slab', turtle: 'Turtle' };
 
 export interface Paint {
   primary: number;
   secondary: number;
   pattern: PatternId;
-  topper: TopperId;
+  body: BodyId;
   /** What's been painted in the paintshop. See game/skin.ts. */
   skin?: string;
 }
 
-export const DEFAULT_PAINT: Paint = { primary: 0xff8a2a, secondary: 0x33363b, pattern: 'solid', topper: 'none' };
+export const DEFAULT_PAINT: Paint = { primary: 0xff8a2a, secondary: 0x33363b, pattern: 'solid', body: 'wedge' };

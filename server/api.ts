@@ -58,12 +58,14 @@ export interface ApiOptions {
   allowedOrigins: Set<string>;
   googleClientId: string | null;
   clientAddress: (req: IncomingMessage) => string;
+  /** How many people are in the queue and in matches right now. */
+  presence: () => { queued: number; playing: number };
 }
 
 export type ApiHandler = ((req: IncomingMessage, res: ServerResponse) => void) & { prune: () => void };
 
 /** The REST API behind the garage, sign-in, match history and leaderboards. */
-export function createApi({ accounts, allowedOrigins, googleClientId, clientAddress }: ApiOptions): ApiHandler {
+export function createApi({ accounts, allowedOrigins, googleClientId, clientAddress, presence }: ApiOptions): ApiHandler {
   const general = new Limiter(REQUESTS_PER_WINDOW, WINDOW_MS);
   const guests = new Limiter(GUESTS_PER_HOUR, 60 * WINDOW_MS);
 
@@ -122,6 +124,8 @@ export function createApi({ accounts, allowedOrigins, googleClientId, clientAddr
         }
         case 'GET /api/leaderboard':
           return send(200, { leaderboard: await accounts.leaderboard() });
+        case 'GET /api/online':
+          return send(200, { ...presence(), recent: await accounts.recentPlayers() });
         case 'POST /api/logout':
           await accounts.signOut(token);
           return send(200, {});
