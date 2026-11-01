@@ -12,6 +12,7 @@ import {
   POWER_SOURCES,
   POWERUPS,
   POWERUP_CAP,
+  POWERUP_ORDER,
   POWERUP_SLOTS,
   fittedPowerups,
   spaceCapacity,
@@ -111,8 +112,17 @@ export function retireGuns<T extends { money: number; owned: Save['owned']; load
   return save;
 }
 
-/** Saves from before there were slots start with the first powerups they have, and pick from there. */
-export function fillPowerupSlots<T extends { loadout: Loadout }>(save: T): T {
+/**
+ * Every powerup gets a real count. Old saves can lack one that was added or renamed later, as the
+ * Battery Pack was, and a count that's missing turns into NaN and then null once it's saved.
+ * Saves from before there were slots start with the first powerups they have, and pick from there.
+ */
+export function tidyPowerups<T extends { loadout: Loadout }>(save: T): T {
+  const counts = save.loadout.powerups as Partial<Record<PowerupId, unknown>>;
+  for (const id of POWERUP_ORDER) {
+    const count = counts[id];
+    counts[id] = typeof count === 'number' && Number.isFinite(count) ? Math.max(0, Math.min(POWERUP_CAP, count)) : 0;
+  }
   save.loadout.powerupSlots = fittedPowerups(save.loadout);
   return save;
 }
@@ -120,7 +130,7 @@ export function fillPowerupSlots<T extends { loadout: Loadout }>(save: T): T {
 export function loadSave(storage: Pick<Storage, 'getItem'> | null): Save {
   try {
     const raw = storage?.getItem(SAVE_KEY);
-    if (raw) return fillPowerupSlots(retireGuns({ ...newSave(), ...(JSON.parse(raw) as Partial<Save>) }));
+    if (raw) return tidyPowerups(retireGuns({ ...newSave(), ...(JSON.parse(raw) as Partial<Save>) }));
   } catch {
     // Blocked storage or a corrupt save both just start a new game.
   }

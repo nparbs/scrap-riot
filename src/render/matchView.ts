@@ -5,7 +5,7 @@ import { lerpAngle, type Bot, type GameEvent, type Match, type Trap } from '../s
 import { buildArena, type ArenaScene } from './arenaScene';
 import { ArcBolts, Particles } from './fx';
 import { Ragdoll } from './ragdoll';
-import { buildRobot, disposeRobot, type RobotModel } from './robots';
+import { buildRobot, disposeRobot, poseWeapon, type RobotModel } from './robots';
 
 const CAM_DISTANCE = 9;
 const CAM_HEIGHT = 4.6;
@@ -28,8 +28,6 @@ const DROP_HEIGHT = 34;
 /** A hit this hard gets the big sparks and a kick of the camera. */
 const BIG_HIT = 12;
 /** How far a spear fires out, and how quickly it comes back. */
-const SPEAR_THRUST = 1.5;
-const SPEAR_RETURN = 0.28;
 /** How long a flipped robot takes to roll onto its back, and to roll back onto its wheels. */
 const ROLL_OVER_TIME = 0.4;
 const RIGHTING_TIME = 0.5;
@@ -46,7 +44,6 @@ interface BotVisual {
   /** The longest it has been thrown for in this flight, to shape the arc. */
   airPeak: number;
   /** Where the main weapon sits at rest. */
-  meleeZ: number;
   chainTravel: number;
   flipPeak: number;
   /** How far round the robot has rolled: half a turn is upside down, and a full turn is back on its wheels. */
@@ -245,7 +242,7 @@ export class MatchView {
     const label = nameSprite(bot.name, bot.color);
     label.renderOrder = 12;
     this.arena.scene.add(model.root, barBack, barFront, label);
-    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, airPeak: 0, meleeZ: model.meleePivot.position.z, chainTravel: 0, flipPeak: 0, roll: 0, platesLost: 0 });
+    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, airPeak: 0, chainTravel: 0, flipPeak: 0, roll: 0, platesLost: 0 });
   }
 
   private clearMatch(): void {
@@ -576,6 +573,7 @@ export class MatchView {
     const forward = bot.vx * Math.sin(bot.heading) + bot.vz * Math.cos(bot.heading);
     v.wheelSpin += forward * dt * 2.5;
     for (const wheel of model.wheels) wheel.rotation.x = v.wheelSpin;
+    if (forward !== 0) model.tread?.(v.wheelSpin / 2.5);
 
     model.hullMaterial.emissive.setHex(bot.flashT > 0 ? 0xffffff : bot.rageT > 0 ? 0x661111 : 0x000000);
     model.hullMaterial.emissiveIntensity = bot.flashT > 0 ? 0.12 : 0.6;
@@ -583,7 +581,8 @@ export class MatchView {
 
     const melee = MELEE[bot.loadout.melee];
     if (model.spinner) {
-      const rate = melee.kind === 'spinner' ? 2 + bot.meleeCharge * 70 : bot.meleeActive ? 38 : 2;
+      const firing = bot.meleeActive || (melee.chain !== undefined && bot.meleeSwing < 0.5);
+      const rate = melee.kind === 'spinner' ? 2 + bot.meleeCharge * 70 : firing ? 38 : 2;
       model.spinner.rotation[model.spinAxis] += rate * dt;
     }
     if (model.chain && (bot.meleeActive || bot.meleeCd > 0)) {
@@ -619,22 +618,18 @@ export class MatchView {
         count: 1, color: 0xff6a5a, speed: 18, size: 0.1, life: 0.5, y: 1, gravity: 0, dir: { x: -dx, z: -dz, jitter: 3 },
       });
     }
-    if (bot.loadout.melee === 'flipper') {
-      // The plate snaps up as it fires, then settles back down.
-      const up = bot.meleeSwing < 0.18 ? -1 : 0;
-      model.meleePivot.rotation.x += (up - model.meleePivot.rotation.x) * Math.min(1, dt * (bot.meleeSwing < 0.18 ? 45 : 6));
-    } else if (bot.loadout.melee === 'spear') {
-      const out = Math.max(0, 1 - bot.meleeSwing / SPEAR_RETURN) * SPEAR_THRUST;
-      model.meleePivot.position.z = v.meleeZ + (bot.loadout.rearMelee ? -out : out);
-    } else if (melee.kind === 'strike' && !melee.chain) {
-      // Raise during the windup, slam on the strike, then ease back to rest.
-      const raised = bot.meleeWindup > 0 ? -1.15 : -0.3;
-      const slam = bot.meleeSwing < 0.1 ? 0.25 : raised;
-      model.meleePivot.rotation.x += (slam - model.meleePivot.rotation.x) * Math.min(1, dt * (bot.meleeSwing < 0.1 ? 60 : 24));
-    } else if (bot.loadout.melee === 'ram') {
-      const reach = bot.chassis.radius * 0.8 + (bot.lungeT > 0 ? 0.5 : 0);
-      model.meleePivot.position.z = bot.loadout.rearMelee ? -reach : reach;
-    }
+    poseWeapon(model, bot.loadout.melee, {
+      windingUp: bot.meleeWindup > 0,
+      swing: bot.meleeSwing,
+      active: bot.meleeActive,
+      pressed: bot.input.melee,
+      cooling: bot.meleeCd > 0,
+      lunging: bot.lungeT > 0,
+      radius: bot.chassis.radius,
+      rear: !!bot.loadout.rearMelee,
+      speed: Math.max(0, Math.min(1, forward / bot.chassis.speed)),
+      time: this.spin,
+    }, dt);
 
     if (bot.meleeActive && melee.kind === 'held' && !melee.passive && !melee.burns) {
       const fx = Math.sin(bot.heading);

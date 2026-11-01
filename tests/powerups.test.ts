@@ -19,6 +19,26 @@ function duel(a: Partial<Loadout>): Match {
   return new Match(setups, { seed: 1, arena: 'pit', mode: 'duel', countdown: 0 });
 }
 
+describe('powerup counts', () => {
+  it('gives a save from before the Battery Pack a real count, so it can never show or save as null', () => {
+    const save = newSave();
+    save.loadout.powerups = { rage: 1, megashield: 0, cloaking: 0, xray: 0, repair: 2, turbo: 1 } as unknown as Loadout['powerups'];
+    const storage = { getItem: () => JSON.stringify(save) };
+    const loaded = loadSave(storage);
+    expect(loaded.loadout.powerups.battery).toBe(0);
+    expect(buyPowerup(loaded, 'battery')).toBe(true);
+    expect(JSON.parse(JSON.stringify(loaded)).loadout.powerups.battery).toBe(1);
+  });
+
+  it('mends a count already saved as null', () => {
+    const save = newSave();
+    (save.loadout.powerups as Record<string, unknown>).battery = null;
+    const loaded = loadSave({ getItem: () => JSON.stringify(save) });
+    expect(loaded.loadout.powerups.battery).toBe(0);
+    expect(new Match([{ name: 'A', color: 1, isAI: false, loadout: loaded.loadout }, { name: 'B', color: 2, isAI: false, loadout: newSave().loadout }], { seed: 1, arena: 'pit', mode: 'duel', countdown: 0 }).bots[0].powerups.battery).toBe(0);
+  });
+});
+
 describe('powerup slots', () => {
   it('lets a robot select no more than three', () => {
     const save = newSave();

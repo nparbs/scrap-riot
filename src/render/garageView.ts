@@ -1,10 +1,17 @@
 import * as THREE from 'three';
-import { buildRobot, disposeRobot, type RobotBuild, type RobotModel } from './robots';
+import { CHASSIS, MELEE } from '../sim/data';
+import { buildRobot, disposeRobot, poseWeapon, type RobotBuild, type RobotModel } from './robots';
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 1.6;
 const CAMERA_TILT = 0.42;
 const FRAME_MARGIN = 0.98;
+/** The weapon shows what it does on this loop, in seconds: a rest, then it fires. */
+const DEMO_LOOP = 3.6;
+const DEMO_FIRE = 1.8;
+/** How long a demo keeps firing, for weapons that run while the key is held. */
+const DEMO_HOLD = 1.1;
+const DEMO_ROLL = 0.5;
 
 /** Turntable showing the current robot in the workshop's preview window. */
 export class GarageView {
@@ -12,7 +19,9 @@ export class GarageView {
   readonly camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
   private model: RobotModel | null = null;
   private readonly turntable = new THREE.Group();
+  private build: RobotBuild | null = null;
   private key = '';
+  private time = 0;
   private zoomLevel = 1;
   /** How far back the camera needs to be to see the whole robot and its weapon. */
   private framing = 8;
@@ -60,6 +69,8 @@ export class GarageView {
     const key = JSON.stringify(build);
     if (key === this.key) return;
     this.key = key;
+    this.build = build;
+    this.time = 0;
     if (this.model) {
       this.turntable.remove(this.model.root);
       disposeRobot(this.model);
@@ -93,6 +104,29 @@ export class GarageView {
 
   update(dt: number): void {
     this.turntable.rotation.y += dt * 0.5;
-    if (this.model?.spinner) this.model.spinner.rotation[this.model.spinAxis] += dt * 3;
+    const { model, build } = this;
+    if (!model || !build) return;
+    this.time += dt;
+    const phase = this.time % DEMO_LOOP;
+    const melee = MELEE[build.melee];
+    const held = phase >= DEMO_FIRE && phase < DEMO_FIRE + DEMO_HOLD;
+    if (model.spinner) model.spinner.rotation[model.spinAxis] += dt * (held && !melee.passive ? 22 : 3);
+    if (model.chain && held) model.chain(this.time * 4);
+    // The wheels and tracks tick over, so they don't look painted on.
+    const roll = this.time * DEMO_ROLL;
+    for (const wheel of model.wheels) wheel.rotation.x = roll * 2.5;
+    model.tread?.(roll);
+    poseWeapon(model, build.melee, {
+      windingUp: phase >= DEMO_FIRE - melee.windup && phase < DEMO_FIRE && melee.kind === 'strike',
+      swing: phase >= DEMO_FIRE ? phase - DEMO_FIRE : 99,
+      active: held,
+      pressed: held,
+      cooling: phase >= DEMO_FIRE + DEMO_HOLD,
+      lunging: melee.kind === 'ram' && phase >= DEMO_FIRE && phase < DEMO_FIRE + 0.35,
+      radius: CHASSIS[build.chassis].radius,
+      rear: !!build.rearMelee,
+      speed: held ? 1 : 0,
+      time: this.time,
+    }, dt);
   }
 }
