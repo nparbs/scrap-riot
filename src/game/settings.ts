@@ -3,7 +3,7 @@ const SETTINGS_KEY = 'scrap-riot.settings.v4';
 
 export type Action =
   | 'forward' | 'back' | 'left' | 'right'
-  | 'melee' | 'turret' | 'defense' | 'boost'
+  | 'melee' | 'defense' | 'boost'
   | 'power1' | 'power2' | 'power3' | 'power4' | 'power5' | 'power6'
   | 'rear';
 
@@ -17,7 +17,6 @@ export const ACTIONS: { id: Action; label: string }[] = [
   { id: 'left', label: 'Turn left' },
   { id: 'right', label: 'Turn right' },
   { id: 'melee', label: 'Main weapon' },
-  { id: 'turret', label: 'Gun' },
   { id: 'defense', label: 'Defense' },
   { id: 'boost', label: 'Speed boost' },
   { id: 'power1', label: 'Rage' },
@@ -35,7 +34,6 @@ export const DEFAULT_BINDINGS: Bindings = {
   left: 'KeyA',
   right: 'KeyD',
   melee: 'Space',
-  turret: 'KeyQ',
   defense: 'KeyR',
   boost: 'ShiftLeft',
   power1: 'Digit1',

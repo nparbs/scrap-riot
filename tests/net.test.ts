@@ -79,14 +79,12 @@ describe('protocol', () => {
   it('ignores purchased stats and rejects unknown gear', () => {
     const loadout = onlineLoadout({
       chassis: 'juggernaut',
-      melee: 'death-ray',
-      turret: '__proto__',
+      melee: '__proto__',
       upgrades: { armor: 999, engine: 999, weapons: 999 },
       powerups: { repair: 99 },
     });
     expect(loadout.chassis).toBe('juggernaut');
     expect(loadout.melee).toBe('chainsaw');
-    expect(loadout.turret).toBe('minigun');
     expect(loadout.upgrades).toEqual({ armor: 0, engine: 0, weapons: 0 });
     expect(loadout.powerups.repair).toBe(1);
     expect(onlineLoadout(null).chassis).toBe('brawler');

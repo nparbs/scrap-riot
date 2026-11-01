@@ -10,8 +10,15 @@ Where Scrap Riot stands, for picking the work up in a new session. Last updated 
 
 Update the page and server together whenever `PROTOCOL_VERSION` changes.
 
-## Latest work (protocol 9)
+## Latest work (protocol 10)
 
+- **No guns:** turrets, projectiles and the gun key are gone. The Flamethrower, Arc Coil (now Tesla Coil) and Spear Gun (now Pneumatic Spear) became main weapons. `retireGuns` in `src/game/progress.ts` upgrades old saves on load, refunding any other gun bought and handing over the weapon a converted one became. The refund reaches the database with the player's next garage action.
+- **Balance:** `npm run balance` plays 8-robot matches in every big mode, plus a duel round robin. Bots-only numbers can't show how a weapon feels to a person. Bots are poor with the Magnet (27% of duels) and strong with the Ring Spinner (69%, mostly by outlasting), so check those by hand before moving them further.
+- **Big matches:** assists pay `REWARD.assist`, splash shrinks with `CROWD_SPLASH` for each extra robot caught, chained stuns shorten under `STUN_GUARD`, repairs spawn faster with more robots, landing a hit ends spawn protection and cloaking, bots avoid piling on one target and lean toward the leader, and a shared hill splits its points.
+- **Death:** `src/render/ragdoll.ts` tumbles a copy of the model for `RAGDOLL_TIME`, then blows it apart. `kill` events carry position and speed for this, and the sim no longer sends an explosion when a robot dies. The Hud then fades to black with a line from `src/game/lastWords.ts`. The user asked for Breaking Bad quotes there, but these are original lines, because this is a public game and the show's dialogue isn't ours to ship. The list is plain text and easy to change.
+- **Duel face-off:** `src/ui/duelIntro.ts`, with its own small renderer so robots sit between the page's layers. A duel's countdown is `COUNTDOWN + DUEL_INTRO`, including online, so the face-off is timed by the match and a late joiner lands part way through.
+- **Input:** left and right click in `src/input.ts`, active only during a match. Touch controls are in `src/ui/touch.ts`, and appear when the main pointer is coarse. Their layout is `.hud-touch` in the stylesheet.
+- **Workshop:** a top bar, a section rail and cards with stat chips, in `workshopPanel` and `partChips` in `src/ui/screens.ts`. Bindings no longer have a gun, and old saved bindings for it are ignored.
 - **Tool chest look:** the page's colours are tokens at the top of `src/style.css`: graphite and pegboard, cream lettering, and one orange for headings and whatever is selected. Health and battery colours are set in `src/ui/hud.ts`, because the game changes them as they run down.
 - **Garage sounds:** `drill` and `chaChing` in `src/audio.ts`. Fitting a part drills, buying or selling rings the register, and buying a part that fits does both. Levels were measured, but nobody has listened to them yet, so the user's ear overrides the numbers.
 - **Music button:** beside the settings gear. `musicMuted` in `src/game/settings.ts` silences the music and keeps the slider's level, and moving the slider turns it back on.
@@ -55,16 +62,15 @@ Shipped before the latest work, and still true unless it says otherwise above.
 - **Ways to play:** Online Duel, Online Brawl, Offline vs Bots (choice of map and mode, plus Career) and Training (a practice dummy, no payout).
 - **Workshop:** in the style of the original, with Chassis, Tower, Wheels, Engine, Power Source and an Armour dial, limited by Used Space.
 - **Paintshop:** paint on an unfolded robot with drawing tools and a 120-colour palette. Opponents see it. Paint jobs are in `src/game/skin.ts`.
-- **Melee first:** 20 main weapons, including spinners that store energy, a flipper, a crusher and forks.
-- **Guns:** fixed forward with no tracking, few shots per life, and a cooldown. The chaingun fires 10 rounds per press.
-- **Battery:** runs guns and the Shift boost.
+- **Melee only:** 23 main weapons, including spinners that store energy, a flipper, a crusher and forks.
+- **Battery:** runs the Shift boost and powered weapons.
 - **Look and sound:** BattleBots-style robots, a redrawn logo, synthesized sound and music, a short intro, and a name prompt on first visit.
 - **Netcode:** fixed the online stutter with an input queue on the server and blended prediction on the client.
 - **Graphics:** Auto quality steps down on slower machines.
 
 ### Controls
 
-WASD to drive, Space main weapon, Shift boost, Q gun, R defense, E look behind, 1–6 powerups, M mute, Esc menu. Players can rebind them in Settings, except that Ctrl can't be bound, because Ctrl+W closes the tab.
+WASD to drive, Space or left click main weapon, R or right click defense, Shift boost, E look behind, 1–6 powerups, M mute, Esc menu. Players can rebind them in Settings, except that Ctrl can't be bound, because Ctrl+W closes the tab.
 
 ## What the user wants next
 

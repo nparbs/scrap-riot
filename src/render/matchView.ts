@@ -1,20 +1,24 @@
 import * as THREE from 'three';
 import { ARENAS, PISTON_REACH, pistonExtension, sawPos, shockerActive, TRAP_NAMES, type ArenaId } from '../sim/arena';
-import { BOOST_SPEED, legibleColor, MELEE, TRAP, TURRETS } from '../sim/data';
+import { BOOST_SPEED, legibleColor, MATCH, MELEE, TRAP } from '../sim/data';
 import { lerpAngle, type Bot, type GameEvent, type Match, type Trap } from '../sim/match';
 import { buildArena, type ArenaScene } from './arenaScene';
 import { ArcBolts, Particles } from './fx';
+import { Ragdoll } from './ragdoll';
 import { buildRobot, disposeRobot, type RobotModel } from './robots';
 
 const CAM_DISTANCE = 9;
 const CAM_HEIGHT = 4.6;
 /** How far the chase camera stays from a wall, so it never ends up behind one. */
 const CAM_WALL_GAP = 0.6;
+const CAM_FOV = 60;
+/** The view opens up a little under boost, which sells the speed. */
+const CAM_BOOST_FOV = 67;
 /** Matches the height of the HUD dock, so the action is centered in what's left of the screen. */
 const DOCK_HEIGHT = 136;
+const SHOCKWAVE_RADIUS = 9;
 const MAX_WRECKS = 12;
 const WRECK_LIFE = 12;
-const FALL_TIME = 1;
 const ENVIRONMENT_INTENSITY = 0.55;
 const THROW_HEIGHT = 3.2;
 const SPECTATE_HEIGHT = 25;
@@ -22,7 +26,9 @@ const SPECTATE_BACK = 18;
 const DROP_HEIGHT = 34;
 /** A hit this hard gets the big sparks and a kick of the camera. */
 const BIG_HIT = 12;
-const GUN_RECOIL = 0.16;
+/** How far a spear fires out, and how quickly it comes back. */
+const SPEAR_THRUST = 1.5;
+const SPEAR_RETURN = 0.28;
 /** How long a flipped robot takes to roll onto its back, and to roll back onto its wheels. */
 const ROLL_OVER_TIME = 0.4;
 const RIGHTING_TIME = 0.5;
@@ -36,14 +42,10 @@ interface BotVisual {
   label: THREE.Sprite;
   smokeT: number;
   wheelSpin: number;
-  /** Counts down while the robot drops off a ledge or into a pit. */
-  fallT: number;
   /** The longest it has been thrown for in this flight, to shape the arc. */
   airPeak: number;
-  /** 1 just after firing, falling to 0. Drives the gun's recoil. */
-  gunKick: number;
-  /** Where the gun sits at rest. */
-  gunZ: number;
+  /** Where the main weapon sits at rest. */
+  meleeZ: number;
   chainTravel: number;
   flipPeak: number;
   /** How far round the robot has rolled: half a turn is upside down, and a full turn is back on its wheels. */
@@ -117,7 +119,7 @@ function trapVisual(trap: Trap, arena: ArenaId): { group: THREE.Group; drop: THR
 }
 
 export class MatchView {
-  readonly camera = new THREE.PerspectiveCamera(60, 1, 0.1, 300);
+  readonly camera = new THREE.PerspectiveCamera(CAM_FOV, 1, 0.1, 300);
   arena: ArenaScene;
   /** Bot the camera follows. Also the point of reference for shake. */
   followId = 0;
@@ -133,7 +135,10 @@ export class MatchView {
   private readonly visuals = new Map<number, BotVisual>();
   private readonly particles = new Particles();
   private readonly bolts = new ArcBolts();
-  private readonly projectileMeshes = new Map<number, THREE.Mesh>();
+  private readonly ragdolls = new Map<number, Ragdoll>();
+  /** Holds the camera on a robot that's just died, before it moves on to spectating. */
+  private deathHold = 0;
+  private dockHeight = DOCK_HEIGHT;
   private readonly mineMeshes = new Map<number, THREE.Group>();
   private readonly oilMeshes = new Map<number, THREE.Mesh>();
   private readonly pickupMeshes = new Map<number, THREE.Group>();
@@ -147,16 +152,8 @@ export class MatchView {
   private readonly trapVisuals = new Map<number, { group: THREE.Group; drop: THREE.Object3D | null }>();
   private spin = 0;
 
-  private readonly bulletGeo = new THREE.BoxGeometry(0.1, 0.1, 0.6);
-  private readonly bulletMat = new THREE.MeshBasicMaterial({ color: 0xffe08a, toneMapped: false });
-  private readonly rocketGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.9, 8);
-  private readonly rocketMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, emissive: 0xff5a1a, emissiveIntensity: 1.5 });
-  private readonly shellGeo = new THREE.SphereGeometry(0.28, 10, 8);
-  private readonly shellMat = new THREE.MeshStandardMaterial({ color: 0x2b2d30, emissive: 0xff5a1a, emissiveIntensity: 0.5 });
-  private readonly discGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.05, 8);
-  private readonly discMat = new THREE.MeshStandardMaterial({ color: 0xcfd6dc, metalness: 0.95, roughness: 0.2, flatShading: true });
-  private readonly spearGeo = new THREE.BoxGeometry(0.07, 0.07, 1.6);
   private readonly nailGeo = new THREE.ConeGeometry(0.07, 0.28, 4);
+  private readonly nailMat = new THREE.MeshStandardMaterial({ color: 0xcfd6dc, metalness: 0.95, roughness: 0.2, flatShading: true });
   private readonly wreckMat = new THREE.MeshStandardMaterial({ color: 0x2a2b2d, metalness: 0.6, roughness: 0.8, flatShading: true });
   private readonly barGeo = new THREE.PlaneGeometry(2.4, 0.22);
   private readonly barBackMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.6, depthTest: false });
@@ -233,8 +230,8 @@ export class MatchView {
   }
 
   private addBot(bot: Bot): void {
-    const { chassis, melee, turret, defense, paint, rearMelee, tower, wheels } = bot.loadout;
-    const model = buildRobot({ chassis, melee, turret, defense, paint, rearMelee, tower, wheels, color: bot.color });
+    const { chassis, melee, defense, paint, rearMelee, tower, wheels } = bot.loadout;
+    const model = buildRobot({ chassis, melee, defense, paint, rearMelee, tower, wheels, color: bot.color });
     model.root.scale.setScalar(bot.size);
     const barBack = new THREE.Mesh(this.barGeo, this.barBackMat);
     const barFront = new THREE.Mesh(
@@ -246,11 +243,14 @@ export class MatchView {
     const label = nameSprite(bot.name, bot.color);
     label.renderOrder = 12;
     this.arena.scene.add(model.root, barBack, barFront, label);
-    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, fallT: 0, airPeak: 0, gunKick: 0, gunZ: model.turretPivot.position.z, chainTravel: 0, flipPeak: 0, roll: 0, platesLost: 0 });
+    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, airPeak: 0, meleeZ: model.meleePivot.position.z, chainTravel: 0, flipPeak: 0, roll: 0, platesLost: 0 });
   }
 
   private clearMatch(): void {
     const scene = this.arena.scene;
+    for (const ragdoll of this.ragdolls.values()) ragdoll.dispose();
+    this.ragdolls.clear();
+    this.deathHold = 0;
     for (const v of this.visuals.values()) {
       scene.remove(v.model.root, v.barBack, v.barFront, v.label);
       disposeRobot(v.model);
@@ -261,7 +261,7 @@ export class MatchView {
     this.visuals.clear();
     for (const wreck of this.wrecks.splice(0)) this.removeWreck(wreck);
     for (const transient of this.transients.splice(0)) scene.remove(transient.object);
-    for (const map of [this.projectileMeshes, this.mineMeshes, this.oilMeshes, this.pickupMeshes, this.droneMeshes]) {
+    for (const map of [this.mineMeshes, this.oilMeshes, this.pickupMeshes, this.droneMeshes]) {
       for (const obj of map.values()) scene.remove(obj);
       map.clear();
     }
@@ -375,8 +375,14 @@ export class MatchView {
 
   resize(width: number, height: number): void {
     this.camera.aspect = width / height;
-    this.camera.setViewOffset(width, height, 0, DOCK_HEIGHT / 2, width, height);
+    this.camera.setViewOffset(width, height, 0, this.dockHeight / 2, width, height);
     this.camera.updateProjectionMatrix();
+  }
+
+  /** Touch screens have a much smaller dock, so the action sits lower down. */
+  setDockHeight(height: number): void {
+    this.dockHeight = height;
+    this.resize(window.innerWidth, window.innerHeight);
   }
 
   update(frameDt: number, alpha: number): void {
@@ -388,12 +394,12 @@ export class MatchView {
     match.bots.forEach((bot) => this.syncBot(bot, frameDt, alpha));
     this.syncHazards(match, frameDt);
     this.arena.animate(this.spin);
-    this.syncProjectiles(match);
     this.syncMines(match);
     this.syncOil(match);
     this.syncDrones(match);
     this.syncTraps(match, frameDt);
     this.updateTransients(frameDt);
+    this.updateRagdolls(frameDt);
     this.syncPickups(match);
     this.particles.update(frameDt);
     this.bolts.update(frameDt);
@@ -431,25 +437,9 @@ export class MatchView {
         if (event.target === this.followId) this.shake = Math.min(1, this.shake + event.amount * 0.03);
         break;
       case 'explosion': {
-        const n = event.big ? 2 : 1;
-        this.particles.burst(event.x, event.z, { count: 26 * n, color: 0xff8a2a, speed: 15, size: 0.42, life: 0.55, y: 1 });
-        this.particles.burst(event.x, event.z, { count: 14 * n, color: 0xffe08a, speed: 21, size: 0.2, life: 0.35, y: 1 });
-        this.particles.burst(event.x, event.z, { count: 16 * n, color: 0x3a3a3a, speed: 5, size: 0.8, life: 1.1, y: 1, gravity: -3 });
-        if (event.big) {
-          this.particles.burst(event.x, event.z, { count: 14, color: 0x6d7379, speed: 16, size: 0.4, life: 1.4, y: 1 });
-          this.addWreck(event.x, event.z);
-        }
-        this.flash.position.set(event.x, 3, event.z);
-        this.flash.intensity = event.big ? 500 : 250;
+        this.explosionFx(event.x, 1, event.z, event.big, event.big);
         const dist = Math.hypot(event.x - follow.x, event.z - follow.z);
         this.shake = Math.min(1, this.shake + Math.max(0, 1 - dist / 22) * (event.big ? 0.8 : 0.4));
-        break;
-      }
-      case 'shot': {
-        this.particles.burst(event.x, event.z, { count: 4, color: 0xffe08a, speed: 7, size: 0.26, life: 0.1, y: 1.3 });
-        const shooter = this.visuals.get(event.owner);
-        if (shooter) shooter.gunKick = 1;
-        if (event.owner === this.followId) this.shake = Math.min(1, this.shake + 0.04);
         break;
       }
       case 'arc':
@@ -475,10 +465,6 @@ export class MatchView {
         this.particles.burst(bot.x, bot.z, { count: 20, color, speed: 9, size: 0.2, life: 0.5, gravity: 0, spread: 1 });
         break;
       }
-      case 'beam':
-        this.addBeam(event.x1, event.z1, event.x2, event.z2);
-        this.particles.burst(event.x2, event.z2, { count: 6, color: 0xff6a5a, speed: 8, size: 0.14, life: 0.25, y: 1.4 });
-        break;
       case 'pulse':
         this.addPulse(event.x, event.z, event.radius, event.color);
         break;
@@ -487,13 +473,65 @@ export class MatchView {
           this.particles.burst(x, z, { count: 26, color: 0x8fdcff, speed: 9, size: 0.2, life: 0.5, gravity: -6 });
         }
         break;
-      case 'kill': {
-        const v = this.visuals.get(event.victim);
-        if (event.fell && v) v.fallT = FALL_TIME;
+      case 'kill':
+        this.startRagdoll(event.victim, event.x, event.z, event.vx, event.vz, event.fell);
         break;
-      }
       default:
         break;
+    }
+  }
+
+  /** Fire, smoke and a shockwave. Anywhere the floor is, it leaves a scorch mark and scrap behind. */
+  private explosionFx(x: number, y: number, z: number, big: boolean, wreck: boolean): void {
+    const n = big ? 2 : 1;
+    this.particles.burst(x, z, { count: 26 * n, color: 0xff8a2a, speed: 15, size: 0.42, life: 0.55, y });
+    this.particles.burst(x, z, { count: 14 * n, color: 0xffe08a, speed: 21, size: 0.2, life: 0.35, y });
+    this.particles.burst(x, z, { count: 16 * n, color: 0x3a3a3a, speed: 5, size: 0.8, life: 1.1, y, gravity: -3 });
+    if (big) {
+      this.particles.burst(x, z, { count: 14, color: 0x6d7379, speed: 16, size: 0.4, life: 1.4, y });
+      this.addPulse(x, z, SHOCKWAVE_RADIUS, 0xffb070, Math.max(0.3, y - 0.7));
+    }
+    if (wreck) this.addWreck(x, z);
+    this.flash.position.set(x, y + 2, z);
+    this.flash.intensity = big ? 500 : 250;
+  }
+
+  /** The robot goes limp and tumbles, and only blows once it has finished. */
+  private startRagdoll(id: number, x: number, z: number, vx: number, vz: number, fell: boolean): void {
+    const v = this.visuals.get(id);
+    const bot = this.match?.bots[id];
+    if (!v || !bot) return;
+    this.setCloakLook(v.model, false);
+    v.model.shield.visible = false;
+    // Scorched, with its armour gone, as it was in its last moment. The copy shares these materials.
+    this.showDamage(bot, v, 0);
+    this.ragdolls.get(id)?.dispose();
+    const { half, walled } = this.arena.def;
+    this.ragdolls.set(id, new Ragdoll(v.model.root, x, z, v.model.root.rotation.y, vx, vz, fell, { scene: this.arena.scene, half, walled }, (position, overEdge) => {
+      // Over a pit the robot has sunk out of sight, so the blast comes up out of the hole.
+      const underFloor = overEdge && Math.abs(position.x) < half && Math.abs(position.z) < half;
+      const y = underFloor ? 0.6 : position.y;
+      this.explosionFx(position.x, y, position.z, true, !overEdge);
+      // The sound comes from the same place as every other explosion.
+      this.onEvent?.({ type: 'explosion', x: position.x, z: position.z, big: true });
+      const follow = this.match!.bots[this.followId];
+      const dist = Math.hypot(position.x - follow.x, position.z - follow.z);
+      this.shake = Math.min(1, this.shake + Math.max(0, 1 - dist / 22) * 0.8);
+    }));
+    if (id === this.followId) this.deathHold = MATCH.respawnTime;
+  }
+
+  private updateRagdolls(dt: number): void {
+    this.deathHold = Math.max(0, this.deathHold - dt);
+    for (const [id, ragdoll] of this.ragdolls) {
+      if (ragdoll.update(dt)) {
+        if (Math.random() < 0.35) {
+          const { x, y, z } = ragdoll.position;
+          if (y > -6) this.particles.burst(x, z, { count: 1, color: 0x2a2a2a, speed: 1.2, size: 0.55, life: 0.7, y, gravity: -3 });
+        }
+        continue;
+      }
+      this.ragdolls.delete(id);
     }
   }
 
@@ -501,16 +539,6 @@ export class MatchView {
     const v = this.visuals.get(bot.id);
     if (!v) return;
     const { model } = v;
-    if (!bot.alive && v.fallT > 0) {
-      // Keep drawing a falling robot until it has dropped out of sight.
-      v.fallT -= dt;
-      const t = 1 - v.fallT / FALL_TIME;
-      model.root.visible = true;
-      model.root.position.y = -22 * t * t;
-      model.root.rotation.x += dt * 2.5;
-      model.shield.visible = false;
-      return;
-    }
     model.root.rotation.x = 0;
     const showing = bot.alive;
     const viewer = this.match!.bots[this.followId];
@@ -559,16 +587,14 @@ export class MatchView {
       v.chainTravel += (bot.meleeActive ? 9 : 1) * dt;
       model.chain(v.chainTravel);
     }
-    v.gunKick = Math.max(0, v.gunKick - dt * 7);
-    model.turretPivot.position.z = v.gunZ - v.gunKick * GUN_RECOIL;
-    if (model.gunSpinner) model.gunSpinner.rotation.z += v.gunKick * 45 * dt;
     if (model.blades && bot.bladesT > 0) {
       for (const disc of model.blades.children) disc.rotation.x += 30 * dt;
       this.particles.burst(bot.x, bot.z, { count: 1, color: 0xffc860, speed: 8, size: 0.08, life: 0.2, y: 0.6 });
     }
-    if (bot.turretFiring && TURRETS[bot.loadout.turret].kind === 'flame') {
-      const dx = Math.sin(bot.heading);
-      const dz = Math.cos(bot.heading);
+    if (bot.meleeActive && melee.burns) {
+      const toward = bot.loadout.rearMelee ? bot.heading + Math.PI : bot.heading;
+      const dx = Math.sin(toward);
+      const dz = Math.cos(toward);
       this.particles.burst(bot.x + dx * (bot.radius + 0.7), bot.z + dz * (bot.radius + 0.7), {
         count: 3, color: Math.random() < 0.5 ? 0xff8a2a : 0xffd24a, speed: 18, size: 0.4, life: 0.45, y: 1.2, gravity: -3, dir: { x: dx, z: dz, jitter: 5 },
       });
@@ -593,7 +619,10 @@ export class MatchView {
       // The plate snaps up as it fires, then settles back down.
       const up = bot.meleeSwing < 0.18 ? -1 : 0;
       model.meleePivot.rotation.x += (up - model.meleePivot.rotation.x) * Math.min(1, dt * (bot.meleeSwing < 0.18 ? 45 : 6));
-    } else if (melee.kind === 'strike') {
+    } else if (bot.loadout.melee === 'spear') {
+      const out = Math.max(0, 1 - bot.meleeSwing / SPEAR_RETURN) * SPEAR_THRUST;
+      model.meleePivot.position.z = v.meleeZ + (bot.loadout.rearMelee ? -out : out);
+    } else if (melee.kind === 'strike' && !melee.chain) {
       // Raise during the windup, slam on the strike, then ease back to rest.
       const raised = bot.meleeWindup > 0 ? -1.15 : -0.3;
       const slam = bot.meleeSwing < 0.1 ? 0.25 : raised;
@@ -603,7 +632,7 @@ export class MatchView {
       model.meleePivot.position.z = bot.loadout.rearMelee ? -reach : reach;
     }
 
-    if (bot.meleeActive && melee.kind === 'held' && !melee.passive) {
+    if (bot.meleeActive && melee.kind === 'held' && !melee.passive && !melee.burns) {
       const fx = Math.sin(bot.heading);
       const fz = Math.cos(bot.heading);
       this.particles.burst(bot.x + fx * (bot.radius + 1.6), bot.z + fz * (bot.radius + 1.6), {
@@ -727,21 +756,11 @@ export class MatchView {
     }
   }
 
-  private addBeam(x1: number, z1: number, x2: number, z2: number): void {
-    const length = Math.hypot(x2 - x1, z2 - z1);
-    const material = new THREE.MeshBasicMaterial({ color: 0xff5a4a, transparent: true, toneMapped: false });
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, length), material);
-    beam.position.set((x1 + x2) / 2, 1.4, (z1 + z2) / 2);
-    beam.rotation.y = Math.atan2(x2 - x1, z2 - z1);
-    this.arena.scene.add(beam);
-    this.transients.push({ object: beam, life: 0.14, maxLife: 0.14, update: (t) => (material.opacity = t) });
-  }
-
-  private addPulse(x: number, z: number, radius: number, color: number): void {
+  private addPulse(x: number, z: number, radius: number, color: number, y = 0.3): void {
     const material = new THREE.MeshBasicMaterial({ color, transparent: true, side: THREE.DoubleSide, toneMapped: false });
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 40), material);
     ring.rotation.x = -Math.PI / 2;
-    ring.position.set(x, 0.3, z);
+    ring.position.set(x, y, z);
     this.arena.scene.add(ring);
     this.transients.push({
       object: ring, life: 0.35, maxLife: 0.35,
@@ -793,49 +812,6 @@ export class MatchView {
       if (live.has(id)) continue;
       scene.remove(group);
       this.droneMeshes.delete(id);
-    }
-  }
-
-  private syncProjectiles(match: Match): void {
-    const scene = this.arena.scene;
-    const live = new Set<number>();
-    for (const p of match.projectiles) {
-      live.add(p.id);
-      let mesh = this.projectileMeshes.get(p.id);
-      if (!mesh) {
-        if (p.kind === 'rocket') {
-          mesh = new THREE.Mesh(this.rocketGeo, this.rocketMat);
-          mesh.rotation.order = 'YXZ';
-          mesh.rotation.x = Math.PI / 2;
-        } else if (p.kind === 'mortar' || p.kind === 'grenade') {
-          mesh = new THREE.Mesh(this.shellGeo, this.shellMat);
-        } else if (p.kind === 'disc') {
-          mesh = new THREE.Mesh(this.discGeo, this.discMat);
-        } else if (p.kind === 'spear') {
-          mesh = new THREE.Mesh(this.spearGeo, this.discMat);
-        } else {
-          mesh = new THREE.Mesh(this.bulletGeo, this.bulletMat);
-        }
-        scene.add(mesh);
-        this.projectileMeshes.set(p.id, mesh);
-      }
-      if (p.kind === 'disc') mesh.rotation.y += 0.5;
-      else mesh.rotation.y = Math.atan2(p.vx, p.vz);
-      let y = p.kind === 'disc' ? 1.1 : p.kind === 'grenade' ? 0.6 : 1.4;
-      if (p.flight > 0) {
-        // A lobbed shell follows an arc, peaking halfway through its flight.
-        const t = 1 - p.life / p.flight;
-        y = 1.4 + 48 * t * (1 - t);
-      }
-      mesh.position.set(p.x, y, p.z);
-      if (p.kind === 'rocket' && Math.random() < 0.8) {
-        this.particles.burst(p.x, p.z, { count: 1, color: 0xaaaaaa, speed: 0.8, size: 0.35, life: 0.45, y: 1.4, gravity: -1 });
-      }
-    }
-    for (const [id, mesh] of this.projectileMeshes) {
-      if (live.has(id)) continue;
-      scene.remove(mesh);
-      this.projectileMeshes.delete(id);
     }
   }
 
@@ -891,7 +867,7 @@ export class MatchView {
           for (let i = 0; i < 26; i++) {
             const a = i * 2.4;
             const r = p.r * 0.92 * Math.sqrt(i / 26);
-            const nail = new THREE.Mesh(this.nailGeo, this.discMat);
+            const nail = new THREE.Mesh(this.nailGeo, this.nailMat);
             nail.rotation.x = Math.PI / 2;
             nail.position.set(Math.cos(a) * r, Math.sin(a) * r, 0.14);
             mesh.add(nail);
@@ -960,9 +936,14 @@ export class MatchView {
 
   private updateCamera(match: Match, dt: number, alpha: number): void {
     const bot = match.bots[this.followId];
-    if (bot.out && match.mode === 'lms') {
+    if (bot.out && match.mode === 'lms' && this.deathHold <= 0) {
       this.spectateCamera(match, bot, dt);
       return;
+    }
+    const fov = bot.boostT > 0 ? CAM_BOOST_FOV : CAM_FOV;
+    if (Math.abs(this.camera.fov - fov) > 0.02) {
+      this.camera.fov += (fov - this.camera.fov) * Math.min(1, dt * 6);
+      this.camera.updateProjectionMatrix();
     }
     const x = bot.prevX + (bot.x - bot.prevX) * alpha;
     const z = bot.prevZ + (bot.z - bot.prevZ) * alpha;
@@ -975,7 +956,10 @@ export class MatchView {
     const fz = Math.cos(this.camHeading);
     const target = this.keepInsideWalls(new THREE.Vector3(x - fx * CAM_DISTANCE, CAM_HEIGHT, z - fz * CAM_DISTANCE));
     this.camPos.lerp(target, Math.min(1, dt * 9));
-    this.camLook.lerp(new THREE.Vector3(x + fx * 5, 1.6, z + fz * 5), Math.min(1, dt * 12));
+    // A robot that's just died gets watched all the way down.
+    const doll = this.ragdolls.get(this.followId);
+    if (doll) this.camLook.lerp(doll.position, Math.min(1, dt * 7));
+    else this.camLook.lerp(new THREE.Vector3(x + fx * 5, 1.6, z + fz * 5), Math.min(1, dt * 12));
 
     this.shake = Math.max(0, this.shake - dt * 2.4);
     const kick = this.shake * this.shake * 0.8;

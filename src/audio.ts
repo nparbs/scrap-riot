@@ -1,5 +1,5 @@
 import { Music, type Track } from './music';
-import type { MeleeId, TurretId } from './sim/data';
+import type { MeleeId } from './sim/data';
 
 const MASTER_VOLUME = 0.6;
 const MUSIC_VOLUME = 0.6;
@@ -18,10 +18,10 @@ const REGISTER_BELL = [[2093, 1, 0.75], [3140, 0.7, 0.6], [4700, 0.4, 0.4], [628
 const MELEE_LEVEL: Record<MeleeId, number> = {
   vertbar: 1.23, vertdisc: 1.26, shell: 1.26, horizbar: 1.29, flipper: 1.07, axe: 1.66, hammer: 1.7, undercutter: 1.7, crusher: 1.7,
   hammersaw: 1.74, drum: 1.78, eggbeater: 1.78, ram: 2.16, chainsaw: 2.66, drill: 2.66, rollingpin: 2.66, dagger: 2.69, magnet: 2.72, claw: 3, forks: 3,
+  flamethrower: 1, tesla: 1.2, spear: 2,
 };
-const GUN_LEVEL: Record<TurretId, number> = {
-  bunkerbuster: 0.65, heavyrocket: 0.91, rockets: 1.05, minigun: 0.72, laser: 1, discs: 1.86, spear: 2.54, mortar: 2.57, grenade: 3.1, arc: 2, flamethrower: 1,
-};
+/** The Tesla Coil's bolt and the teleport's crackle. */
+const ARC_LEVEL = 2;
 
 /** Each from 0 to 100, as set in Settings. */
 export interface Volumes {
@@ -219,46 +219,8 @@ export class Sfx {
     this.burst(volume * 0.6, duration * 0.7, 420, 'lowpass');
   }
 
-  shot(kind: TurretId, distanceVolume: number): void {
-    const volume = distanceVolume * GUN_LEVEL[kind];
-    switch (kind) {
-      case 'rockets':
-      case 'heavyrocket':
-      case 'bunkerbuster': {
-        const size = kind === 'rockets' ? 1 : kind === 'heavyrocket' ? 1.25 : 1.6;
-        this.burst(0.5 * volume * size, 0.45 * size, 2200, 'bandpass', 300);
-        this.thud(0.3 * volume * size, 0.14);
-        break;
-      }
-      case 'mortar':
-        this.thud(0.55 * volume, 0.22, 110);
-        this.burst(0.25 * volume, 0.3, 700, 'lowpass');
-        break;
-      case 'grenade':
-        this.thud(0.3 * volume, 0.1, 220);
-        this.tone(0.08 * volume, 0.14, 500, 900, 'triangle');
-        break;
-      case 'spear':
-        this.tone(0.18 * volume, 0.1, 900, 220, 'sawtooth');
-        this.clang(0.2 * volume, 520, 0.12);
-        break;
-      case 'discs':
-        this.tone(0.14 * volume, 0.16, 1400, 2600, 'triangle');
-        this.burst(0.1 * volume, 0.08, 3000, 'bandpass');
-        break;
-      case 'laser':
-        this.tone(0.2 * volume, 0.22, 2400, 180, 'sawtooth');
-        this.tone(0.12 * volume, 0.22, 3200, 240, 'square');
-        break;
-      default:
-        // A crack with a little body, short enough to stay clean through a fast burst.
-        this.burst(0.3 * volume, 0.045, 1900, 'bandpass');
-        this.tone(0.14 * volume, 0.04, 320, 110, 'square');
-    }
-  }
-
   arc(distanceVolume: number): void {
-    const volume = distanceVolume * GUN_LEVEL.arc;
+    const volume = distanceVolume * ARC_LEVEL;
     this.tone(0.14 * volume, 0.14, 1800, 300, 'sawtooth');
     this.burst(0.22 * volume, 0.16, 2600, 'bandpass');
   }
@@ -309,6 +271,10 @@ export class Sfx {
       case 'forks':
         this.clang(0.35 * volume, 420, 0.22);
         this.tone(0.14 * volume, 0.2, 140, 260, 'sawtooth');
+        break;
+      case 'spear':
+        this.tone(0.18 * volume, 0.1, 900, 220, 'sawtooth');
+        this.clang(0.3 * volume, 520, 0.14);
         break;
       case 'ram':
         this.thud(0.6 * volume, 0.2);
@@ -383,6 +349,19 @@ export class Sfx {
     // The bolt seating, felt more than heard.
     this.tone(0.3, 0.09, 170, 60, 'sine', delay + 0.5);
     this.burst(0.18, 0.04, 1500, 'bandpass', undefined, delay + 0.5);
+  }
+
+  /** The robots flying in, and the VS landing with a hit you feel, in a duel's face-off. */
+  versus(beat: 'whoosh' | 'slam'): void {
+    if (beat === 'whoosh') {
+      this.burst(0.28, 0.45, 900, 'bandpass', 4200);
+      this.tone(0.06, 0.4, 180, 900, 'sawtooth');
+      return;
+    }
+    this.thud(0.9, 0.42, 190);
+    this.clang(0.7, 170, 0.9);
+    this.burst(0.35, 0.55, 2600, 'lowpass', 300);
+    for (const freq of [110, 164.8, 220]) this.tone(0.1, 0.8, freq, freq * 0.99, 'sawtooth', 0.02);
   }
 
   /** A cash register: the keys and drawer go ka-chunk, then the bell rings out over it. */

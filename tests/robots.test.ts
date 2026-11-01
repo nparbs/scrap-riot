@@ -9,7 +9,7 @@ const BODY_IDS = Object.keys(BODIES) as BodyId[];
 const CHASSIS_IDS = Object.keys(CHASSIS) as ChassisId[];
 
 function build(chassis: ChassisId, body: BodyId, defense: DefenseId = 'shield'): RobotBuild {
-  return { chassis, melee: 'chainsaw', turret: 'minigun', defense, paint: { ...DEFAULT_PAINT, body }, color: DEFAULT_PAINT.primary };
+  return { chassis, melee: 'chainsaw', defense, paint: { ...DEFAULT_PAINT, body }, color: DEFAULT_PAINT.primary };
 }
 
 function hullBox(model: RobotModel): THREE.Box3 {
@@ -73,12 +73,12 @@ describe('body shapes', () => {
 });
 
 describe('robot models', () => {
-  it('keep the deck clear, with only the tower and gun above the hull', () => {
+  it('keep the deck clear, with only the tower above the hull', () => {
     for (const chassis of CHASSIS_IDS) {
       for (const body of BODY_IDS) {
         for (const defense of Object.keys(DEFENSES) as DefenseId[]) {
           const model = buildRobot(build(chassis, body, defense));
-          model.turretPivot.removeFromParent();
+          model.root.children.find((node) => node.children.length > 0 && node.position.y > 0 && node !== model.meleePivot && node !== model.shield && node.position.x === 0 && node.position.z < 0)?.removeFromParent();
           model.meleePivot.removeFromParent();
           model.shield.removeFromParent();
           const hull = hullBox(model);

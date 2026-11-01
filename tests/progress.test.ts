@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, CATALOG, loadSave, makeRivals, newSave, partFits, previewLoadout, STARTING_MONEY, upgradeCost, writeSave } from '../src/game/progress';
-import { ARMOUR, buildStats, CHASSIS, MELEE, POWERUP_CAP, spaceCapacity, spaceUsed, TOWERS, TURRETS } from '../src/sim/data';
+import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, CATALOG, loadSave, makeRivals, newSave, partFits, previewLoadout, STARTING_MONEY, upgradeCost, writeSave, retireGuns } from '../src/game/progress';
+import { ARMOUR, buildStats, CHASSIS, MELEE, POWERUP_CAP, spaceCapacity, spaceUsed, TOWERS } from '../src/sim/data';
 
 describe('cheat codes', () => {
   it('money adds $5000 every time, in any case', () => {
@@ -37,6 +37,7 @@ describe('armour making room', () => {
     const save = newSave();
     save.money = 100_000;
     save.loadout.armour = 150;
+    save.loadout.melee = 'vertbar';
     return save;
   };
 
@@ -67,8 +68,7 @@ describe('armour making room', () => {
 
   it('still says no room, and keeps the armour, when even the minimum is too much', () => {
     const save = heavy();
-    save.loadout.melee = 'vertbar';
-    save.loadout.turret = 'bunkerbuster';
+    save.loadout.engine = 'turbo';
     save.loadout.defense = 'emp';
     expect(partFits(save, 'chassis', 'scout')).toBe(false);
     buyOrEquip(save, 'chassis', 'scout');
@@ -117,8 +117,8 @@ describe('garage', () => {
   it('refuses what you cannot afford', () => {
     const save = newSave();
     save.money = 1;
-    expect(buyOrEquip(save, 'turret', 'arc')).toBe(false);
-    expect(save.loadout.turret).toBe('minigun');
+    expect(buyOrEquip(save, 'melee', 'tesla')).toBe(false);
+    expect(save.loadout.melee).toBe('chainsaw');
     expect(buyUpgrade(save, 'armor')).toBe(false);
     expect(buyPowerup(save, 'xray')).toBe(false);
   });
@@ -168,11 +168,50 @@ describe('rivals', () => {
   });
 });
 
+describe('saves from when there were guns', () => {
+  const oldSave = () => {
+    const save = newSave() as ReturnType<typeof newSave> & { owned: { turret?: string[] } };
+    save.owned.turret = ['minigun', 'laser', 'rockets', 'flamethrower', 'arc'];
+    (save.loadout as unknown as { turret: string }).turret = 'laser';
+    return save;
+  };
+
+  it('pays back what was spent on guns, and hands over the weapons they became', () => {
+    const save = oldSave();
+    const before = save.money;
+    retireGuns(save);
+    expect(save.money).toBe(before + 1000 + 600);
+    expect(save.owned.melee).toContain('flamethrower');
+    expect(save.owned.melee).toContain('tesla');
+    expect(save.owned).not.toHaveProperty('turret');
+    expect(save.loadout).not.toHaveProperty('turret');
+  });
+
+  it('only pays once, and leaves new saves alone', () => {
+    const save = oldSave();
+    retireGuns(save);
+    const paid = save.money;
+    retireGuns(save);
+    expect(save.money).toBe(paid);
+    const fresh = newSave();
+    const start = fresh.money;
+    retireGuns(fresh);
+    expect(fresh.money).toBe(start);
+  });
+
+  it('still loads from storage', () => {
+    const save = oldSave();
+    const loaded = loadSave({ getItem: () => JSON.stringify(save) });
+    expect(loaded.owned).not.toHaveProperty('turret');
+    expect(spaceUsed(loaded.loadout)).toBeGreaterThan(0);
+  });
+});
+
 describe('a new player', () => {
   it('can afford a couple of parts straight away', () => {
     const { money } = newSave();
     expect(money).toBeGreaterThanOrEqual(MELEE.vertdisc.price + TOWERS.small.price);
-    expect(money).toBeGreaterThanOrEqual(MELEE.drum.price + TURRETS.grenade.price);
+    expect(money).toBeGreaterThanOrEqual(MELEE.drum.price + MELEE.spear.price);
     expect(money).toBeLessThan(CHASSIS.juggernaut.price);
   });
 });

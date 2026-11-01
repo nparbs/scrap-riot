@@ -2,14 +2,12 @@ import {
   ARENAS,
   closestOnBlock,
   FIRE_DPS,
-  insideBlock,
   PISTON_ACTIVE,
   PISTON_DAMAGE,
   PISTON_FORCE,
   PISTON_RADIUS,
   PISTON_REACH,
   pistonExtension,
-  rayBlock,
   SAW_DPS,
   TRAP_NAMES,
   SAW_KNOCK,
@@ -29,15 +27,18 @@ import {
   BOOST_DRAIN,
   BOOST_SPEED,
   BURN_DPS,
-  BURST_GAP,
   BURN_TIME,
   buildStats,
   CHASSIS,
   CLOAK_TIME,
+  CROWD_SPLASH,
   DEFENSES,
   DUEL_OUTRO,
   FLIP_TIME,
+  FORFEIT_OUTRO,
+  HILL_CROWD,
   HILL_TARGET,
+  HILL_TARGET_CROWD,
   MATCH,
   MEGA_ABSORB,
   MEGA_TIME,
@@ -52,7 +53,7 @@ import {
   SPINNER_KEPT_SPEED,
   SPINNER_MIN_SPEED,
   SPINNER_RECOIL,
-  TURRETS,
+  STUN_GUARD,
   UPGRADES,
   XRAY_TIME,
   type ChassisDef,
@@ -65,7 +66,6 @@ import {
   type PowerId,
   type PowerupId,
   type TowerId,
-  type TurretId,
   type UpgradeId,
   type WheelsId,
 } from './data';
@@ -74,11 +74,12 @@ import { makeRng, type Rng } from './rng';
 export const STEP = 1 / 60;
 /** How fast a robot must be rolling, forward or back, to turn at its full rate. */
 const TURN_FULL_SPEED = 4;
+/** Below ramming speed. */
+const MAGNET_PULL_SPEED = 4.5;
 
 export interface Loadout {
   chassis: ChassisId;
   melee: MeleeId;
-  turret: TurretId;
   defense: DefenseId;
   powerups: Record<PowerupId, number>;
   upgrades: Record<UpgradeId, number>;
@@ -97,7 +98,6 @@ export interface BotInput {
   /** +1 turns left, -1 turns right. */
   steer: number;
   melee: boolean;
-  turret: boolean;
   defense: boolean;
   /** Held for a burst of speed, paid for from the battery. */
   boost: boolean;
@@ -148,13 +148,8 @@ export interface Bot {
   lungeT: number;
   clawTarget: number;
   clawT: number;
-  /** The battery, from 0 to 1. It runs the gun and the boost. */
+  /** The battery, from 0 to 1. It runs the boost and powered weapons. */
   ammo: number;
-  /** Gun shots left in this life. */
-  shots: number;
-  /** Rounds still to come from the burst being fired. */
-  burstLeft: number;
-  burstT: number;
   /** How long a held weapon has been running without a break. */
   heldT: number;
   /** Where a knocked-out pilot's target marker is, and how long until each trap is ready. */
@@ -167,8 +162,6 @@ export interface Bot {
   airT: number;
   /** Seconds until a flipped robot is back on its wheels, counting the time in the air. It's stunned throughout. */
   flipT: number;
-  turretFiring: boolean;
-  turretCd: number;
   defenseCd: number;
   /** Stops a held key from repeating actions like planting and detonating charges. */
   defenseHeld: boolean;
@@ -178,6 +171,8 @@ export interface Bot {
   boostT: number;
   rageT: number;
   stunT: number;
+  /** While this runs, new stuns are shorter. */
+  stunGuardT: number;
   invulnT: number;
   ramCd: number;
   pistonCd: number;
@@ -198,30 +193,10 @@ export interface Bot {
   hillScore: number;
   powerups: Record<PowerupId, number>;
   kills: number;
+  assists: number;
   deaths: number;
   damageDealt: number;
   earned: number;
-}
-
-export type ProjectileKind = 'bullet' | 'rocket' | 'mortar' | 'grenade' | 'disc' | 'spear';
-
-export interface Projectile {
-  id: number;
-  owner: number;
-  kind: ProjectileKind;
-  x: number;
-  z: number;
-  vx: number;
-  vz: number;
-  life: number;
-  /** Total flight time of a lobbed shell, or 0. Used to draw its arc. */
-  flight: number;
-  damage: number;
-  splash: number;
-  knockback: number;
-  bounces: number;
-  /** Set once a disc has ricocheted, when it can hit whoever fired it. */
-  ricocheted: boolean;
 }
 
 export type MineKind = 'mine' | 'charge';
@@ -274,11 +249,9 @@ export interface Pickup {
 export type GameEvent =
   | { type: 'hit'; x: number; z: number; amount: number; target: number; source: number; shielded: boolean }
   | { type: 'explosion'; x: number; z: number; big: boolean }
-  | { type: 'shot'; x: number; z: number; owner: number; kind: TurretId }
   | { type: 'arc'; points: { x: number; z: number }[]; owner: number }
-  | { type: 'beam'; x1: number; z1: number; x2: number; z2: number; owner: number }
   | { type: 'strike'; x: number; z: number; owner: number }
-  | { type: 'kill'; killer: number; victim: number; fell: boolean }
+  | { type: 'kill'; killer: number; victim: number; fell: boolean; x: number; z: number; vx: number; vz: number }
   | { type: 'spawn'; bot: number }
   | { type: 'pickup'; bot: number; kind: 'repair' | 'scrap'; x: number; z: number }
   | { type: 'powerup'; bot: number; kind: PowerupId }
@@ -325,7 +298,7 @@ export interface Standing {
 }
 
 export function emptyInput(): BotInput {
-  return { throttle: 0, steer: 0, melee: false, turret: false, defense: false, boost: false, powerup: null };
+  return { throttle: 0, steer: 0, melee: false, defense: false, boost: false, powerup: null };
 }
 
 export function wrapAngle(a: number): number {
@@ -352,7 +325,6 @@ export class Match {
   readonly arena: ArenaDef;
   readonly mode: ModeId;
   readonly bots: Bot[] = [];
-  readonly projectiles: Projectile[] = [];
   readonly mines: Mine[] = [];
   readonly oil: OilPatch[] = [];
   readonly traps: Trap[] = [];
@@ -369,6 +341,10 @@ export class Match {
   private events: GameEvent[] = [];
   private brains = new Map<number, BotBrain>();
   private nextId = 1;
+  /** Who last hurt each robot, and when, for assists. */
+  private readonly attackers = new Map<number, Map<number, number>>();
+  /** More robots go through more repairs, so they turn up more often in a big match. */
+  private readonly repairEvery: number;
   /** Seconds left before anything moves. */
   countdown: number;
   private repairTimer: number = MATCH.repairInterval / 2;
@@ -380,7 +356,8 @@ export class Match {
     this.countdown = options.countdown ?? 0;
     this.duration = options.duration ?? MODES[this.mode].duration;
     this.killTarget = options.killTarget ?? MATCH.killTarget;
-    this.hillTarget = options.hillTarget ?? HILL_TARGET;
+    this.hillTarget = options.hillTarget ?? (setups.length >= HILL_CROWD ? HILL_TARGET_CROWD : HILL_TARGET);
+    this.repairEvery = MATCH.repairInterval * Math.min(1, 4 / Math.max(1, setups.length));
     setups.forEach((setup, id) => {
       const bot = this.createBot(id, setup);
       this.bots.push(bot);
@@ -418,14 +395,14 @@ export class Match {
       mass: chassis.mass * size,
       alive: true, out: false, forfeited: false, eliminatedAt: 0, respawnT: 0,
       meleeCd: 0, meleeWindup: 0, meleeSwing: 99, meleeActive: false, meleeCharge: 0, lungeT: 0, clawTarget: -1, clawT: 0,
-      ammo: 1, shots: TURRETS[setup.loadout.turret].shots, burstLeft: 0, burstT: 0, heldT: 0, trapX: 0, trapZ: 0, strikeCd: 0, slickCd: 0, pullCd: 0, airT: 0, flipT: 0, turretFiring: false, turretCd: 0, defenseCd: 0, defenseHeld: false,
-      shieldT: 0, megaT: 0, boostT: 0, rageT: 0, stunT: 0,
+      ammo: 1, heldT: 0, trapX: 0, trapZ: 0, strikeCd: 0, slickCd: 0, pullCd: 0, airT: 0, flipT: 0, defenseCd: 0, defenseHeld: false,
+      shieldT: 0, megaT: 0, boostT: 0, rageT: 0, stunT: 0, stunGuardT: 0,
       invulnT: MATCH.spawnInvuln,
       ramCd: 0, pistonCd: 0, flashT: 0, burnT: 0, burnSource: -1, slowT: 0, blindT: 0,
       cloakT: 0, xrayT: 0, regenT: 0, bladesT: 0, kamikazeT: 0,
       lastHitT: -99, lastAttacker: -1, oiled: false, glued: false, hillScore: 0,
       powerups: { ...setup.loadout.powerups },
-      kills: 0, deaths: 0, damageDealt: 0, earned: 0,
+      kills: 0, assists: 0, deaths: 0, damageDealt: 0, earned: 0,
     };
   }
 
@@ -485,6 +462,15 @@ export class Match {
     return this.mode === 'koth' ? Math.floor(bot.hillScore) : bot.kills;
   }
 
+  /** How many bots, other than the one asking, are already after this robot. */
+  chasersOf(target: number, asking: number): number {
+    let count = 0;
+    for (const [id, brain] of this.brains) {
+      if (id !== asking && brain.targetId === target) count++;
+    }
+    return count;
+  }
+
   /** Can this robot see and target the other one? */
   canSee(bot: Bot, other: Bot): boolean {
     return other.cloakT <= 0 || bot.xrayT > 0;
@@ -516,14 +502,12 @@ export class Match {
       this.usePowerup(bot);
       this.drive(bot, dt);
       this.updateMelee(bot, dt);
-      this.updateTurret(bot, dt);
       this.updateDefense(bot, dt);
     }
 
     this.collideBots();
     this.collideWorld();
     this.updateHazards(dt);
-    this.updateProjectiles(dt);
     this.updateMines(dt);
     this.updatePatches(dt);
     this.updateDrones(dt);
@@ -540,7 +524,8 @@ export class Match {
     if (this.mode === 'lms' && this.bots.filter((b) => !b.out).length <= 1) this.over = true;
     if (this.mode === 'duel' && this.bots.filter((b) => !b.out).length <= 1) {
       this.decidedAt ??= this.time;
-      if (this.time - this.decidedAt >= DUEL_OUTRO) this.over = true;
+      const outro = this.bots.some((b) => b.forfeited) ? FORFEIT_OUTRO : DUEL_OUTRO;
+      if (this.time - this.decidedAt >= outro) this.over = true;
     }
   }
 
@@ -548,15 +533,16 @@ export class Match {
     if (this.mode !== 'koth') return;
     const { hill } = this.arena;
     const inside = this.bots.filter((b) => b.alive && Math.hypot(b.x - hill.x, b.z - hill.z) < hill.r);
-    if (inside.length !== 1) return;
-    inside[0].hillScore += dt;
-    inside[0].earned += REWARD.hillPerSecond * dt;
+    // Sharing the zone splits the points, so a crowded hill still moves toward a winner.
+    for (const bot of inside) {
+      bot.hillScore += dt / inside.length;
+      bot.earned += (REWARD.hillPerSecond * dt) / inside.length;
+    }
   }
 
   private tickTimers(bot: Bot, dt: number): void {
     const down = (v: number) => Math.max(0, v - dt);
     bot.meleeCd = down(bot.meleeCd);
-    bot.turretCd = down(bot.turretCd);
     bot.defenseCd = down(bot.defenseCd);
     bot.shieldT = down(bot.shieldT);
     bot.megaT = down(bot.megaT);
@@ -565,6 +551,7 @@ export class Match {
     bot.flipT = down(bot.flipT);
     bot.rageT = down(bot.rageT);
     bot.stunT = down(bot.stunT);
+    bot.stunGuardT = down(bot.stunGuardT);
     bot.invulnT = down(bot.invulnT);
     bot.ramCd = down(bot.ramCd);
     bot.pistonCd = down(bot.pistonCd);
@@ -699,6 +686,14 @@ export class Match {
     return Math.abs(wrapAngle(bearing(bot.x, bot.z, other.x, other.z) - angle)) <= arc;
   }
 
+  /** A second stun soon after the first is much shorter. The guard keeps running through the first stun. */
+  private stun(target: Bot, seconds: number): void {
+    if (seconds <= 0) return;
+    const applied = target.stunGuardT > 0 ? seconds * STUN_GUARD.share : seconds;
+    if (target.stunGuardT <= 0) target.stunGuardT = seconds + STUN_GUARD.time;
+    target.stunT = Math.max(target.stunT, applied);
+  }
+
   private enemies(bot: Bot): Bot[] {
     return this.bots.filter((other) => other !== bot && other.alive);
   }
@@ -726,6 +721,10 @@ export class Match {
           return;
         }
         if (bot.meleeCd > 0) return;
+        if (def.drain) {
+          if (bot.ammo < def.drain * dt) return;
+          bot.ammo -= def.drain * dt;
+        }
         if (def.runTime) {
           bot.heldT += dt;
           if (bot.heldT >= def.runTime) {
@@ -739,6 +738,10 @@ export class Match {
           if (!this.inCone(bot, other, facing, def.range, def.arc)) continue;
           this.damage(other, def.damage * this.damageOutput(bot) * dt, bot.id);
           if (def.slow) other.slowT = Math.max(other.slowT, def.slow);
+          if (def.burns) {
+            other.burnT = BURN_TIME;
+            other.burnSource = bot.id;
+          }
         }
         return;
       case 'ram':
@@ -760,12 +763,27 @@ export class Match {
       case 'magnet':
         if (!pressed) return;
         bot.meleeActive = true;
-        for (const other of this.enemies(bot)) {
-          if (!this.canSee(bot, other) || !this.inCone(bot, other, facing, def.range, def.arc)) continue;
-          const dist = Math.hypot(other.x - bot.x, other.z - bot.z) || 1;
-          const pull = (def.knockback / other.mass) * dt;
-          other.vx += ((bot.x - other.x) / dist) * pull;
-          other.vz += ((bot.z - other.z) / dist) * pull;
+        {
+          // It grabs one robot at a time, the nearest, so it can't farm a whole crowd.
+          let other: Bot | null = null;
+          let dist = Infinity;
+          for (const candidate of this.enemies(bot)) {
+            if (!this.canSee(bot, candidate) || !this.inCone(bot, candidate, facing, def.range, def.arc)) continue;
+            const gap = Math.hypot(candidate.x - bot.x, candidate.z - bot.z) || 1;
+            if (gap < dist) {
+              dist = gap;
+              other = candidate;
+            }
+          }
+          if (!other) return;
+          // Dragged no faster than a crawl, or arriving would count as being rammed by it.
+          const towardX = (bot.x - other.x) / dist;
+          const towardZ = (bot.z - other.z) / dist;
+          if (other.vx * towardX + other.vz * towardZ < MAGNET_PULL_SPEED) {
+            const pull = (def.knockback / other.mass) * dt;
+            other.vx += towardX * pull;
+            other.vz += towardZ * pull;
+          }
           if (dist - other.radius - bot.radius < 2) this.damage(other, def.damage * this.damageOutput(bot) * dt, bot.id);
         }
         return;
@@ -787,10 +805,12 @@ export class Match {
         const fx = Math.sin(facing);
         const fz = Math.cos(facing);
         this.events.push({ type: 'strike', x: bot.x + fx * (bot.radius + 1.5), z: bot.z + fz * (bot.radius + 1.5), owner: bot.id });
+        const struck: Bot[] = [];
         for (const other of this.enemies(bot)) {
           if (!this.inCone(bot, other, facing, def.range, def.arc)) continue;
+          struck.push(other);
           this.damage(other, def.damage * this.damageOutput(bot), bot.id);
-          other.stunT = Math.max(other.stunT, def.stun);
+          this.stun(other, def.stun);
           other.vx += (fx * def.knockback) / other.mass;
           other.vz += (fz * def.knockback) / other.mass;
           if (def.launch && other.invulnT <= 0) {
@@ -801,12 +821,33 @@ export class Match {
             }
           }
         }
+        if (def.chain) this.chainStrike(bot, struck, def.chain, def.damage * this.damageOutput(bot) * 0.5, def.stun);
       }
     } else if (pressed && bot.meleeCd <= 0 && bot.ammo >= (def.battery ?? 0)) {
       bot.ammo -= def.battery ?? 0;
       bot.meleeCd = def.cooldown;
       bot.meleeWindup = def.windup;
     }
+  }
+
+  /** A Tesla bolt: to each robot it hit, and on from the first of them to one more. */
+  private chainStrike(bot: Bot, struck: Bot[], reach: number, damage: number, stun: number): void {
+    const facing = this.meleeAngle(bot);
+    const muzzle = { x: bot.x + Math.sin(facing) * (bot.radius + 0.4), z: bot.z + Math.cos(facing) * (bot.radius + 0.4) };
+    if (struck.length === 0) {
+      const range = MELEE[bot.loadout.melee].range;
+      this.events.push({ type: 'arc', points: [muzzle, { x: muzzle.x + Math.sin(facing) * range, z: muzzle.z + Math.cos(facing) * range }], owner: bot.id });
+      return;
+    }
+    const [first] = struck;
+    const points = [muzzle, { x: first.x, z: first.z }];
+    const next = this.bots.find((o) => o !== bot && o.alive && !struck.includes(o) && Math.hypot(o.x - first.x, o.z - first.z) < reach);
+    if (next) {
+      this.damage(next, damage, bot.id);
+      this.stun(next, stun);
+      points.push({ x: next.x, z: next.z });
+    }
+    this.events.push({ type: 'arc', points, owner: bot.id });
   }
 
   /** Holding the key stores energy, and a hit spends most of it, throwing both robots apart. */
@@ -829,7 +870,7 @@ export class Match {
     const throwForce = def.knockback * speed;
     target.vx += (nx * throwForce) / target.mass;
     target.vz += (nz * throwForce) / target.mass;
-    target.stunT = Math.max(target.stunT, def.stun * speed);
+    this.stun(target, def.stun * speed);
     if (def.slow) target.slowT = Math.max(target.slowT, def.slow);
     // A weak hit doesn't get anything off the ground.
     if (def.launch && speed > 0.5) target.airT = Math.max(target.airT, def.launch * speed);
@@ -872,149 +913,6 @@ export class Match {
       target.lastAttacker = bot.id;
       this.events.push({ type: 'strike', x: target.x, z: target.z, owner: bot.id });
     }
-  }
-
-  /** Guns are fixed to the hull. They fire where the robot points and nowhere else. */
-  private updateTurret(bot: Bot, dt: number): void {
-    const def = TURRETS[bot.loadout.turret];
-    bot.turretFiring = false;
-    if (bot.stunT > 0 || bot.airT > 0) return;
-
-    // A burst carries on by itself once started, however briefly the key was pressed.
-    if (bot.burstLeft > 0) {
-      bot.burstT -= dt;
-      if (bot.burstT <= 0) {
-        bot.burstLeft--;
-        bot.burstT = BURST_GAP;
-        this.fireRound(bot, def);
-      }
-      return;
-    }
-    if (!bot.input.turret) return;
-
-    if (def.kind === 'flame') {
-      if (bot.ammo < def.battery * dt) return;
-      bot.ammo -= def.battery * dt;
-      bot.turretFiring = true;
-      bot.cloakT = 0;
-      for (const other of this.enemies(bot)) {
-        if (!this.inCone(bot, other, bot.heading, def.range, def.cone ?? 0.4)) continue;
-        this.damage(other, def.damage * this.damageOutput(bot) * dt, bot.id);
-        other.burnT = BURN_TIME;
-        other.burnSource = bot.id;
-      }
-      return;
-    }
-
-    if (bot.turretCd > 0 || bot.ammo < def.battery || bot.shots <= 0) return;
-    bot.turretCd = def.cooldown;
-    bot.ammo -= def.battery;
-    bot.shots--;
-    if (def.burst) {
-      bot.burstLeft = def.burst - 1;
-      bot.burstT = BURST_GAP;
-    }
-    this.fireRound(bot, def);
-  }
-
-  private fireRound(bot: Bot, def: (typeof TURRETS)[TurretId]): void {
-    const dirX = Math.sin(bot.heading);
-    const dirZ = Math.cos(bot.heading);
-    const muzzleX = bot.x + dirX * (bot.radius + 0.6);
-    const muzzleZ = bot.z + dirZ * (bot.radius + 0.6);
-    const dmg = def.damage * this.damageOutput(bot);
-    bot.cloakT = 0;
-
-    if (def.kind === 'arc') {
-      const target = this.enemies(bot).find((o) => this.canSee(bot, o) && this.inCone(bot, o, bot.heading, def.range, def.cone ?? 0.25));
-      const end = target ?? { x: muzzleX + dirX * def.range, z: muzzleZ + dirZ * def.range };
-      const points = [{ x: muzzleX, z: muzzleZ }, { x: end.x, z: end.z }];
-      if (target) {
-        this.damage(target, dmg, bot.id);
-        const second = this.bots.find((o) => o !== bot && o !== target && o.alive && this.canSee(bot, o) && Math.hypot(o.x - target.x, o.z - target.z) < 7);
-        if (second) {
-          this.damage(second, dmg * 0.5, bot.id);
-          points.push({ x: second.x, z: second.z });
-        }
-      }
-      this.events.push({ type: 'arc', points, owner: bot.id });
-      return;
-    }
-
-    if (def.kind === 'beam') {
-      const end = this.castBeam(bot, muzzleX, muzzleZ, dirX, dirZ, def.range, dmg);
-      this.events.push({ type: 'beam', x1: muzzleX, z1: muzzleZ, x2: end.x, z2: end.z, owner: bot.id });
-      return;
-    }
-
-    if (def.kind === 'lob') {
-      const time = 1.2;
-      const reach = def.range * 0.6;
-      this.spawnProjectile(bot, def, 'mortar', muzzleX, muzzleZ, (dirX * reach) / time, (dirZ * reach) / time, time, dmg);
-    } else {
-      const kind: ProjectileKind =
-        def.kind === 'grenade' ? 'grenade'
-        : def.kind === 'disc' ? 'disc'
-        : ['rockets', 'heavyrocket', 'bunkerbuster'].includes(bot.loadout.turret) ? 'rocket'
-        : bot.loadout.turret === 'spear' ? 'spear'
-        : 'bullet';
-      const life = def.kind === 'grenade' ? 1.3 : def.range / def.projectileSpeed;
-      this.spawnProjectile(bot, def, kind, muzzleX, muzzleZ, dirX * def.projectileSpeed, dirZ * def.projectileSpeed, life, dmg);
-    }
-    this.events.push({ type: 'shot', x: muzzleX, z: muzzleZ, owner: bot.id, kind: bot.loadout.turret });
-  }
-
-  private spawnProjectile(
-    bot: Bot,
-    def: (typeof TURRETS)[TurretId],
-    kind: ProjectileKind,
-    x: number,
-    z: number,
-    vx: number,
-    vz: number,
-    life: number,
-    damage: number,
-  ): void {
-    this.projectiles.push({
-      id: this.nextId++,
-      owner: bot.id,
-      kind,
-      x,
-      z,
-      vx,
-      vz,
-      life,
-      flight: kind === 'mortar' ? life : 0,
-      damage,
-      splash: def.splash,
-      knockback: def.knockback ?? 0,
-      bounces: def.bounces ?? 0,
-      ricocheted: false,
-    });
-  }
-
-  /** Stops at the first robot or pillar along the line, and returns where the beam ended. */
-  private castBeam(bot: Bot, x: number, z: number, dirX: number, dirZ: number, range: number, damage: number): { x: number; z: number } {
-    let best = range;
-    for (const pillar of this.arena.pillars) {
-      const t = rayCircle(x, z, dirX, dirZ, pillar.x, pillar.z, pillar.r);
-      if (t !== null && t < best) best = t;
-    }
-    for (const block of this.arena.blocks) {
-      if (block.kind === 'fence') continue;
-      const t = rayBlock(block, x, z, dirX, dirZ);
-      if (t !== null && t < best) best = t;
-    }
-    let victim: Bot | null = null;
-    for (const other of this.enemies(bot)) {
-      const t = rayCircle(x, z, dirX, dirZ, other.x, other.z, other.radius);
-      if (t !== null && t < best) {
-        best = t;
-        victim = other;
-      }
-    }
-    if (victim) this.damage(victim, damage, bot.id);
-    return { x: x + dirX * best, z: z + dirZ * best };
   }
 
   private updateDefense(bot: Bot, dt: number): void {
@@ -1089,7 +987,9 @@ export class Match {
         break;
       case 'flash':
         for (const other of this.enemies(bot)) {
-          if (Math.hypot(other.x - bot.x, other.z - bot.z) <= def.radius) other.blindT = def.duration;
+          if (Math.hypot(other.x - bot.x, other.z - bot.z) > def.radius) continue;
+          other.blindT = def.duration;
+          other.slowT = Math.max(other.slowT, def.duration);
         }
         this.events.push({ type: 'pulse', x: bot.x, z: bot.z, radius: def.radius, color: 0xffffff });
         break;
@@ -1101,7 +1001,7 @@ export class Match {
         break;
       case 'emp':
         for (const other of this.enemies(bot)) {
-          if (Math.hypot(other.x - bot.x, other.z - bot.z) <= def.radius) other.stunT = Math.max(other.stunT, def.duration);
+          if (Math.hypot(other.x - bot.x, other.z - bot.z) <= def.radius) this.stun(other, def.duration);
         }
         this.events.push({ type: 'pulse', x: bot.x, z: bot.z, radius: def.radius, color: 0x7fe8ff });
         break;
@@ -1177,6 +1077,10 @@ export class Match {
       const facing = Math.abs(relativeBearing(target.x, target.z, this.defenseAngle(target), attacker.x, attacker.z));
       if (facing < 0.9) taken *= DEFENSES.steelram.damage;
     }
+    if (target.loadout.defense === 'plow' && attacker && attacker !== target) {
+      const facing = Math.abs(relativeBearing(target.x, target.z, this.defenseAngle(target), attacker.x, attacker.z));
+      if (facing < 0.9) taken *= DEFENSES.plow.damage;
+    }
     const shielded = taken < amount;
     const dealt = Math.min(target.hp, taken);
     target.hp -= dealt;
@@ -1186,9 +1090,31 @@ export class Match {
       target.lastAttacker = source;
       attacker.damageDealt += dealt;
       attacker.earned += dealt * REWARD.damage;
+      // Protection and invisibility are for getting into a fight, not for having one.
+      attacker.cloakT = 0;
+      attacker.invulnT = 0;
+      this.noteAttacker(target.id, source);
     }
     this.events.push({ type: 'hit', x: target.x, z: target.z, amount: dealt, target: target.id, source, shielded });
     if (target.hp <= 0) this.destroy(target, false);
+  }
+
+  private noteAttacker(victim: number, attacker: number): void {
+    let recent = this.attackers.get(victim);
+    if (!recent) this.attackers.set(victim, (recent = new Map()));
+    recent.set(attacker, this.time);
+  }
+
+  /** Everyone who helped gets something, so a brawl doesn't pay only whoever landed the last hit. */
+  private creditAssists(victim: Bot, killer: Bot | undefined): void {
+    const recent = this.attackers.get(victim.id);
+    if (!recent) return;
+    for (const [id, time] of recent) {
+      if (id === killer?.id || this.time - time > MATCH.assistWindow) continue;
+      this.bots[id].assists++;
+      this.bots[id].earned += REWARD.assist;
+    }
+    recent.clear();
   }
 
   private destroy(bot: Bot, fell: boolean): void {
@@ -1200,7 +1126,6 @@ export class Match {
     bot.meleeActive = false;
     bot.meleeWindup = 0;
     bot.clawTarget = -1;
-    bot.burstLeft = 0;
     bot.kamikazeT = 0;
     bot.burnT = 0;
     if (this.oneLife) {
@@ -1214,11 +1139,10 @@ export class Match {
       killer.kills++;
       killer.earned += REWARD.kill;
     }
-    this.events.push({ type: 'kill', killer: killer ? killer.id : -1, victim: bot.id, fell });
-    if (!fell) {
-      this.events.push({ type: 'explosion', x: bot.x, z: bot.z, big: true });
-      this.pickups.push({ id: this.nextId++, kind: 'scrap', x: bot.x, z: bot.z, spot: -1 });
-    }
+    this.creditAssists(bot, killer);
+    // The explosion itself is drawn when the robot has finished tumbling, a moment from now.
+    this.events.push({ type: 'kill', killer: killer ? killer.id : -1, victim: bot.id, fell, x: bot.x, z: bot.z, vx: bot.vx, vz: bot.vz });
+    if (!fell) this.pickups.push({ id: this.nextId++, kind: 'scrap', x: bot.x, z: bot.z, spot: -1 });
   }
 
   private respawn(bot: Bot): void {
@@ -1241,11 +1165,9 @@ export class Match {
     bot.hp = bot.maxHp;
     bot.invulnT = MATCH.spawnInvuln;
     bot.lastAttacker = -1;
-    bot.stunT = bot.boostT = bot.rageT = bot.shieldT = bot.megaT = bot.airT = bot.flipT = bot.meleeCharge = 0;
+    bot.stunT = bot.stunGuardT = bot.boostT = bot.rageT = bot.shieldT = bot.megaT = bot.airT = bot.flipT = bot.meleeCharge = 0;
     bot.slowT = bot.blindT = bot.cloakT = bot.bladesT = bot.regenT = 0;
     bot.ammo = 1;
-    bot.shots = TURRETS[bot.loadout.turret].shots;
-    bot.burstLeft = 0;
     bot.heldT = 0;
     this.events.push({ type: 'spawn', bot: bot.id });
   }
@@ -1397,7 +1319,7 @@ export class Match {
       bot.strikeCd = TRAP.strike.cooldown;
       this.traps.push({ id: this.nextId++, owner: bot.id, kind: 'strike', x: bot.trapX, z: bot.trapZ, t: TRAP.strike.warning });
     }
-    if (input.turret && bot.slickCd <= 0) {
+    if (input.boost && bot.slickCd <= 0) {
       bot.slickCd = TRAP.slick.cooldown;
       this.oil.push({ id: this.nextId++, owner: bot.id, kind: TRAP_NAMES[this.arena.id].patch, x: bot.trapX, z: bot.trapZ, r: TRAP.slick.radius, life: TRAP.slick.life, damage: 0 });
     }
@@ -1492,121 +1414,16 @@ export class Match {
     }
   }
 
-  private updateProjectiles(dt: number): void {
-    const { arena } = this;
-    const bound = arena.walled ? arena.half : arena.half + 12;
-    for (let i = this.projectiles.length - 1; i >= 0; i--) {
-      const p = this.projectiles[i];
-
-      p.x += p.vx * dt;
-      p.z += p.vz * dt;
-      p.life -= dt;
-
-      let hit = p.life <= 0;
-      if (p.kind !== 'mortar') {
-        if (!hit && (p.kind === 'disc' || p.kind === 'grenade') && p.bounces > 0) {
-          this.ricochet(p, bound);
-        } else if (!hit) {
-          hit = Math.abs(p.x) > bound || Math.abs(p.z) > bound;
-          if (!hit) hit = arena.pillars.some((c) => Math.hypot(p.x - c.x, p.z - c.z) < c.r);
-          if (!hit) hit = arena.blocks.some((b) => b.kind !== 'fence' && insideBlock(b, p.x, p.z));
-        }
-        if (!hit) hit = this.projectileHitsBot(p);
-      }
-      if (!hit) continue;
-
-      if (p.splash > 0) this.explode(p.x, p.z, p.damage, p.splash, p.owner, false);
-      // Removal goes by identity, because a ricochet's explosion chain can't reorder the list.
-      this.projectiles.splice(this.projectiles.indexOf(p), 1);
-    }
-  }
-
-  private ricochet(p: Projectile, bound: number): void {
-    let bounced = false;
-    if (Math.abs(p.x) > bound) {
-      p.x = Math.sign(p.x) * bound;
-      p.vx = -p.vx;
-      bounced = true;
-    }
-    if (Math.abs(p.z) > bound) {
-      p.z = Math.sign(p.z) * bound;
-      p.vz = -p.vz;
-      bounced = true;
-    }
-    for (const c of this.arena.pillars) {
-      const dx = p.x - c.x;
-      const dz = p.z - c.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist >= c.r || dist < 1e-4) continue;
-      const nx = dx / dist;
-      const nz = dz / dist;
-      const into = p.vx * nx + p.vz * nz;
-      p.vx -= 2 * into * nx;
-      p.vz -= 2 * into * nz;
-      p.x = c.x + nx * c.r;
-      p.z = c.z + nz * c.r;
-      bounced = true;
-    }
-    for (const b of this.arena.blocks) {
-      if (b.kind === 'fence' || !insideBlock(b, p.x, p.z)) continue;
-      // Bounce off whichever side it is closest to.
-      if (b.w / 2 - Math.abs(p.x - b.x) < b.d / 2 - Math.abs(p.z - b.z)) {
-        p.x = b.x + Math.sign(p.x - b.x) * b.w / 2;
-        p.vx = -p.vx;
-      } else {
-        p.z = b.z + Math.sign(p.z - b.z) * b.d / 2;
-        p.vz = -p.vz;
-      }
-      bounced = true;
-    }
-    if (!bounced) return;
-    p.bounces--;
-    if (p.bounces <= 0) p.life = 0;
-    p.ricocheted = true;
-  }
-
-  private projectileHitsBot(p: Projectile): boolean {
-    for (const bot of this.bots) {
-      if (!bot.alive) continue;
-      if (bot.id === p.owner && !(p.kind === 'disc' && p.ricocheted)) continue;
-      if (Math.hypot(bot.x - p.x, bot.z - p.z) >= bot.radius) continue;
-
-      // A plow throws discs back the way they came.
-      if (p.kind === 'disc' && bot.loadout.defense === 'plow') {
-        const angle = Math.abs(relativeBearing(bot.x, bot.z, this.defenseAngle(bot), p.x, p.z));
-        if (angle < 1) {
-          p.vx = -p.vx;
-          p.vz = -p.vz;
-          p.owner = bot.id;
-          p.ricocheted = false;
-          return false;
-        }
-      }
-      if (p.splash <= 0) {
-        const source = bot.id === p.owner ? -1 : p.owner;
-        this.damage(bot, p.damage, source);
-        if (p.knockback > 0) {
-          const speed = Math.hypot(p.vx, p.vz) || 1;
-          bot.vx += ((p.vx / speed) * p.knockback) / bot.mass;
-          bot.vz += ((p.vz / speed) * p.knockback) / bot.mass;
-          bot.lastAttacker = p.owner;
-        }
-      }
-      return true;
-    }
-    return false;
-  }
-
   /** Splash never hurts the robot that caused it. */
   explode(x: number, z: number, damage: number, radius: number, owner: number, big: boolean): void {
     this.events.push({ type: 'explosion', x, z, big });
-    for (const bot of this.bots) {
-      if (bot.id === owner || !bot.alive) continue;
+    const caught = this.bots.filter((bot) => bot.id !== owner && bot.alive && Math.hypot(bot.x - x, bot.z - z) < radius + bot.radius);
+    const crowd = 1 / (1 + CROWD_SPLASH * Math.max(0, caught.length - 1));
+    for (const bot of caught) {
       const dist = Math.hypot(bot.x - x, bot.z - z);
       const reach = radius + bot.radius;
-      if (dist >= reach) continue;
       const falloff = 1 - 0.6 * (dist / reach);
-      this.damage(bot, damage * falloff, owner);
+      this.damage(bot, damage * falloff * crowd, owner);
       const nx = dist > 1e-4 ? (bot.x - x) / dist : 1;
       const nz = dist > 1e-4 ? (bot.z - z) / dist : 0;
       bot.vx += (nx * 12 * falloff) / bot.mass;
@@ -1682,7 +1499,7 @@ export class Match {
     const { arena } = this;
     this.repairTimer -= dt;
     if (this.repairTimer <= 0) {
-      this.repairTimer = MATCH.repairInterval;
+      this.repairTimer = this.repairEvery;
       const free = arena.repairSpots
         .map((_, spot) => spot)
         .filter((spot) => !this.pickups.some((p) => p.spot === spot));
@@ -1715,7 +1532,7 @@ export class Match {
     if (this.mode === 'koth' && a.hillScore !== b.hillScore) return b.hillScore - a.hillScore;
     // A duel that runs out of time goes to whoever has more armour left.
     if (this.mode === 'duel' && a.hp / a.maxHp !== b.hp / b.maxHp) return b.hp / b.maxHp - a.hp / a.maxHp;
-    return b.kills - a.kills || b.damageDealt - a.damageDealt || a.id - b.id;
+    return b.kills - a.kills || b.assists - a.assists || b.damageDealt - a.damageDealt || a.id - b.id;
   }
 
   /** Current order, best first. */
@@ -1738,13 +1555,3 @@ export class Match {
   }
 }
 
-/** Distance along a ray to a circle, or null if it misses. */
-function rayCircle(x: number, z: number, dirX: number, dirZ: number, cx: number, cz: number, r: number): number | null {
-  const ox = cx - x;
-  const oz = cz - z;
-  const along = ox * dirX + oz * dirZ;
-  if (along < 0) return null;
-  const off = ox * dirZ - oz * dirX;
-  if (Math.abs(off) > r) return null;
-  return Math.max(0, along - Math.sqrt(r * r - off * off));
-}

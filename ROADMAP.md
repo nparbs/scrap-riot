@@ -16,7 +16,7 @@ Each milestone below has a matching GitHub milestone, and its open items are tra
 - Destroying other tanks earns money, which buys upgrades
 - Weapons included a chainsaw and a sledgehammer, and the chainsaw could outreach the hammer
 
-Scrap Riot's look and layout now follow those screenshots, rebuilt from scratch with its own name and logo. Everything else is an original design decision: robot names, the other weapons, all numbers. The default keys are also our choice: WASD to drive, Space for the main weapon, Q for the turret, R for defense, 1 to 6 for powerups, and E to look behind. Anything that contradicts how you remember the original is a bug worth filing, and footage of the original would help most. Scrap Riot will keep its own name, art and sound regardless.
+Scrap Riot's look and layout now follow those screenshots, rebuilt from scratch with its own name and logo. Everything else is an original design decision: robot names, the other weapons, all numbers. The default keys are also our choice: WASD to drive, Space for the main weapon, R for defense, 1 to 6 for powerups, and E to look behind. Anything that contradicts how you remember the original is a bug worth filing, and footage of the original would help most. Scrap Riot will keep its own name, art and sound regardless.
 
 ## v0.9: Melee first, BattleBots style
 
@@ -126,7 +126,7 @@ The original was built around online play, so this was moved to the front of the
 
 ## v1.0: Release
 
-- [ ] Touch controls for phones and tablets
+- [ ] Touch controls for phones and tablets: built, needs testing on a real phone
 - [x] Music, with four battle songs and three menu songs in rotation
 - [ ] Accessibility: color-blind palette, reduced screen shake
 - [ ] Trademark and name check before wide release

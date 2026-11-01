@@ -13,11 +13,13 @@ import { GarageView } from './render/garageView';
 import type { ArenaId } from './sim/arena';
 import { installLogoIcon } from './render/logo';
 import { MatchView } from './render/matchView';
-import { COUNTDOWN, DEFAULT_PAINT, MELEE, POWERUP_CAP, TURRETS } from './sim/data';
+import { COUNTDOWN, DEFAULT_PAINT, DUEL_INTRO, MELEE, POWERUP_CAP } from './sim/data';
 import { emptyInput, Match, STEP, type Bot, type BotSetup, type GameEvent } from './sim/match';
 import { renderGoogleButton } from './ui/google';
 import { Hud } from './ui/hud';
+import { DuelIntro } from './ui/duelIntro';
 import { Painter } from './ui/painter';
+import { isTouchDevice, touchControls } from './ui/touch';
 import { garageScreen, introScreen, lobbyScreen, menuScreen, nameScreen, pauseScreen, playersPanel, queueLabel, resultsScreen, settingsScreen, type BuyCategory, type GarageTab, type SideTab } from './ui/screens';
 
 type Mode = 'intro' | 'menu' | 'garage' | 'lobby' | 'match' | 'paused' | 'results';
@@ -29,9 +31,11 @@ const MUSIC_OFF_ICON = `${MUSIC_ICON.slice(0, -6)}<path d="M3.5 3.5l17 17" fill=
 const SERVER_URL: string = import.meta.env.VITE_SERVER_URL || (import.meta.env.DEV ? 'ws://localhost:8787' : '');
 
 /** Shows between the workshop's panels. */
-const WORKSHOP_METAL = 0x212427;
+const WORKSHOP_METAL = 0x121314;
 /** Seconds for the register to ring before the drill starts on a part that was just bought. */
 const DRILL_AFTER_SALE = 0.55;
+const DESK_DOCK_HEIGHT = 136;
+const TOUCH_DOCK_HEIGHT = 44;
 const SKIN_SAVE_DELAY_MS = 700;
 const ONLINE_POLL_MS = 15_000;
 const TRAINING_SECONDS = 30 * 60;
@@ -111,6 +115,8 @@ class Game {
   private settingsPaused = false;
   /** Sits above every other screen, so settings open over whatever is happening. */
   private readonly settingsLayer = document.createElement('div');
+  private duelIntro: DuelIntro | null = null;
+  private readonly touch = isTouchDevice();
   private readonly settingsButton = document.createElement('button');
   private readonly musicButton = document.createElement('button');
   private partPreview: PartPreview | null = null;
@@ -483,8 +489,8 @@ class Game {
   }
 
   private previewRobot(): void {
-    const { chassis, melee, turret, defense, paint = DEFAULT_PAINT, rearMelee, tower, wheels } = previewLoadout(this.save.loadout, this.partPreview);
-    this.garage.setBuild({ chassis, melee, turret, defense, paint, rearMelee, tower, wheels, color: paint.primary });
+    const { chassis, melee, defense, paint = DEFAULT_PAINT, rearMelee, tower, wheels } = previewLoadout(this.save.loadout, this.partPreview);
+    this.garage.setBuild({ chassis, melee, defense, paint, rearMelee, tower, wheels, color: paint.primary });
   }
 
   /** The drawing tools live on across page refreshes, and are slotted back into the new page. */
@@ -799,6 +805,24 @@ class Game {
     this.mode = 'match';
     this.sfx.click();
     this.sfx.setTrack('battle');
+    this.startDuelIntro(match, player);
+  }
+
+  /** Plays over the first part of a duel's countdown. Joining late picks it up part way through. */
+  private startDuelIntro(match: Match, player: Bot): void {
+    this.endDuelIntro();
+    const elapsed = COUNTDOWN + DUEL_INTRO - match.countdown;
+    if (match.mode !== 'duel' || match.countdown <= COUNTDOWN || elapsed >= DUEL_INTRO) return;
+    const rival = match.bots.find((bot) => bot !== player);
+    if (!rival) return;
+    const ratio = Math.min(window.devicePixelRatio, QUALITY[activeLevel(this.settings)].pixelRatio);
+    this.duelIntro = new DuelIntro(player, rival, match.arena.name, elapsed, ratio, (beat) => this.sfx.versus(beat));
+    document.body.appendChild(this.duelIntro.root);
+  }
+
+  private endDuelIntro(): void {
+    this.duelIntro?.dispose();
+    this.duelIntro = null;
   }
 
   private startMatch(fight: Fight | null = null): void {
@@ -810,13 +834,23 @@ class Game {
     this.careerFight = fight;
     this.match = fight
       ? new Match([me, ...fightSetups(fight, seed)], { seed, arena: fight.arena, mode: fight.mode, killTarget: fight.killTarget, countdown: COUNTDOWN })
-      : new Match([me, ...makeRivals(this.save, practice.mode === 'duel' ? 1 : 5, seed)], { seed, arena: practice.arena, mode: practice.mode, countdown: COUNTDOWN });
+      : new Match([me, ...makeRivals(this.save, practice.mode === 'duel' ? 1 : 5, seed)], { seed, arena: practice.arena, mode: practice.mode, countdown: practice.mode === 'duel' ? COUNTDOWN + DUEL_INTRO : COUNTDOWN });
     this.player = this.match.bots[0];
     this.enterMatch(this.match, this.player);
   }
 
   /** Online these go to the server. Offline there's only a bot to surrender to. */
   private makeHud(match: Match, player: Bot): Hud {
+    const hud = this.buildHud(match, player);
+    if (this.touch) {
+      hud.root.classList.add('hud-touch');
+      hud.root.appendChild(touchControls(this.keyboard.touch, () => this.togglePause(), (index) => this.keyboard.queuePowerup(index)));
+    }
+    this.view.setDockHeight(this.touch ? TOUCH_DOCK_HEIGHT : DESK_DOCK_HEIGHT);
+    return hud;
+  }
+
+  private buildHud(match: Match, player: Bot): Hud {
     return new Hud(match, player, this.settings.bindings, {
       onChat: (id) => {
         if (this.net) this.net.chat(id);
@@ -859,6 +893,7 @@ class Game {
         this.keyboard.clear();
         this.mode = 'match';
         this.sfx.setTrack('battle');
+        this.startDuelIntro(match, player);
       },
       onOver: () => this.finishMatch(),
       onChat: (bot, id) => this.hud?.showChat(bot, id),
@@ -957,14 +992,8 @@ class Game {
     // Sounds fade with distance from the player.
     const near = (x: number, z: number) => Math.max(0.05, 1 - Math.hypot(x - player.x, z - player.z) / 40);
     switch (event.type) {
-      case 'shot':
-        this.sfx.shot(event.kind, near(event.x, event.z));
-        break;
       case 'arc':
         this.sfx.arc(near(event.points[0].x, event.points[0].z));
-        break;
-      case 'beam':
-        this.sfx.shot('laser', near(event.x1, event.z1));
         break;
       case 'pulse':
         this.sfx.meleeHit('hammer', near(event.x, event.z));
@@ -1003,6 +1032,11 @@ class Game {
     this.clock += dt;
     this.updateFps(dt);
     this.updateAutoQuality(dt);
+    this.keyboard.mouseEnabled = this.mode === 'match' && !this.duelIntro && !this.settingsOpen;
+    if (this.duelIntro) {
+      this.duelIntro.update(dt);
+      if (this.duelIntro.done || this.mode !== 'match') this.endDuelIntro();
+    }
 
     switch (this.mode) {
       case 'intro':
@@ -1091,10 +1125,10 @@ class Game {
       if (melee.kind === 'spinner' && bot.meleeCharge * level > spinSpeed * spinLevel) {
         spinSpeed = bot.meleeCharge;
         spinLevel = level;
-      } else if (bot.meleeActive && melee.kind === 'held' && !melee.passive) {
+      } else if (bot.meleeActive && melee.kind === 'held' && !melee.passive && !melee.burns) {
         saw = Math.max(saw, level);
       }
-      flame ||= bot.turretFiring && level > 0.3;
+      flame ||= bot.meleeActive && !!melee.burns && level > 0.3;
     }
     this.sfx.setLoops({
       engine: player.alive ? Math.min(1, Math.hypot(player.vx, player.vz) / top) : -1,
@@ -1105,11 +1139,11 @@ class Game {
       flame,
     });
 
-    // A click when the gun won't fire, so a press with nothing left doesn't feel like a dropped key.
+    // A click when a powered weapon has nothing left, so a press doesn't feel like a dropped key.
     this.keyboard.peek(this.tutorialInput);
-    const wantsToFire = this.tutorialInput.turret;
-    const gun = TURRETS[player.loadout.turret];
-    if (wantsToFire && !this.wasFiring && player.alive && gun.shots > 0 && player.burstLeft === 0 && (player.shots <= 0 || player.turretCd > 0.1 || player.ammo < gun.battery)) this.sfx.dryFire();
+    const wantsToFire = this.tutorialInput.melee;
+    const weapon = MELEE[player.loadout.melee];
+    if (wantsToFire && !this.wasFiring && player.alive && ((weapon.battery ?? 0) > player.ammo || (weapon.drain ?? 0) * 0.1 > player.ammo)) this.sfx.dryFire();
     this.wasFiring = wantsToFire;
   }
 

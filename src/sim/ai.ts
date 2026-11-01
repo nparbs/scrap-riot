@@ -1,5 +1,5 @@
 import { closestOnBlock, rayBlock, sawPos, shockerActive, type Block } from './arena';
-import { DEFENSES, MELEE, TURRETS } from './data';
+import { DEFENSES, MELEE } from './data';
 import { bearing, wrapAngle, type Bot, type Match } from './match';
 
 const THINK_INTERVAL = 0.2;
@@ -10,6 +10,8 @@ const EDGE_CLEARANCE = 3;
 const EDGE_SLOW_ZONE = 6;
 const ROUTE_MARGIN = 1.5;
 const ROUTE_REACHED = 2;
+const CHASER_PENALTY = 7;
+const LEADER_PULL = 1.2;
 
 /** Drives one bot by writing to its input, exactly as the keyboard does for the player. */
 export class BotBrain {
@@ -20,8 +22,11 @@ export class BotBrain {
   private goalZ = 0;
   private stuckT = 0;
   private reverseT = 0;
-  private burstT = 0;
   private strafeSign: number;
+  /** Who this robot is after, so the others can spread out rather than all pile on one. */
+  get targetId(): number {
+    return this.target?.id ?? -1;
+  }
 
   constructor(
     private readonly match: Match,
@@ -40,7 +45,7 @@ export class BotBrain {
       this.think();
     }
     this.steer(dt);
-    this.fight(dt);
+    this.fight();
   }
 
   private think(): void {
@@ -133,6 +138,9 @@ export class BotBrain {
       if (other === bot || !other.alive || !match.canSee(bot, other)) continue;
       let score = Math.hypot(other.x - bot.x, other.z - bot.z) + other.hp * 0.08;
       if (other.id === bot.lastAttacker) score -= 10;
+      // In a crowd, go for whoever isn't already being chased, and lean toward whoever's winning.
+      score += match.chasersOf(other.id, bot.id) * CHASER_PENALTY;
+      score -= other.kills * LEADER_PULL;
       score += match.rng() * 6;
       if (score < bestScore) {
         bestScore = score;
@@ -256,13 +264,12 @@ export class BotBrain {
     return Math.min(across, along);
   }
 
-  private fight(dt: number): void {
+  private fight(): void {
     const { bot } = this;
     const target = this.target;
     bot.input.melee = false;
     bot.input.defense = false;
     if (!target || !target.alive) {
-      bot.input.turret = false;
       bot.input.boost = false;
       return;
     }
@@ -275,7 +282,7 @@ export class BotBrain {
         bot.input.melee = dist < 10 && angle < 0.25;
         break;
       case 'magnet':
-        bot.input.melee = dist < melee.range && dist > 3 && angle < melee.arc;
+        bot.input.melee = dist < melee.range && angle < melee.arc;
         break;
       case 'spinner':
         // Spin up on the way in, so the weapon is at speed when it arrives.
@@ -285,13 +292,6 @@ export class BotBrain {
         bot.input.melee = dist - target.radius < melee.range && angle < melee.arc;
     }
 
-    // Short bursts rather than holding the trigger, so low-skill bots lose some damage.
-    this.burstT -= dt;
-    if (this.burstT < -0.4) this.burstT = 0.3 + this.skill * 1.5;
-    const turret = TURRETS[bot.loadout.turret];
-    // Guns only point forward, so the robot itself has to be lined up. Close in is worth a shot.
-    const lineUp = Math.atan2(target.radius, Math.max(dist, 1)) * 0.9;
-    bot.input.turret = angle < lineUp && this.burstT > 0 && dist < Math.min(turret.range, 22) && bot.blindT <= 0;
     bot.input.boost = dist > 12 && angle < 0.3 && bot.ammo > 0.4;
 
     bot.input.defense = this.wantsDefense(target, dist, angle);

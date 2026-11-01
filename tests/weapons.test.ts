@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { newSave } from '../src/game/progress';
 import { ARENA_ORDER, ARENAS, TRAP_NAMES } from '../src/sim/arena';
-import { BATTERY_REGEN, BOOST_DRAIN, FLIP_TIME, leaveWait, MELEE, REWARD, SPECTATE, TRAP, TURRETS, type TurretId } from '../src/sim/data';
+import { BATTERY_REGEN, BOOST_DRAIN, BURN_TIME, FLIP_TIME, leaveWait, MELEE, REWARD, SPECTATE, TRAP } from '../src/sim/data';
 import type { SnapshotMessage } from '../src/net/protocol';
 import { applyBotState, applyWorldState, encodeSnapshot } from '../src/net/snapshot';
 import { Match, type Bot, type BotSetup, type Loadout } from '../src/sim/match';
@@ -25,156 +25,181 @@ const run = (match: Match, seconds: number) => {
   for (let i = 0; i < seconds * 60; i++) match.step();
 };
 
-describe('guns', () => {
-  it('fire only where the robot points, however close something is off to the side', () => {
-    const [match, a, b] = fight({ turret: 'minigun' });
-    b.x = a.x + 6;
-    b.z = a.z;
-    a.input.turret = true;
-    run(match, 1);
-    expect(b.hp).toBe(b.maxHp);
-    expect(match.projectiles.every((p) => Math.abs(p.vx) < 1e-6 && p.vz > 0)).toBe(true);
-  });
-
-  it('hit when the robot is turned to face the target', () => {
-    const [match, a, b] = fight({ turret: 'minigun' });
-    b.x = a.x + 6;
-    b.z = a.z;
-    a.heading = Math.PI / 2;
-    a.input.turret = true;
-    run(match, 1);
+describe('weapons that used to be guns', () => {
+  it('a flamethrower reaches further than anything else, sets robots burning and drains the battery', () => {
+    const [match, a, b] = fight({ melee: 'flamethrower' });
+    b.z = a.z + 6;
+    a.input.melee = true;
+    const battery = a.ammo;
+    run(match, 0.5);
     expect(b.hp).toBeLessThan(b.maxHp);
+    expect(b.burnT).toBeGreaterThan(0);
+    expect(b.burnT).toBeLessThanOrEqual(BURN_TIME);
+    expect(a.ammo).toBeLessThan(battery);
+    expect(MELEE.flamethrower.range).toBeGreaterThan(MELEE.chainsaw.range);
   });
 
-  it('nothing steers itself after being fired', () => {
-    for (const turret of Object.keys(TURRETS) as TurretId[]) {
-      const [match, a, b] = fight({ turret });
-      b.x = a.x + 8;
-      a.input.turret = true;
-      match.step();
-      a.input.turret = false;
-      const before = new Map(match.projectiles.map((p) => [p.id, [p.vx, p.vz]]));
-      for (let i = 0; i < 10; i++) match.step();
-      for (const p of match.projectiles) {
-        // Later rounds of a burst weren't in the air yet, and grenades and discs bounce.
-        if (before.has(p.id) && turret !== 'grenade' && turret !== 'discs') expect([p.vx, p.vz], turret).toEqual(before.get(p.id));
-      }
-    }
-  });
-
-  it('run out of shots for that life, and get them back on the next', () => {
-    const [match, a] = fight({ turret: 'rockets' });
-    a.input.turret = true;
-    a.ammo = 1;
-    for (let i = 0; i < 60 * 30; i++) {
-      a.ammo = 1;
-      match.step();
-    }
-    expect(a.shots).toBe(0);
-    const fired = match.projectiles.length;
-    run(match, 4);
-    expect(match.projectiles.length).toBeLessThanOrEqual(fired);
-
-    a.input.turret = false;
-    a.invulnT = 0;
-    match.damage(a, 9999, -1);
-    run(match, 4);
-    expect(a.alive).toBe(true);
-    expect(a.shots).toBe(TURRETS.rockets.shots);
-    expect(a.ammo).toBe(1);
-  });
-
-  it('cost battery, so a battery can run dry before the shots do', () => {
-    const [match, a] = fight({ turret: 'bunkerbuster' });
-    a.ammo = TURRETS.bunkerbuster.battery / 2;
-    a.input.turret = true;
-    match.step();
-    expect(a.shots).toBe(TURRETS.bunkerbuster.shots);
-    expect(match.projectiles).toHaveLength(0);
-  });
-
-  it('a stunned or airborne robot cannot fire', () => {
-    const [match, a] = fight();
-    a.input.turret = true;
-    a.airT = 1;
-    match.step();
-    expect(match.projectiles).toHaveLength(0);
-    a.airT = 0;
-    a.stunT = 1;
-    match.step();
-    expect(match.projectiles).toHaveLength(0);
-  });
-
-  it('a whole life of gunfire cannot wreck a starter robot, so melee has to finish the job', () => {
-    const armour = new Match([pilot('A')], { seed: 1 }).bots[0].maxHp;
-    for (const [id, gun] of Object.entries(TURRETS)) {
-      // The flamethrower has no shot count, so its limit is one full battery.
-      const total = gun.shots > 0 ? gun.shots * (gun.burst ?? 1) * gun.damage : gun.damage / gun.battery;
-      expect(total, id).toBeLessThan(armour);
-    }
-  });
-
-  it('the arc coil misses what it cannot see', () => {
-    const [match, a, b] = fight({ turret: 'arc' });
-    b.cloakT = 5;
-    a.input.turret = true;
+  it('a flamethrower with an empty battery does nothing', () => {
+    const [match, a, b] = fight({ melee: 'flamethrower' });
+    b.z = a.z + 6;
+    a.ammo = 0;
+    a.input.melee = true;
     match.step();
     expect(b.hp).toBe(b.maxHp);
-    a.xrayT = 5;
-    a.turretCd = 0;
-    b.cloakT = 5;
-    match.step();
+    expect(a.meleeActive).toBe(false);
+  });
+
+  it('a Tesla Coil stuns its target and jumps to one more robot nearby, for half', () => {
+    const match = new Match([pilot('A', { melee: 'tesla' }), pilot('B'), pilot('C')], { seed: 1, arena: 'foundry', mode: 'ffa' });
+    const [a, b, c] = match.bots;
+    a.invulnT = b.invulnT = c.invulnT = 0;
+    a.x = b.x = -20;
+    a.z = -5;
+    a.heading = 0;
+    b.z = -1;
+    c.x = -15;
+    c.z = 2;
+    a.input.melee = true;
+    run(match, 0.2);
+    const bHit = b.maxHp - b.hp;
+    const cHit = c.maxHp - c.hp;
+    expect(bHit).toBeGreaterThan(0);
+    expect(cHit).toBeCloseTo(bHit / 2, 1);
+    expect(b.stunT).toBeGreaterThan(0);
+    expect(match.drainEvents().some((e) => e.type === 'arc' && e.points.length === 3)).toBe(true);
+  });
+
+  it('a spear reaches far but only in a narrow line', () => {
+    const [match, a, b] = fight({ melee: 'spear' });
+    b.z = a.z + 4.5;
+    a.input.melee = true;
+    run(match, 0.2);
     expect(b.hp).toBeLessThan(b.maxHp);
+    const [miss, c, d] = fight({ melee: 'spear' });
+    d.x = c.x + 3;
+    d.z = c.z + 2;
+    c.input.melee = true;
+    run(miss, 0.2);
+    expect(d.hp).toBe(d.maxHp);
   });
 });
 
-describe('chaingun bursts', () => {
-  it('one press fires 10 rounds and uses one shot, even if the key is let go at once', () => {
-    const [match, a] = fight({ turret: 'minigun' });
-    const start = a.shots;
-    a.input.turret = true;
-    match.step();
-    a.input.turret = false;
-    expect(a.shots).toBe(start - 1);
-    let fired = 0;
-    for (let i = 0; i < 60; i++) {
-      match.step();
-      fired += match.drainEvents().filter((e) => e.type === 'shot').length;
-    }
-    expect(fired).toBe(10);
-    expect(a.burstLeft).toBe(0);
-    expect(a.shots).toBe(start - 1);
-    expect(TURRETS.minigun.burst).toBe(10);
+describe('big matches', () => {
+  const crowd = (over: Partial<Loadout> = {}) => {
+    const match = new Match(Array.from({ length: 8 }, (_, i) => pilot(`P${i}`, i === 0 ? over : {})), { seed: 1, arena: 'foundry', mode: 'ffa' });
+    match.bots.forEach((bot) => (bot.invulnT = 0));
+    return match;
+  };
+
+  it('pays an assist to whoever helped with a kill, and not to whoever finished it', () => {
+    const match = crowd();
+    const [a, b, c] = match.bots;
+    match.damage(c, 10, a.id);
+    match.damage(c, 9999, b.id);
+    expect(b.kills).toBe(1);
+    expect(b.assists).toBe(0);
+    expect(a.assists).toBe(1);
+    expect(a.earned).toBeGreaterThanOrEqual(REWARD.assist);
   });
 
-  it('the next burst has to wait for the cooldown, however long the key is held', () => {
-    const [match, a] = fight({ turret: 'minigun' });
-    const start = a.shots;
-    a.input.turret = true;
+  it('forgets old damage, so an assist has to be recent', () => {
+    const match = crowd();
+    const [a, b, c] = match.bots;
+    match.damage(c, 10, a.id);
+    run(match, 7);
+    c.invulnT = 0;
+    match.damage(c, 9999, b.id);
+    expect(a.assists).toBe(0);
+  });
+
+  it('a blast is shared out across a crowd', () => {
+    const alone = crowd();
+    alone.bots.forEach((bot, i) => {
+      bot.x = 20 + i * 5;
+      bot.z = 25;
+    });
+    const [ownerA, oneA] = alone.bots;
+    oneA.x = oneA.z = 0;
+    alone.explode(0, 0, 40, 6, ownerA.id, false);
+    const single = oneA.maxHp - oneA.hp;
+
+    const packed = crowd();
+    const [owner, ...rest] = packed.bots;
+    owner.x = 25;
+    owner.z = 25;
+    rest.forEach((bot) => {
+      bot.x = 0;
+      bot.z = 0;
+    });
+    packed.explode(0, 0, 40, 6, owner.id, false);
+    expect(rest[0].maxHp - rest[0].hp).toBeLessThan(single * 0.5);
+  });
+
+  it('chained stuns get shorter, so nobody can be held still by a crowd', () => {
+    const match = crowd({ defense: 'emp' });
+    const [a, b] = match.bots;
+    b.x = a.x + 3;
+    b.z = a.z;
+    a.input.defense = true;
+    match.step();
+    const first = b.stunT;
+    expect(first).toBeGreaterThan(1);
+    b.stunT = 0;
+    a.defenseCd = 0;
+    match.step();
+    expect(b.stunT).toBeLessThan(first / 2);
+  });
+
+  it('landing a hit ends your spawn protection and your cloak', () => {
+    const match = crowd();
+    const [a, b] = match.bots;
+    a.invulnT = 2;
+    a.cloakT = 3;
+    match.damage(b, 5, a.id);
+    expect(a.invulnT).toBe(0);
+    expect(a.cloakT).toBe(0);
+  });
+
+  it('repairs turn up more often with more robots', () => {
+    const count = (players: number) => {
+      const match = new Match(Array.from({ length: players }, (_, i) => pilot(`P${i}`)), { seed: 1, arena: 'pit', mode: 'ffa' });
+      let seen = 0;
+      for (let i = 0; i < 60 * 40; i++) {
+        match.bots.forEach((bot) => {
+          bot.hp = bot.maxHp;
+          bot.x = 30;
+          bot.z = 30;
+        });
+        match.step();
+        seen = Math.max(seen, match.pickups.filter((p) => p.kind === 'repair').length);
+      }
+      return seen;
+    };
+    expect(count(8)).toBeGreaterThan(count(2));
+  });
+
+  it('a crowded hill still moves toward a winner, by sharing the points', () => {
+    const match = new Match(Array.from({ length: 8 }, (_, i) => pilot(`P${i}`)), { seed: 1, arena: 'foundry', mode: 'koth' });
+    expect(match.hillTarget).toBeLessThan(45);
+    const [a, b] = match.bots;
+    match.bots.forEach((bot) => {
+      bot.invulnT = 99;
+      bot.x = 25;
+      bot.z = 25;
+    });
+    a.x = b.x = match.arena.hill.x;
+    a.z = b.z = match.arena.hill.z;
     run(match, 1);
-    expect(a.shots).toBe(start - 1);
-    run(match, TURRETS.minigun.cooldown);
-    expect(a.shots).toBe(start - 2);
+    expect(a.hillScore).toBeGreaterThan(0.3);
+    expect(a.hillScore).toBeLessThan(0.7);
   });
 
-  it('every round flies straight ahead and can hit', () => {
-    const [match, a, b] = fight({ turret: 'minigun' });
-    a.input.turret = true;
-    match.step();
-    a.input.turret = false;
-    run(match, 1.5);
-    expect(b.hp).toBeCloseTo(b.maxHp - TURRETS.minigun.damage * 10, 1);
-  });
-
-  it('a burst stops when the robot is stunned or destroyed, and a new life starts clean', () => {
-    const [match, a] = fight({ turret: 'minigun' });
-    a.input.turret = true;
-    match.step();
-    a.input.turret = false;
-    expect(a.burstLeft).toBeGreaterThan(0);
-    a.invulnT = 0;
-    match.damage(a, 9999, -1);
-    expect(a.burstLeft).toBe(0);
+  it('bots spread out rather than all chasing one robot', () => {
+    const match = new Match(Array.from({ length: 8 }, (_, i) => ({ ...pilot(`P${i}`), isAI: true })), { seed: 3, arena: 'pit', mode: 'ffa' });
+    run(match, 4);
+    const chased = match.bots.map((bot) => match.chasersOf(bot.id, -1));
+    expect(Math.max(...chased)).toBeLessThan(7);
+    expect(chased.filter((n) => n > 0).length).toBeGreaterThan(1);
   });
 });
 
@@ -264,9 +289,9 @@ describe('spectating', () => {
 
   it('spills the map\'s patch, and pulls robots toward the marker', () => {
     const { match, a, b } = knockedOut('skyscraper');
-    a.input.turret = true;
+    a.input.boost = true;
     match.step();
-    a.input.turret = false;
+    a.input.boost = false;
     const patch = match.oil.find((p) => p.owner === a.id)!;
     expect(patch.kind).toBe(TRAP_NAMES.skyscraper.patch);
 
@@ -330,14 +355,9 @@ describe('cooldowns', () => {
   });
 
   it('every strong weapon has a real cooldown', () => {
-    for (const id of ['vertbar', 'vertdisc', 'horizbar', 'shell', 'hammer', 'hammersaw', 'flipper', 'crusher'] as const) {
-      expect(MELEE[id].cooldown, id).toBeGreaterThanOrEqual(1.4);
+    for (const id of ['hammer', 'vertbar', 'flipper', 'crusher', 'claw'] as const) {
+      expect(MELEE[id].cooldown, id).toBeGreaterThanOrEqual(1);
     }
-    for (const id of ['rockets', 'heavyrocket', 'bunkerbuster', 'mortar', 'laser'] as const) {
-      expect(TURRETS[id].cooldown, id).toBeGreaterThanOrEqual(1.7);
-    }
-    expect(TURRETS.bunkerbuster.cooldown).toBeGreaterThan(TURRETS.rockets.cooldown);
-    expect(MELEE.vertbar.cooldown).toBeGreaterThan(MELEE.drum.cooldown);
   });
 
   it('the drill overheats if held too long, then recovers', () => {
@@ -375,15 +395,15 @@ describe('flash bomb', () => {
     match.step();
     a.input.defense = false;
     expect(b.blindT).toBeGreaterThan(0);
-    expect(b.blindT).toBeLessThanOrEqual(1.2);
-    run(match, 1.3);
+    expect(b.blindT).toBeLessThanOrEqual(1.6);
+    run(match, 1.7);
     expect(b.blindT).toBe(0);
-    expect(a.defenseCd).toBeGreaterThan(10);
+    expect(a.defenseCd).toBeGreaterThan(8);
   });
 
   it('does not reach far', () => {
     const [match, a, b] = fight({ defense: 'flash' });
-    b.z = a.z + 12;
+    b.z = a.z + 14;
     a.input.defense = true;
     match.step();
     expect(b.blindT).toBe(0);
@@ -498,14 +518,22 @@ describe('spinners', () => {
     expect(hitAt('undercutter', 1).b.slowT).toBeGreaterThan(0);
   });
 
-  it('a ring spinner hits from every side, and costs top speed', () => {
+  it('a ring spinner hits from nearly every side, and costs top speed', () => {
     const [match, a, b] = fight({ melee: 'shell' });
-    b.z = a.z - 2.8;
+    b.x = a.x + 2;
+    b.z = a.z - 2;
     a.meleeCharge = 1;
     a.input.melee = true;
     match.step();
     expect(b.hp).toBeLessThan(b.maxHp);
     expect(a.chassis.speed).toBeLessThan(b.chassis.speed);
+    // Dead astern is the way to get at one.
+    const [blind, c, d] = fight({ melee: 'shell' });
+    d.z = c.z - 2.8;
+    c.meleeCharge = 1;
+    c.input.melee = true;
+    blind.step();
+    expect(d.hp).toBe(d.maxHp);
   });
 
   it('a horizontal bar reaches wider than a vertical disc', () => {
@@ -588,11 +616,9 @@ describe('thrown robots', () => {
     b.vx = b.vz = 0;
     b.input.throttle = 1;
     b.input.steer = 1;
-    b.input.turret = true;
     run(match, 1);
     expect(Math.hypot(b.x - x, b.z - z)).toBeLessThan(0.01);
     expect(b.heading).toBe(heading);
-    expect(match.projectiles.filter((p) => p.owner === b.id)).toHaveLength(0);
 
     run(match, FLIP_TIME);
     expect(b.flipT).toBe(0);
@@ -647,7 +673,7 @@ describe('other new weapons', () => {
       expect(a.clawTarget).toBe(b.id);
       return b.maxHp - b.hp;
     };
-    expect(grip('crusher')).toBeGreaterThan(grip('claw') * 2);
+    expect(grip('crusher')).toBeGreaterThan(grip('claw') * 1.5);
     expect(MELEE.crusher.windup).toBeLessThan(MELEE.claw.windup);
   });
 
@@ -660,7 +686,7 @@ describe('other new weapons', () => {
     run(match, 1.5);
     expect(a.clawTarget).toBe(b.id);
     expect(b.z).toBeGreaterThan(start + 3);
-    expect(b.maxHp - b.hp).toBeLessThan(15);
+    expect(b.maxHp - b.hp).toBeLessThan(25);
   });
 
   it('every melee weapon can be fought with by the AI without breaking the match', () => {

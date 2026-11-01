@@ -4,7 +4,6 @@ export interface TutorialInput {
   throttle: number;
   steer: number;
   melee: boolean;
-  turret: boolean;
   defense: boolean;
   boost: boolean;
 }
@@ -30,22 +29,17 @@ const STEPS: Step[] = [
     done: (input) => input.steer !== 0 && input.throttle !== 0,
   },
   {
-    prompt: (b) => `Press ${k(b.turret)} to fire your gun. It shoots straight ahead, and shots are limited.`,
-    hold: 1,
-    done: (input) => input.turret,
-  },
-  {
-    prompt: (b) => `Get close and press ${k(b.melee)} for your main weapon`,
+    prompt: (b) => `Get close and press ${k(b.melee)} or the left mouse button for your main weapon`,
     hold: 0.5,
     done: (input) => input.melee,
   },
   {
-    prompt: (b) => `Press ${k(b.defense)} for your defense`,
+    prompt: (b) => `Press ${k(b.defense)} or the right mouse button for your defense`,
     hold: 0,
     done: (input) => input.defense,
   },
   {
-    prompt: (b) => `Hold ${k(b.boost)} for a burst of speed. It runs on your battery, like your gun.`,
+    prompt: (b) => `Hold ${k(b.boost)} for a burst of speed. It runs on your battery.`,
     hold: 0.4,
     done: (input) => input.boost,
   },

@@ -3,7 +3,7 @@ import { makeRivals, randomArena, type Save } from '../src/game/progress';
 import { INPUT_STEPS, onlineLoadout, QUICK_CHAT, sanitizeName, SNAPSHOT_STEPS, unpackFlags, type OnlineQueue, type ServerMessage, type StartMessage } from '../src/net/protocol';
 import { encodeSnapshot } from '../src/net/snapshot';
 import type { ArenaId } from '../src/sim/arena';
-import { COUNTDOWN, DUEL_OUTRO, MODES, POWERUP_ORDER, type ModeId, type UpgradeId } from '../src/sim/data';
+import { COUNTDOWN, DUEL_INTRO, FORFEIT_OUTRO, MATCH, MODES, POWERUP_ORDER, type ModeId, type UpgradeId } from '../src/sim/data';
 import { Match, STEP, type BotSetup, type Loadout } from '../src/sim/match';
 
 import type { MatchResult } from './accounts';
@@ -49,8 +49,9 @@ export const DEFAULT_ROOM_OPTIONS: RoomOptions = {
   fillSeats: false,
   keepLeavers: false,
   queue: 'duel',
-  killTarget: 12,
-  countdown: COUNTDOWN,
+  killTarget: MATCH.killTarget,
+  // Long enough for the face-off before the 3, 2, 1.
+  countdown: COUNTDOWN + DUEL_INTRO,
   arena: 'skyscraper',
   mode: 'duel',
 };
@@ -64,6 +65,7 @@ export const BRAWL_ROOM_OPTIONS: RoomOptions = {
   queue: 'brawl',
   arena: 'random',
   mode: 'ffa',
+  countdown: COUNTDOWN,
 };
 
 const HUMAN_COLORS = [0xff8a2a, 0x35d0e6, 0xf25fd0, 0x9be03a, 0xf4f1e8, 0xffd23a, 0xa066e0, 0xe0503a];
@@ -244,9 +246,8 @@ export class Room {
     const input = this.match!.bots[player.botId].input;
     input.throttle = Math.max(-1, Math.min(1, next.throttle));
     input.steer = Math.max(-1, Math.min(1, next.steer));
-    const { melee, turret, defense, boost } = unpackFlags(next.flags);
+    const { melee, defense, boost } = unpackFlags(next.flags);
     input.melee = melee;
-    input.turret = turret;
     input.defense = defense;
     input.boost = boost;
     const id = POWERUP_ORDER[next.powerup];
@@ -303,7 +304,7 @@ export class Room {
       if (this.mode !== 'duel' && (humansGone || bots.filter((bot) => !bot.out).length <= 1)) {
         this.aloneSince ??= now;
         // Clients draw slightly in the past, so ending at once would beat the news of who left.
-        if (now - this.aloneSince >= DUEL_OUTRO * 1000) this.match.over = true;
+        if (now - this.aloneSince >= FORFEIT_OUTRO * 1000) this.match.over = true;
       }
     }
 

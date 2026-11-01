@@ -13,7 +13,6 @@ import {
   POWER_SOURCES,
   POWERUP_ORDER,
   TOWERS,
-  TURRETS,
   WHEELS,
   type ModeId,
   type Paint,
@@ -23,7 +22,7 @@ import type { BotSetup, GameEvent, Loadout } from '../sim/match';
 import type { Save } from '../game/progress';
 import { decodeSkin } from '../game/skin';
 
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 /** The most a browser can bank for a match it ran itself. */
 export const OFFLINE_PAYOUT_MAX = 10_000;
 export const NAME_MAX = 16;
@@ -40,9 +39,8 @@ export const QUICK_CHAT = ['Good luck!', 'Nice hit!', 'Come here!', 'Oops!', 'Go
 export type OnlineQueue = 'duel' | 'brawl';
 
 const FLAG_MELEE = 1;
-const FLAG_TURRET = 2;
-const FLAG_DEFENSE = 4;
-const FLAG_BOOST = 8;
+const FLAG_DEFENSE = 2;
+const FLAG_BOOST = 4;
 
 export type ClientMessage =
   | { t: 'join'; v: number; name: string; loadout: Loadout; session?: string; queue?: OnlineQueue }
@@ -76,7 +74,6 @@ export interface SnapshotMessage {
   time: number;
   countdown: number;
   bots: number[][];
-  proj: number[][];
   mines: number[][];
   oil: number[][];
   traps: number[][];
@@ -98,12 +95,12 @@ export type ServerMessage =
   | { t: 'error'; code: ErrorCode }
   | { t: 'pong'; c: number };
 
-export function packFlags(melee: boolean, turret: boolean, defense: boolean, boost: boolean): number {
-  return (melee ? FLAG_MELEE : 0) | (turret ? FLAG_TURRET : 0) | (defense ? FLAG_DEFENSE : 0) | (boost ? FLAG_BOOST : 0);
+export function packFlags(melee: boolean, defense: boolean, boost: boolean): number {
+  return (melee ? FLAG_MELEE : 0) | (defense ? FLAG_DEFENSE : 0) | (boost ? FLAG_BOOST : 0);
 }
 
-export function unpackFlags(flags: number): { melee: boolean; turret: boolean; defense: boolean; boost: boolean } {
-  return { melee: !!(flags & FLAG_MELEE), turret: !!(flags & FLAG_TURRET), defense: !!(flags & FLAG_DEFENSE), boost: !!(flags & FLAG_BOOST) };
+export function unpackFlags(flags: number): { melee: boolean; defense: boolean; boost: boolean } {
+  return { melee: !!(flags & FLAG_MELEE), defense: !!(flags & FLAG_DEFENSE), boost: !!(flags & FLAG_BOOST) };
 }
 
 export function powerupIndex(id: PowerupId | null): number {
@@ -148,7 +145,6 @@ export function onlineLoadout(raw: unknown): Loadout {
   return {
     chassis: pickKey(CHASSIS, r.chassis, 'brawler'),
     melee: pickKey(MELEE, r.melee, 'chainsaw'),
-    turret: pickKey(TURRETS, r.turret, 'minigun'),
     defense: pickKey(DEFENSES, r.defense, 'shield'),
     powerups: { rage: 1, megashield: 1, cloaking: 1, xray: 1, repair: 1, battery: 1 },
     upgrades: { armor: 0, engine: 0, weapons: 0 },

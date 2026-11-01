@@ -5,7 +5,23 @@ import type { BotInput } from './sim/match';
 
 const POWER_ACTIONS = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'] as const;
 
-/** Combines the keyboard and any connected gamepad into one set of controls. */
+/** Left and right mouse buttons, which sit alongside whatever keys are bound. */
+const MOUSE_MELEE = 'Mouse0';
+const MOUSE_DEFENSE = 'Mouse2';
+/** Clicks on these are for the page, not the robot. */
+const PAGE_CONTROLS = 'button, input, select, a, label, form, .duel-intro, .settings-layer, .chat-menu, .hud-dock, .hud-spectate, .touch-controls';
+
+/** What the on-screen controls are doing, on phones and tablets. */
+export interface TouchState {
+  throttle: number;
+  steer: number;
+  melee: boolean;
+  defense: boolean;
+  boost: boolean;
+  rear: boolean;
+}
+
+/** Combines the keyboard, the mouse, any connected gamepad and touch controls into one set of controls. */
 export class Keyboard {
   private readonly held = new Set<string>();
   /** Keys pressed since the game last read the controls, so a very quick tap still counts. */
@@ -20,6 +36,9 @@ export class Keyboard {
   onFirstInput: (() => void) | null = null;
   onPause: (() => void) | null = null;
   onMute: (() => void) | null = null;
+  /** Only in a match, so the mouse is left alone for the page everywhere else. */
+  mouseEnabled = false;
+  readonly touch: TouchState = { throttle: 0, steer: 0, melee: false, defense: false, boost: false, rear: false };
 
   constructor(private bindings: Bindings) {
     this.setBindings(bindings);
@@ -51,6 +70,21 @@ export class Keyboard {
       if (!e.repeat) this.queuedPowerup = this.powerByCode.get(e.code) ?? this.queuedPowerup;
     });
     window.addEventListener('keyup', (e) => this.held.delete(e.code));
+    window.addEventListener('mousedown', (e) => {
+      if (!this.mouseEnabled || (e.target instanceof Element && e.target.closest(PAGE_CONTROLS))) return;
+      const code = e.button === 0 ? MOUSE_MELEE : e.button === 2 ? MOUSE_DEFENSE : '';
+      if (!code) return;
+      e.preventDefault();
+      this.held.add(code);
+      this.tapped.add(code);
+    });
+    window.addEventListener('mouseup', (e) => {
+      this.held.delete(e.button === 0 ? MOUSE_MELEE : e.button === 2 ? MOUSE_DEFENSE : '');
+    });
+    // The right button is a weapon during a match, so its menu stays shut.
+    window.addEventListener('contextmenu', (e) => {
+      if (this.mouseEnabled) e.preventDefault();
+    });
     // A key released while the window is unfocused never fires keyup.
     window.addEventListener('blur', () => {
       this.held.clear();
@@ -87,7 +121,7 @@ export class Keyboard {
   }
 
   get rearView(): boolean {
-    return this.isDown(this.bindings.rear) || (this.padState?.rear ?? false);
+    return this.isDown(this.bindings.rear) || (this.padState?.rear ?? false) || this.touch.rear;
   }
 
   /** Current controls without consuming a queued powerup, for things like the tutorial. */
@@ -95,12 +129,12 @@ export class Keyboard {
     const b = this.bindings;
     const axis = (plus: string, minus: string) => (this.isDown(plus) ? 1 : 0) - (this.isDown(minus) ? 1 : 0);
     const pad = this.padState;
-    input.throttle = axis(b.forward, b.back) || (pad?.throttle ?? 0);
-    input.steer = axis(b.left, b.right) || (pad?.steer ?? 0);
-    input.melee = this.isDown(b.melee) || (pad?.melee ?? false);
-    input.turret = this.isDown(b.turret) || (pad?.turret ?? false);
-    input.defense = this.isDown(b.defense) || (pad?.defense ?? false);
-    input.boost = this.isDown(b.boost) || (b.boost === 'ShiftLeft' && this.isDown('ShiftRight')) || (pad?.boost ?? false);
+    const { touch } = this;
+    input.throttle = axis(b.forward, b.back) || (pad?.throttle ?? 0) || touch.throttle;
+    input.steer = axis(b.left, b.right) || (pad?.steer ?? 0) || touch.steer;
+    input.melee = this.isDown(b.melee) || this.isDown(MOUSE_MELEE) || (pad?.melee ?? false) || touch.melee;
+    input.defense = this.isDown(b.defense) || this.isDown(MOUSE_DEFENSE) || (pad?.defense ?? false) || touch.defense;
+    input.boost = this.isDown(b.boost) || (b.boost === 'ShiftLeft' && this.isDown('ShiftRight')) || (pad?.boost ?? false) || touch.boost;
   }
 
   applyTo(input: BotInput): void {
@@ -114,9 +148,15 @@ export class Keyboard {
     }
   }
 
+  /** For the on-screen powerup buttons. */
+  queuePowerup(index: number): void {
+    this.queuedPowerup = POWERUP_ORDER[index] ?? null;
+  }
+
   clear(): void {
     this.held.clear();
     this.tapped.clear();
     this.queuedPowerup = null;
+    Object.assign(this.touch, { throttle: 0, steer: 0, melee: false, defense: false, boost: false, rear: false });
   }
 }
