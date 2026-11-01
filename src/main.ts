@@ -19,6 +19,7 @@ import { renderGoogleButton } from './ui/google';
 import { Hud } from './ui/hud';
 import { DuelIntro } from './ui/duelIntro';
 import { Painter } from './ui/painter';
+import { enterFullscreen, exitFullscreen, isFullscreen, isInstalled, lockLandscape, onFullscreenChange, unlockOrientation } from './ui/fullscreen';
 import { isTouchDevice, touchControls } from './ui/touch';
 import { garageScreen, introScreen, lobbyScreen, menuScreen, nameScreen, pauseScreen, playersPanel, queueLabel, resultsScreen, settingsScreen, type BuyCategory, type GarageTab, type SideTab } from './ui/screens';
 
@@ -35,7 +36,6 @@ const WORKSHOP_METAL = 0x121314;
 /** Seconds for the register to ring before the drill starts on a part that was just bought. */
 const DRILL_AFTER_SALE = 0.55;
 const DESK_DOCK_HEIGHT = 136;
-const TOUCH_DOCK_HEIGHT = 44;
 const SKIN_SAVE_DELAY_MS = 700;
 const ONLINE_POLL_MS = 15_000;
 const TRAINING_SECONDS = 30 * 60;
@@ -117,6 +117,8 @@ class Game {
   private readonly settingsLayer = document.createElement('div');
   private duelIntro: DuelIntro | null = null;
   private readonly touch = isTouchDevice();
+  /** A match is on screen, even if paused. */
+  private fighting = false;
   private readonly settingsButton = document.createElement('button');
   private readonly musicButton = document.createElement('button');
   private partPreview: PartPreview | null = null;
@@ -155,6 +157,7 @@ class Game {
     this.fpsEl.hidden = !this.settings.showFps;
     document.body.appendChild(this.fpsEl);
 
+    if (this.touch) this.setUpTouchDevice();
     this.keyboard.onFirstInput = () => this.sfx.unlock();
     this.keyboard.onPause = () => (this.settingsOpen ? this.closeSettings() : this.togglePause());
     this.settingsLayer.className = 'settings-layer';
@@ -195,6 +198,32 @@ class Game {
     this.sfx.setMuted(this.settings.muted);
     this.setScreen(introScreen(() => this.afterIntro()));
     requestAnimationFrame((t) => this.frame(t));
+  }
+
+  private setUpTouchDevice(): void {
+    document.documentElement.classList.add('touch');
+    // A browser only allows full screen in response to a tap, so every tap is a chance to get back to it.
+    const tapped = () => {
+      if (this.settings.fullscreen) enterFullscreen();
+    };
+    window.addEventListener('pointerup', tapped);
+    window.addEventListener('click', tapped);
+    onFullscreenChange(() => this.syncOrientation());
+  }
+
+  /** Matches are played sideways. The menus work either way, so they stay however the phone is held. */
+  private syncOrientation(): void {
+    if (!this.touch) return;
+    if (this.fighting && (isFullscreen() || isInstalled())) lockLandscape();
+    else unlockOrientation();
+  }
+
+  private syncFighting(): void {
+    const fighting = this.mode === 'match' || this.mode === 'paused';
+    if (fighting === this.fighting) return;
+    this.fighting = fighting;
+    document.documentElement.classList.toggle('fighting', fighting);
+    this.syncOrientation();
   }
 
   /** With hardware acceleration off nothing else will help much, so the player needs to know. */
@@ -285,6 +314,13 @@ class Game {
             save();
             render();
           },
+          onFullscreen: () => {
+            this.settings.fullscreen = !this.settings.fullscreen;
+            if (this.settings.fullscreen) enterFullscreen();
+            else exitFullscreen();
+            save();
+            render();
+          },
           onVolume: (kind, value) => {
             this.settings.volume[kind] = value;
             // Moving the music slider means wanting to hear it.
@@ -364,7 +400,7 @@ class Game {
 
   private beginTutorial(): void {
     // Training always shows the controls. Elsewhere they're for a player's first match.
-    this.tutorial = this.settings.tutorialDone && !this.training ? null : new Tutorial(this.settings.bindings);
+    this.tutorial = this.settings.tutorialDone && !this.training ? null : new Tutorial(this.settings.bindings, this.touch);
   }
 
   private endTutorial(): void {
@@ -844,9 +880,12 @@ class Game {
     const hud = this.buildHud(match, player);
     if (this.touch) {
       hud.root.classList.add('hud-touch');
-      hud.root.appendChild(touchControls(this.keyboard.touch, () => this.togglePause(), (index) => this.keyboard.queuePowerup(index)));
+      const controls = touchControls(this.keyboard.touch, () => this.togglePause(), (index) => this.keyboard.queuePowerup(index));
+      hud.root.appendChild(controls);
+      hud.linkTouchControls(controls);
     }
-    this.view.setDockHeight(this.touch ? TOUCH_DOCK_HEIGHT : DESK_DOCK_HEIGHT);
+    // On a phone the armour bars float over the view, so nothing takes room from the bottom.
+    this.view.setDockHeight(this.touch ? 0 : DESK_DOCK_HEIGHT);
     return hud;
   }
 
@@ -919,13 +958,13 @@ class Game {
       // Online the menu is only an overlay, because the match carries on for everyone else.
       const open = this.ui.querySelector('.screen-pause');
       if (open) open.remove();
-      else this.ui.appendChild(pauseScreen(true, () => this.togglePause(), () => this.showGarage(), this.settings.bindings));
+      else this.ui.appendChild(pauseScreen(true, () => this.togglePause(), () => this.showGarage(), this.settings.bindings, () => this.openSettings()));
       return;
     }
     if (this.mode === 'match') {
       this.mode = 'paused';
       this.sfx.silence();
-      const overlay = pauseScreen(false, () => this.togglePause(), () => this.showGarage(), this.settings.bindings, this.training ? 'Leave training' : undefined);
+      const overlay = pauseScreen(false, () => this.togglePause(), () => this.showGarage(), this.settings.bindings, () => this.openSettings(), this.training ? 'Leave training' : undefined);
       this.ui.appendChild(overlay);
     } else if (this.mode === 'paused') {
       this.mode = 'match';
@@ -1033,6 +1072,7 @@ class Game {
     this.updateFps(dt);
     this.updateAutoQuality(dt);
     this.keyboard.mouseEnabled = this.mode === 'match' && !this.duelIntro && !this.settingsOpen;
+    this.syncFighting();
     if (this.duelIntro) {
       this.duelIntro.update(dt);
       if (this.duelIntro.done || this.mode !== 'match') this.endDuelIntro();

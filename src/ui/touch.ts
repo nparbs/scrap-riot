@@ -1,13 +1,18 @@
 import type { TouchState } from '../input';
 
-/** How far the stick travels, in pixels, for full throttle or full steering. */
-const STICK_REACH = 52;
+/** How far the stick travels for full throttle or full steering, as a share of its width. */
+const STICK_REACH = 0.35;
 /** Small movements near the middle don't count, so resting a thumb doesn't drift. */
 const STICK_DEADZONE = 0.14;
 
-/** Phones and tablets. A laptop with a touchscreen keeps its mouse as the main pointer, and isn't included. */
+/**
+ * Phones and tablets. A laptop with a touchscreen keeps its mouse as the main pointer, and isn't included.
+ * Phones with a stylus can report a fine pointer, so the browser's own description counts as well.
+ */
 export function isTouchDevice(): boolean {
-  return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+  if (typeof window === 'undefined') return false;
+  const coarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+  return coarse || /Mobi|Android|iPhone|iPod/i.test(navigator.userAgent);
 }
 
 function hold(el: HTMLElement, set: (down: boolean) => void): void {
@@ -33,10 +38,10 @@ export function touchControls(state: TouchState, onPause: () => void, onPowerup:
   el.innerHTML = `
     <div class="touch-stick" aria-label="Drive"><div class="touch-knob"></div></div>
     <div class="touch-buttons">
-      <button class="touch-btn touch-melee" tabindex="-1" aria-label="Main weapon">Weapon</button>
-      <button class="touch-btn touch-defense" tabindex="-1" aria-label="Defense">Defense</button>
-      <button class="touch-btn touch-boost" tabindex="-1" aria-label="Speed boost">Boost</button>
-      <button class="touch-btn touch-rear" tabindex="-1" aria-label="Look behind">Rear</button>
+      <button class="touch-btn touch-melee" tabindex="-1" aria-label="Main weapon"><i class="touch-cd"></i><span>Weapon</span></button>
+      <button class="touch-btn touch-defense" tabindex="-1" aria-label="Defense"><i class="touch-cd"></i><span>Defense</span></button>
+      <button class="touch-btn touch-boost" tabindex="-1" aria-label="Speed boost"><i class="touch-cd"></i><span>Boost</span></button>
+      <button class="touch-btn touch-rear" tabindex="-1" aria-label="Look behind"><span>Rear</span></button>
     </div>
     <button class="touch-pause" tabindex="-1" aria-label="Menu">II</button>
     <div class="touch-rotate">Turn your phone sideways for more room</div>`;
@@ -52,16 +57,17 @@ export function touchControls(state: TouchState, onPause: () => void, onPowerup:
   const knob = q('.touch-knob');
   const move = (e: PointerEvent) => {
     const box = stick.getBoundingClientRect();
+    const reach = box.width * STICK_REACH;
     let x = e.clientX - (box.left + box.width / 2);
     let y = e.clientY - (box.top + box.height / 2);
     const length = Math.hypot(x, y);
-    if (length > STICK_REACH) {
-      x = (x / length) * STICK_REACH;
-      y = (y / length) * STICK_REACH;
+    if (length > reach) {
+      x = (x / length) * reach;
+      y = (y / length) * reach;
     }
     knob.style.transform = `translate(${x}px, ${y}px)`;
     const axis = (value: number) => {
-      const amount = value / STICK_REACH;
+      const amount = value / reach;
       return Math.abs(amount) < STICK_DEADZONE ? 0 : amount;
     };
     state.throttle = -axis(y);

@@ -100,10 +100,12 @@ export interface Settings {
   musicMuted: boolean;
   /** The name this player chose when first asked. Empty until then. */
   pilotName: string;
+  /** Phones and tablets go full screen on a tap unless this is turned off. */
+  fullscreen: boolean;
 }
 
 export function defaultSettings(): Settings {
-  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, tutorialDone: false, volume: { ...DEFAULT_VOLUME }, muted: false, musicMuted: false, pilotName: '' };
+  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, tutorialDone: false, volume: { ...DEFAULT_VOLUME }, muted: false, musicMuted: false, pilotName: '', fullscreen: true };
 }
 
 /** A slider dragged all the way down counts as off too, so the music button always tells the truth. */
@@ -151,6 +153,7 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null): Settings
     settings.musicMuted = saved.musicMuted === true;
     if (typeof saved.pilotName === 'string') settings.pilotName = saved.pilotName;
     settings.tutorialDone = saved.tutorialDone === true;
+    settings.fullscreen = saved.fullscreen !== false;
   } catch {
     // Blocked storage or corrupt settings both fall back to the defaults.
   }
