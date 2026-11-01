@@ -35,7 +35,7 @@ describe('garage', () => {
 
   it('banks results and spends used powerups', () => {
     const save = newSave();
-    applyResult(save, 500, 1, { rage: 0, megashield: 0, cloaking: 0, xray: 0, repair: 0, turbo: 1 });
+    applyResult(save, 500, 1, { rage: 0, megashield: 0, cloaking: 0, xray: 0, repair: 0, battery: 1 });
     expect(save.money).toBe(750);
     expect(save.wins).toBe(1);
     expect(save.loadout.powerups.repair).toBe(0);

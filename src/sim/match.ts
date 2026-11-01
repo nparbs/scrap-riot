@@ -23,8 +23,12 @@ import {
 } from './arena';
 import { BotBrain } from './ai';
 import {
-  AMMO_REGEN,
+  BATTERY_REGEN,
+  BOOST_ACCEL,
+  BOOST_DRAIN,
+  BOOST_SPEED,
   BURN_DPS,
+  BURST_GAP,
   BURN_TIME,
   buildStats,
   CHASSIS,
@@ -42,8 +46,9 @@ import {
   RAGE_TIME,
   REPAIR_FRACTION,
   REWARD,
-  TURBO_MULT,
-  TURBO_TIME,
+  SPINNER_KEPT_SPEED,
+  SPINNER_MIN_SPEED,
+  SPINNER_RECOIL,
   TURRETS,
   UPGRADES,
   XRAY_TIME,
@@ -89,6 +94,8 @@ export interface BotInput {
   melee: boolean;
   turret: boolean;
   defense: boolean;
+  /** Held for a burst of speed, paid for from the battery. */
+  boost: boolean;
   /** One-shot; the sim clears it after reading. */
   powerup: PowerupId | null;
 }
@@ -111,17 +118,10 @@ export interface Bot {
   prevHeading: number;
   vx: number;
   vz: number;
-  turretAngle: number;
-  /** Bot id the turret is currently tracking, or -1. */
-  turretTarget: number;
-  /** Radians between the barrel and its aim point. */
-  turretError: number;
   hp: number;
   maxHp: number;
   speedMult: number;
   damageMult: number;
-  /** From the tower. */
-  trackMult: number;
   /** From the power source. */
   batteryRegen: number;
   radius: number;
@@ -136,10 +136,22 @@ export interface Bot {
   /** Seconds since the last strike, used to animate the swing. */
   meleeSwing: number;
   meleeActive: boolean;
+  /** How fast a spinner is turning, from 0 to 1. */
+  meleeCharge: number;
   lungeT: number;
   clawTarget: number;
   clawT: number;
+  /** The battery, from 0 to 1. It runs the gun and the boost. */
   ammo: number;
+  /** Gun shots left in this life. */
+  shots: number;
+  /** Rounds still to come from the burst being fired. */
+  burstLeft: number;
+  burstT: number;
+  /** How long a held weapon has been running without a break. */
+  heldT: number;
+  /** Seconds left in the air after being thrown. Nothing can steer in the air. */
+  airT: number;
   turretFiring: boolean;
   turretCd: number;
   defenseCd: number;
@@ -147,7 +159,8 @@ export interface Bot {
   defenseHeld: boolean;
   shieldT: number;
   megaT: number;
-  turboT: number;
+  /** Above zero while the boost is running. */
+  boostT: number;
   rageT: number;
   stunT: number;
   invulnT: number;
@@ -175,7 +188,7 @@ export interface Bot {
   earned: number;
 }
 
-export type ProjectileKind = 'bullet' | 'rocket' | 'homing' | 'mortar' | 'grenade' | 'disc' | 'spear';
+export type ProjectileKind = 'bullet' | 'rocket' | 'mortar' | 'grenade' | 'disc' | 'spear';
 
 export interface Projectile {
   id: number;
@@ -191,8 +204,6 @@ export interface Projectile {
   damage: number;
   splash: number;
   knockback: number;
-  target: number;
-  homing: number;
   bounces: number;
   /** Set once a disc has ricocheted, when it can hit whoever fired it. */
   ricocheted: boolean;
@@ -287,7 +298,7 @@ export interface Standing {
 }
 
 export function emptyInput(): BotInput {
-  return { throttle: 0, steer: 0, melee: false, turret: false, defense: false, powerup: null };
+  return { throttle: 0, steer: 0, melee: false, turret: false, defense: false, boost: false, powerup: null };
 }
 
 export function wrapAngle(a: number): number {
@@ -367,19 +378,17 @@ export class Match {
       size,
       input: emptyInput(),
       x: 0, z: 0, prevX: 0, prevZ: 0, heading: 0, prevHeading: 0, vx: 0, vz: 0,
-      turretAngle: 0, turretTarget: -1, turretError: 0,
       hp: maxHp,
       maxHp,
       speedMult: 1 + UPGRADES.engine.perLevel * up.engine,
       damageMult: 1 + UPGRADES.weapons.perLevel * up.weapons,
-      trackMult: stats.track,
       batteryRegen: stats.regen,
       radius: chassis.radius * size,
       mass: chassis.mass * size,
       alive: true, out: false, eliminatedAt: 0, respawnT: 0,
-      meleeCd: 0, meleeWindup: 0, meleeSwing: 99, meleeActive: false, lungeT: 0, clawTarget: -1, clawT: 0,
-      ammo: 1, turretFiring: false, turretCd: 0, defenseCd: 0, defenseHeld: false,
-      shieldT: 0, megaT: 0, turboT: 0, rageT: 0, stunT: 0,
+      meleeCd: 0, meleeWindup: 0, meleeSwing: 99, meleeActive: false, meleeCharge: 0, lungeT: 0, clawTarget: -1, clawT: 0,
+      ammo: 1, shots: TURRETS[setup.loadout.turret].shots, burstLeft: 0, burstT: 0, heldT: 0, airT: 0, turretFiring: false, turretCd: 0, defenseCd: 0, defenseHeld: false,
+      shieldT: 0, megaT: 0, boostT: 0, rageT: 0, stunT: 0,
       invulnT: MATCH.spawnInvuln,
       ramCd: 0, pistonCd: 0, flashT: 0, burnT: 0, burnSource: -1, slowT: 0, blindT: 0,
       cloakT: 0, xrayT: 0, regenT: 0, bladesT: 0, kamikazeT: 0,
@@ -393,7 +402,6 @@ export class Match {
     bot.x = bot.prevX = x;
     bot.z = bot.prevZ = z;
     bot.heading = bot.prevHeading = bearing(x, z, 0, 0);
-    bot.turretAngle = bot.heading;
     bot.vx = bot.vz = 0;
   }
 
@@ -512,7 +520,8 @@ export class Match {
     bot.defenseCd = down(bot.defenseCd);
     bot.shieldT = down(bot.shieldT);
     bot.megaT = down(bot.megaT);
-    bot.turboT = down(bot.turboT);
+    bot.boostT = down(bot.boostT);
+    bot.airT = down(bot.airT);
     bot.rageT = down(bot.rageT);
     bot.stunT = down(bot.stunT);
     bot.invulnT = down(bot.invulnT);
@@ -526,7 +535,15 @@ export class Match {
     bot.xrayT = down(bot.xrayT);
     bot.bladesT = down(bot.bladesT);
     bot.meleeSwing += dt;
-    bot.ammo = Math.min(1, bot.ammo + AMMO_REGEN * bot.batteryRegen * dt);
+    // No recharging while the key is held, or an empty battery would flicker the boost on and off.
+    if (bot.input.boost) {
+      if (bot.ammo > 0 && bot.stunT <= 0 && bot.airT <= 0) {
+        bot.ammo = Math.max(0, bot.ammo - BOOST_DRAIN * dt);
+        bot.boostT = 0.12;
+      }
+    } else {
+      bot.ammo = Math.min(1, bot.ammo + BATTERY_REGEN * bot.batteryRegen * dt);
+    }
 
     if (bot.burnT > 0) {
       bot.burnT = down(bot.burnT);
@@ -543,13 +560,14 @@ export class Match {
     bot.input.powerup = null;
     if (!kind || bot.powerups[kind] <= 0 || bot.stunT > 0) return;
     if (kind === 'repair' && bot.hp >= bot.maxHp) return;
+    if (kind === 'battery' && bot.ammo >= 1) return;
     bot.powerups[kind]--;
     switch (kind) {
       case 'repair':
         bot.hp = Math.min(bot.maxHp, bot.hp + bot.maxHp * REPAIR_FRACTION);
         break;
-      case 'turbo':
-        bot.turboT = TURBO_TIME;
+      case 'battery':
+        bot.ammo = 1;
         break;
       case 'rage':
         bot.rageT = RAGE_TIME;
@@ -572,6 +590,12 @@ export class Match {
   }
 
   private drive(bot: Bot, dt: number): void {
+    // Thrown robots just follow their arc until they land.
+    if (bot.airT > 0) {
+      bot.x += bot.vx * dt;
+      bot.z += bot.vz * dt;
+      return;
+    }
     const input = bot.input;
     const stunned = bot.stunT > 0;
     const throttle = stunned ? 0 : Math.max(-1, Math.min(1, input.throttle));
@@ -581,7 +605,8 @@ export class Match {
     bot.glued = this.patchUnder(bot, 'glue');
     const c = bot.chassis;
     let top = c.speed * bot.speedMult;
-    if (bot.turboT > 0) top *= TURBO_MULT;
+    const boosting = !stunned && input.boost && bot.ammo > 0;
+    if (boosting) top *= BOOST_SPEED;
     if (bot.oiled) top *= 0.6;
     if (bot.glued) top *= 0.35;
     if (bot.slowT > 0) top *= 0.55;
@@ -597,7 +622,7 @@ export class Match {
     let lateral = bot.vx * lx + bot.vz * lz;
 
     const target = throttle * top * reverse;
-    const accel = c.accel * bot.speedMult * grip;
+    const accel = c.accel * bot.speedMult * grip * (boosting ? BOOST_ACCEL : 1);
     if (bot.lungeT <= 0) {
       const delta = target - forward;
       forward += Math.sign(delta) * Math.min(Math.abs(delta), accel * dt);
@@ -611,9 +636,10 @@ export class Match {
   }
 
   /** Client-side prediction: moves one robot as the server would, ignoring other robots. */
-  predict(bot: Bot, throttle: number, steer: number, dt: number): void {
+  predict(bot: Bot, throttle: number, steer: number, boost: boolean, dt: number): void {
     bot.input.throttle = throttle;
     bot.input.steer = steer;
+    bot.input.boost = boost;
     this.drive(bot, dt);
     this.collideBotWithWorld(bot);
   }
@@ -645,7 +671,19 @@ export class Match {
 
     switch (def.kind) {
       case 'held':
-        if (!pressed) return;
+        if (!pressed) {
+          bot.heldT = 0;
+          return;
+        }
+        if (bot.meleeCd > 0) return;
+        if (def.runTime) {
+          bot.heldT += dt;
+          if (bot.heldT >= def.runTime) {
+            bot.heldT = 0;
+            bot.meleeCd = def.cooldown;
+            return;
+          }
+        }
         bot.meleeActive = true;
         for (const other of this.enemies(bot)) {
           if (!this.inCone(bot, other, facing, def.range, def.arc)) continue;
@@ -664,7 +702,10 @@ export class Match {
         }
         return;
       case 'claw':
-        this.updateClaw(bot, def.damage, pressed, dt);
+        this.updateClaw(bot, pressed, dt);
+        return;
+      case 'spinner':
+        this.updateSpinner(bot, pressed, dt);
         return;
       case 'magnet':
         if (!pressed) return;
@@ -682,6 +723,13 @@ export class Match {
         break;
     }
 
+    if (def.saw && pressed) {
+      bot.meleeActive = true;
+      for (const other of this.enemies(bot)) {
+        if (this.inCone(bot, other, facing, def.range, def.arc)) this.damage(other, def.saw * this.damageOutput(bot) * dt, bot.id);
+      }
+    }
+
     if (bot.meleeWindup > 0) {
       bot.meleeWindup -= dt;
       if (bot.meleeWindup <= 0) {
@@ -695,17 +743,51 @@ export class Match {
           other.stunT = Math.max(other.stunT, def.stun);
           other.vx += (fx * def.knockback) / other.mass;
           other.vz += (fz * def.knockback) / other.mass;
+          if (def.launch && other.invulnT <= 0) other.airT = Math.max(other.airT, def.launch);
         }
       }
-    } else if (pressed && bot.meleeCd <= 0) {
+    } else if (pressed && bot.meleeCd <= 0 && bot.ammo >= (def.battery ?? 0)) {
+      bot.ammo -= def.battery ?? 0;
       bot.meleeCd = def.cooldown;
       bot.meleeWindup = def.windup;
     }
   }
 
-  private updateClaw(bot: Bot, dps: number, pressed: boolean, dt: number): void {
+  /** Holding the key stores energy, and a hit spends most of it, throwing both robots apart. */
+  private updateSpinner(bot: Bot, pressed: boolean, dt: number): void {
+    const def = MELEE[bot.loadout.melee];
+    // It can't be spun back up until the cooldown from its last hit is over.
+    const spinning = pressed && bot.meleeCd <= 0;
+    const change = spinning ? dt / def.windup : -dt / (def.windup * 2);
+    bot.meleeCharge = Math.max(0, Math.min(1, bot.meleeCharge + change));
+    bot.meleeActive = spinning;
+    if (bot.meleeCharge < SPINNER_MIN_SPEED || bot.meleeCd > 0) return;
     const facing = this.meleeAngle(bot);
-    const def = MELEE.claw;
+    const target = this.enemies(bot).find((other) => other.invulnT <= 0 && this.inCone(bot, other, facing, def.range, def.arc));
+    if (!target) return;
+    const speed = bot.meleeCharge;
+    const dist = Math.hypot(target.x - bot.x, target.z - bot.z) || 1;
+    const nx = (target.x - bot.x) / dist;
+    const nz = (target.z - bot.z) / dist;
+    this.damage(target, def.damage * speed * this.damageOutput(bot), bot.id);
+    const throwForce = def.knockback * speed;
+    target.vx += (nx * throwForce) / target.mass;
+    target.vz += (nz * throwForce) / target.mass;
+    target.stunT = Math.max(target.stunT, def.stun * speed);
+    if (def.slow) target.slowT = Math.max(target.slowT, def.slow);
+    // A weak hit doesn't get anything off the ground.
+    if (def.launch && speed > 0.5) target.airT = Math.max(target.airT, def.launch * speed);
+    bot.vx -= (nx * throwForce * SPINNER_RECOIL) / bot.mass;
+    bot.vz -= (nz * throwForce * SPINNER_RECOIL) / bot.mass;
+    bot.meleeCharge = speed * SPINNER_KEPT_SPEED;
+    bot.meleeCd = def.cooldown;
+    bot.meleeSwing = 0;
+    this.events.push({ type: 'strike', x: target.x, z: target.z, owner: bot.id });
+  }
+
+  private updateClaw(bot: Bot, pressed: boolean, dt: number): void {
+    const facing = this.meleeAngle(bot);
+    const def = MELEE[bot.loadout.melee];
     const holding = bot.clawTarget >= 0 ? this.bots[bot.clawTarget] : null;
     if (holding) {
       bot.clawT -= dt;
@@ -721,7 +803,7 @@ export class Match {
       holding.vx = bot.vx;
       holding.vz = bot.vz;
       holding.stunT = Math.max(holding.stunT, 0.1);
-      this.damage(holding, dps * this.damageOutput(bot) * dt, bot.id);
+      this.damage(holding, def.damage * this.damageOutput(bot) * dt, bot.id);
       return;
     }
     if (!pressed || bot.meleeCd > 0) return;
@@ -736,86 +818,72 @@ export class Match {
     }
   }
 
-  private nearestEnemy(bot: Bot, range: number): Bot | null {
-    let best: Bot | null = null;
-    let bestDist = range;
-    for (const other of this.bots) {
-      if (other === bot || !other.alive || !this.canSee(bot, other)) continue;
-      const d = Math.hypot(other.x - bot.x, other.z - bot.z);
-      if (d < bestDist) {
-        best = other;
-        bestDist = d;
-      }
-    }
-    return best;
-  }
-
+  /** Guns are fixed to the hull. They fire where the robot points and nowhere else. */
   private updateTurret(bot: Bot, dt: number): void {
     const def = TURRETS[bot.loadout.turret];
-    // A blinded robot's turret just drifts with the hull.
-    const target = bot.blindT > 0 ? null : this.nearestEnemy(bot, def.range);
-    bot.turretTarget = target ? target.id : -1;
-    let desired = bot.heading;
-    let flight = 0;
-    if (target) {
-      // Lead moving targets so slow projectiles can still connect.
-      const dist = Math.hypot(target.x - bot.x, target.z - bot.z);
-      if (def.kind === 'lob') flight = Math.max(0.6, Math.min(1.6, dist / 18));
-      else if (def.projectileSpeed > 0) flight = dist / def.projectileSpeed;
-      desired = bearing(bot.x, bot.z, target.x + target.vx * flight, target.z + target.vz * flight);
-    }
-    const diff = wrapAngle(desired - bot.turretAngle);
-    const turn = def.trackRate * bot.trackMult * dt;
-    bot.turretAngle = wrapAngle(bot.turretAngle + Math.max(-turn, Math.min(turn, diff)));
-    bot.turretError = Math.abs(wrapAngle(desired - bot.turretAngle));
-
     bot.turretFiring = false;
-    if (!bot.input.turret || bot.stunT > 0) return;
+    if (bot.stunT > 0 || bot.airT > 0) return;
 
-    const dirX = Math.sin(bot.turretAngle);
-    const dirZ = Math.cos(bot.turretAngle);
-    const muzzleX = bot.x + dirX * (bot.radius + 0.6);
-    const muzzleZ = bot.z + dirZ * (bot.radius + 0.6);
-    const dmg = def.damage * this.damageOutput(bot);
+    // A burst carries on by itself once started, however briefly the key was pressed.
+    if (bot.burstLeft > 0) {
+      bot.burstT -= dt;
+      if (bot.burstT <= 0) {
+        bot.burstLeft--;
+        bot.burstT = BURST_GAP;
+        this.fireRound(bot, def);
+      }
+      return;
+    }
+    if (!bot.input.turret) return;
 
     if (def.kind === 'flame') {
-      if (bot.ammo < def.ammo * dt) return;
-      bot.ammo -= def.ammo * dt;
+      if (bot.ammo < def.battery * dt) return;
+      bot.ammo -= def.battery * dt;
       bot.turretFiring = true;
       bot.cloakT = 0;
       for (const other of this.enemies(bot)) {
-        if (!this.inCone(bot, other, bot.turretAngle, def.range, def.cone ?? 0.4)) continue;
-        this.damage(other, dmg * dt, bot.id);
+        if (!this.inCone(bot, other, bot.heading, def.range, def.cone ?? 0.4)) continue;
+        this.damage(other, def.damage * this.damageOutput(bot) * dt, bot.id);
         other.burnT = BURN_TIME;
         other.burnSource = bot.id;
       }
       return;
     }
 
-    if (bot.turretCd > 0 || bot.ammo < def.ammo) return;
+    if (bot.turretCd > 0 || bot.ammo < def.battery || bot.shots <= 0) return;
+    bot.turretCd = def.cooldown;
+    bot.ammo -= def.battery;
+    bot.shots--;
+    if (def.burst) {
+      bot.burstLeft = def.burst - 1;
+      bot.burstT = BURST_GAP;
+    }
+    this.fireRound(bot, def);
+  }
+
+  private fireRound(bot: Bot, def: (typeof TURRETS)[TurretId]): void {
+    const dirX = Math.sin(bot.heading);
+    const dirZ = Math.cos(bot.heading);
+    const muzzleX = bot.x + dirX * (bot.radius + 0.6);
+    const muzzleZ = bot.z + dirZ * (bot.radius + 0.6);
+    const dmg = def.damage * this.damageOutput(bot);
+    bot.cloakT = 0;
 
     if (def.kind === 'arc') {
-      // The coil only discharges with a target in its sights, so it never wastes the cooldown.
-      if (!target || Math.abs(diff) > 0.25) return;
-      bot.turretCd = def.cooldown;
-      bot.ammo -= def.ammo;
-      bot.cloakT = 0;
-      const second = this.bots.find(
-        (o) => o !== bot && o !== target && o.alive && this.canSee(bot, o) && Math.hypot(o.x - target.x, o.z - target.z) < 7,
-      );
-      this.damage(target, dmg, bot.id);
-      const points = [{ x: muzzleX, z: muzzleZ }, { x: target.x, z: target.z }];
-      if (second) {
-        this.damage(second, dmg * 0.5, bot.id);
-        points.push({ x: second.x, z: second.z });
+      const target = this.enemies(bot).find((o) => this.canSee(bot, o) && this.inCone(bot, o, bot.heading, def.range, def.cone ?? 0.25));
+      const end = target ?? { x: muzzleX + dirX * def.range, z: muzzleZ + dirZ * def.range };
+      const points = [{ x: muzzleX, z: muzzleZ }, { x: end.x, z: end.z }];
+      if (target) {
+        this.damage(target, dmg, bot.id);
+        const second = this.bots.find((o) => o !== bot && o !== target && o.alive && this.canSee(bot, o) && Math.hypot(o.x - target.x, o.z - target.z) < 7);
+        if (second) {
+          this.damage(second, dmg * 0.5, bot.id);
+          points.push({ x: second.x, z: second.z });
+        }
       }
       this.events.push({ type: 'arc', points, owner: bot.id });
       return;
     }
-
-    bot.turretCd = def.cooldown;
-    bot.ammo -= def.ammo;
-    bot.cloakT = 0;
 
     if (def.kind === 'beam') {
       const end = this.castBeam(bot, muzzleX, muzzleZ, dirX, dirZ, def.range, dmg);
@@ -824,19 +892,18 @@ export class Match {
     }
 
     if (def.kind === 'lob') {
-      const reach = target ? Math.hypot(target.x + target.vx * flight - bot.x, target.z + target.vz * flight - bot.z) : def.range * 0.6;
-      const time = target ? flight : 1.2;
-      this.spawnProjectile(bot, def, 'mortar', muzzleX, muzzleZ, (dirX * reach) / time, (dirZ * reach) / time, time, dmg, target);
+      const time = 1.2;
+      const reach = def.range * 0.6;
+      this.spawnProjectile(bot, def, 'mortar', muzzleX, muzzleZ, (dirX * reach) / time, (dirZ * reach) / time, time, dmg);
     } else {
       const kind: ProjectileKind =
-        def.kind === 'homing' ? 'homing'
-        : def.kind === 'grenade' ? 'grenade'
+        def.kind === 'grenade' ? 'grenade'
         : def.kind === 'disc' ? 'disc'
-        : bot.loadout.turret === 'rockets' ? 'rocket'
+        : ['rockets', 'heavyrocket', 'bunkerbuster'].includes(bot.loadout.turret) ? 'rocket'
         : bot.loadout.turret === 'spear' ? 'spear'
         : 'bullet';
       const life = def.kind === 'grenade' ? 1.3 : def.range / def.projectileSpeed;
-      this.spawnProjectile(bot, def, kind, muzzleX, muzzleZ, dirX * def.projectileSpeed, dirZ * def.projectileSpeed, life, dmg, target);
+      this.spawnProjectile(bot, def, kind, muzzleX, muzzleZ, dirX * def.projectileSpeed, dirZ * def.projectileSpeed, life, dmg);
     }
     this.events.push({ type: 'shot', x: muzzleX, z: muzzleZ, owner: bot.id, kind: bot.loadout.turret });
   }
@@ -851,7 +918,6 @@ export class Match {
     vz: number,
     life: number,
     damage: number,
-    target: Bot | null,
   ): void {
     this.projectiles.push({
       id: this.nextId++,
@@ -866,8 +932,6 @@ export class Match {
       damage,
       splash: def.splash,
       knockback: def.knockback ?? 0,
-      target: target ? target.id : -1,
-      homing: def.homing ?? 0,
       bounces: def.bounces ?? 0,
       ricocheted: false,
     });
@@ -1079,6 +1143,7 @@ export class Match {
     bot.meleeActive = false;
     bot.meleeWindup = 0;
     bot.clawTarget = -1;
+    bot.burstLeft = 0;
     bot.kamikazeT = 0;
     bot.burnT = 0;
     if (this.oneLife) {
@@ -1117,19 +1182,22 @@ export class Match {
     bot.hp = bot.maxHp;
     bot.invulnT = MATCH.spawnInvuln;
     bot.lastAttacker = -1;
-    bot.stunT = bot.turboT = bot.rageT = bot.shieldT = bot.megaT = 0;
+    bot.stunT = bot.boostT = bot.rageT = bot.shieldT = bot.megaT = bot.airT = bot.meleeCharge = 0;
     bot.slowT = bot.blindT = bot.cloakT = bot.bladesT = bot.regenT = 0;
     bot.ammo = 1;
+    bot.shots = TURRETS[bot.loadout.turret].shots;
+    bot.burstLeft = 0;
+    bot.heldT = 0;
     this.events.push({ type: 'spawn', bot: bot.id });
   }
 
   private collideBots(): void {
     for (let i = 0; i < this.bots.length; i++) {
       const a = this.bots[i];
-      if (!a.alive) continue;
+      if (!a.alive || a.airT > 0) continue;
       for (let j = i + 1; j < this.bots.length; j++) {
         const b = this.bots[j];
-        if (!b.alive) continue;
+        if (!b.alive || b.airT > 0) continue;
         // A robot in a claw is carried, so the claw shouldn't also shove it away.
         if (a.clawTarget === b.id || b.clawTarget === a.id) continue;
         let dx = b.x - a.x;
@@ -1264,7 +1332,8 @@ export class Match {
       // The center of the robot has to cross the edge, so wheels can hang over a little.
       const overEdge = !arena.walled && (Math.abs(bot.x) > arena.half || Math.abs(bot.z) > arena.half);
       const inPit = arena.pits.some((p) => Math.hypot(bot.x - p.x, bot.z - p.z) < p.r);
-      if ((overEdge || inPit) && bot.clawTarget < 0) {
+      // A thrown robot only falls once it comes down, so it can sail over a hole.
+      if ((overEdge || inPit) && bot.clawTarget < 0 && bot.airT <= 0) {
         this.destroy(bot, true);
         continue;
       }
@@ -1315,19 +1384,6 @@ export class Match {
     const bound = arena.walled ? arena.half : arena.half + 12;
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
-
-      if (p.homing > 0 && p.target >= 0) {
-        const target = this.bots[p.target];
-        if (target.alive && target.cloakT <= 0) {
-          const speed = Math.hypot(p.vx, p.vz);
-          const angle = Math.atan2(p.vx, p.vz);
-          const diff = wrapAngle(bearing(p.x, p.z, target.x, target.z) - angle);
-          const turn = p.homing * dt;
-          const next = angle + Math.max(-turn, Math.min(turn, diff));
-          p.vx = Math.sin(next) * speed;
-          p.vz = Math.cos(next) * speed;
-        }
-      }
 
       p.x += p.vx * dt;
       p.z += p.vz * dt;

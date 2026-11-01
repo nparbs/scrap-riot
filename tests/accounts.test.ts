@@ -194,7 +194,7 @@ describe('garage on the server', () => {
     const results = await Promise.all([
       accounts.garage(token, { type: 'equip', slot: 'turret', id: 'laser' }),
       accounts.garage(token, { type: 'equip', slot: 'turret', id: 'arc' }),
-      accounts.garage(token, { type: 'equip', slot: 'turret', id: 'seeker' }),
+      accounts.garage(token, { type: 'equip', slot: 'turret', id: 'bunkerbuster' }),
     ]);
     const save = (await accounts.profile(token))!.save;
     expect(save.money).toBeGreaterThanOrEqual(0);
@@ -203,7 +203,7 @@ describe('garage on the server', () => {
 
   it('cleans paint and names', async () => {
     const { token } = await accounts.createGuest();
-    const result = await accounts.garage(token, { type: 'paint', paint: { primary: 0x35d0e6, pattern: '<img>', eye: 1 } as never });
+    const result = await accounts.garage(token, { type: 'paint', paint: { primary: 0x35d0e6, pattern: '<img>' } as never });
     const paint = (result as { profile: Profile }).profile.save.loadout.paint!;
     expect(paint.primary).toBe(0x35d0e6);
     expect(paint.pattern).toBe('solid');
@@ -269,7 +269,7 @@ describe('over the network', () => {
 
     const buy = await api(s, '/api/garage', { method: 'POST', body: JSON.stringify({ action: { type: 'equip', slot: 'melee', id: 'dagger' } }) }, guest.token);
     expect((await buy.json()).profile.save.loadout.melee).toBe('dagger');
-    const broke = await api(s, '/api/garage', { method: 'POST', body: JSON.stringify({ action: { type: 'equip', slot: 'turret', id: 'seeker' } }) }, guest.token);
+    const broke = await api(s, '/api/garage', { method: 'POST', body: JSON.stringify({ action: { type: 'equip', slot: 'turret', id: 'bunkerbuster' } }) }, guest.token);
     expect(broke.status).toBe(400);
 
     const signIn = await api(s, '/api/auth/google', { method: 'POST', body: JSON.stringify({ credential: await credential(uniqueSub()) }) }, guest.token);
@@ -316,7 +316,7 @@ describe('over the network', () => {
     await opened;
     ws.send(JSON.stringify({
       t: 'join', v: PROTOCOL_VERSION, session: guest.token, name: 'Liar',
-      loadout: { chassis: 'juggernaut', turret: 'seeker', upgrades: { armor: 99 }, powerups: { rage: 99 } },
+      loadout: { chassis: 'juggernaut', turret: 'bunkerbuster', upgrades: { armor: 99 }, powerups: { rage: 99 } },
     }));
     await until(() => inbox.some((m) => m.t === 'start'));
     const start = inbox.find((m) => m.t === 'start')!;

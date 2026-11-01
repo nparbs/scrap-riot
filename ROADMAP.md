@@ -9,11 +9,38 @@ Each milestone below has a matching GitHub milestone, and its open items are tra
 - Robots fighting one on one, online against other users, on the roof of a skyscraper in a dark city
 - A workshop of chassis, tower, wheels, engine, power source and weapons, limited by used space, with an armour setting and a front or back placement for weapons
 - Tabs for the workshop, paintshop, buying and selling parts, with a preview, stats and highscores
+- A paintshop for drawing directly on the unfolded robot, with drawing tools and a colour grid
 - A match screen showing each pilot's name, armour, weapon and battery, with chat, surrender and offer draw
 - Destroying other tanks earns money, which buys upgrades
 - Weapons included a chainsaw and a sledgehammer, and the chainsaw could outreach the hammer
 
 Scrap Riot's look and layout now follow those screenshots, rebuilt from scratch with its own name and logo. Everything else is an original design decision: robot names, the other weapons, all numbers. The default keys are also our choice: WASD to drive, Space for the main weapon, Q for the turret, R for defense, 1 to 6 for powerups, and E to look behind. Anything that contradicts how you remember the original is a bug worth filing, and footage of the original would help most. Scrap Riot will keep its own name, art and sound regardless.
+
+## v0.9: Melee first, BattleBots style
+
+Player feedback from playing against the original's look. Melee is the main event, and guns are a limited extra.
+
+- [x] Guns fixed to the hull: no tracking, no homing, they fire where the robot points
+- [x] Guns limited to a few shots per life, with a battery cost per shot
+- [x] Shift for a speed boost, paid for from the battery
+- [x] Stronger melee across the board, so no gun can wreck a robot in one life
+- [x] New weapon families from real combat robots: vertical disc and bar, horizontal bar, undercutter, drum, eggbeater, ring spinner, hammer saw, flipper, crusher and lifting forks
+- [x] Spinners that store energy: spin up, hit, and get thrown back
+- [x] Thrown robots that can't steer in the air, and fall when they come down
+- [x] Towers that add armour and room, as they did in the original
+- [x] Robots rebuilt as low armoured wedges with exposed wheels
+- [x] A redrawn logo, used for the website icon, the screens and the maps
+- [x] A square preview that frames the whole robot and its weapon
+- [ ] Human playtest of the new weapons: damage, spin-up times and how far hits throw
+- [x] Weapon sounds for each family, including spinners winding up
+- [x] Synthesized music for the menus and for battle
+- [x] Cooldowns on strong weapons, and a 10-round burst for the chaingun
+- [x] A short intro, and asking for a name when the game first opens
+- [ ] Replace the name prompt with Google sign-in, and add a name filter
+- [ ] Sparks and visible damage from spinner hits
+- [ ] Modular robots: two main weapons at once, front and back, as in the original's weapon slots
+- [ ] Self-righting: robots that land upside down
+- [ ] Weight as a stat, as the original's parts had
 
 ## v0.1: Playable slice (done)
 

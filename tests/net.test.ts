@@ -217,11 +217,11 @@ describe('online match', () => {
     const s = await server();
     const { ws, inbox, opened } = raw(s.port);
     await opened;
-    const paint = { primary: 0x35d0e6, secondary: 123456, eye: 'red', pattern: 'flames', topper: '<script>' };
+    const paint = { primary: 0x35d0e6, secondary: 123456, pattern: 'flames', topper: '<script>' };
     ws.send(JSON.stringify({ t: 'join', v: PROTOCOL_VERSION, name: 'Painter', loadout: { paint } }));
     await until(() => inbox.some((m) => m.t === 'start'));
     const start = inbox.find((m) => m.t === 'start') as unknown as { setups: { loadout: { paint: Record<string, unknown> } }[] };
-    expect(start.setups[0].loadout.paint).toEqual({ primary: 0x35d0e6, secondary: 0x33363b, eye: 0x35d0e6, pattern: 'flames', topper: 'none' });
+    expect(start.setups[0].loadout.paint).toEqual({ primary: 0x35d0e6, secondary: 0x33363b, pattern: 'flames', topper: 'none' });
   });
 
   it('puts two players in one match and fills the rest with bots', async () => {
@@ -259,7 +259,7 @@ describe('online match', () => {
     stopB();
   });
 
-  it('draws the driver smoothly, with almost nothing left to correct', async () => {
+  it.each([[false], [true]])('draws the driver smoothly, with almost nothing left to correct (boosting: %s)', async (boost) => {
     // Alone on the roof, since anything it bumps into is meant to cause a correction.
     const s = await server({ arena: 'skyscraper', capacity: 1 });
     const { c, state } = client(s.port);
@@ -269,6 +269,7 @@ describe('online match', () => {
     let hitSomething = false;
     const read = (input: BotInput) => {
       input.throttle = 1;
+      input.boost = boost;
       // A tight circle that stays clear of everything on this part of the roof.
       input.steer = 1;
     };
@@ -305,7 +306,8 @@ describe('online match', () => {
     const stalled = steps.filter((v) => v < 0.5).length / steps.length;
     console.log(`stalled frames ${(stalled * 100).toFixed(0)}%, worst correction ${worst.toFixed(3)}`);
     expect(stalled).toBeLessThan(0.05);
-    expect(worst).toBeLessThan(0.25);
+    // An occasional resync of one or two sim steps is fine, and a step is longer when boosting.
+    expect(worst).toBeLessThan(boost ? 0.4 : 0.25);
   });
 
   it('never trusts a client: speed comes from the server sim', async () => {

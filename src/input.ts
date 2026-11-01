@@ -8,6 +8,8 @@ const POWER_ACTIONS = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6
 /** Combines the keyboard and any connected gamepad into one set of controls. */
 export class Keyboard {
   private readonly held = new Set<string>();
+  /** Keys pressed since the game last read the controls, so a very quick tap still counts. */
+  private readonly tapped = new Set<string>();
   private readonly pad = new PadReader();
   private padState: PadState | null = null;
   private captured = new Set<string>();
@@ -45,16 +47,22 @@ export class Keyboard {
       if (!this.captured.has(e.code)) return;
       e.preventDefault();
       this.held.add(e.code);
+      this.tapped.add(e.code);
       if (!e.repeat) this.queuedPowerup = this.powerByCode.get(e.code) ?? this.queuedPowerup;
     });
     window.addEventListener('keyup', (e) => this.held.delete(e.code));
     // A key released while the window is unfocused never fires keyup.
-    window.addEventListener('blur', () => this.held.clear());
+    window.addEventListener('blur', () => {
+      this.held.clear();
+      this.tapped.clear();
+    });
   }
 
   setBindings(bindings: Bindings): void {
     this.bindings = bindings;
     this.captured = new Set(Object.values(bindings));
+    // Holding either Shift key counts, and browsers report them separately.
+    if (bindings.boost === 'ShiftLeft') this.captured.add('ShiftRight');
     this.powerByCode = new Map(POWER_ACTIONS.map((action, i) => [bindings[action], POWERUP_ORDER[i]]));
   }
 
@@ -67,7 +75,7 @@ export class Keyboard {
   }
 
   private isDown(code: string): boolean {
-    return this.held.has(code);
+    return this.held.has(code) || this.tapped.has(code);
   }
 
   /** Reads the first connected gamepad. Call once per input sample. */
@@ -92,11 +100,13 @@ export class Keyboard {
     input.melee = this.isDown(b.melee) || (pad?.melee ?? false);
     input.turret = this.isDown(b.turret) || (pad?.turret ?? false);
     input.defense = this.isDown(b.defense) || (pad?.defense ?? false);
+    input.boost = this.isDown(b.boost) || (b.boost === 'ShiftLeft' && this.isDown('ShiftRight')) || (pad?.boost ?? false);
   }
 
   applyTo(input: BotInput): void {
     this.pollPad();
     this.peek(input);
+    this.tapped.clear();
     if (this.padState && this.padState.powerup >= 0) this.queuedPowerup = POWERUP_ORDER[this.padState.powerup];
     if (this.queuedPowerup) {
       input.powerup = this.queuedPowerup;
@@ -106,6 +116,7 @@ export class Keyboard {
 
   clear(): void {
     this.held.clear();
+    this.tapped.clear();
     this.queuedPowerup = null;
   }
 }

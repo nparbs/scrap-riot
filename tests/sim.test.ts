@@ -12,7 +12,7 @@ function loadout(over: Partial<Loadout> = {}): Loadout {
     melee: 'chainsaw',
     turret: 'minigun',
     defense: 'shield',
-    powerups: { rage: 1, megashield: 1, cloaking: 1, xray: 1, repair: 1, turbo: 1 },
+    powerups: { rage: 1, megashield: 1, cloaking: 1, xray: 1, repair: 1, battery: 1 },
     upgrades: { armor: 0, engine: 0, weapons: 0 },
     ...over,
   };
@@ -157,22 +157,6 @@ describe('combat', () => {
     expect(b.hp).toBeLessThan(b.maxHp);
   });
 
-  it('turret leads a moving target', () => {
-    const match = duel({ turret: 'rockets' });
-    const [a, b] = match.bots;
-    a.x = 0;
-    a.z = 0;
-    a.turretAngle = 0;
-    b.x = 0;
-    b.z = 17;
-    b.heading = Math.PI / 2;
-    b.input.throttle = 1;
-    b.vx = b.chassis.speed;
-    run(match, 0.5);
-    const direct = Math.atan2(b.x - a.x, b.z - a.z);
-    expect(a.turretAngle).toBeGreaterThan(direct);
-  });
-
   it('a stunned robot ignores all input', () => {
     const match = duel();
     const bot = match.bots[0];
@@ -274,7 +258,6 @@ function faceOff(match: Match, gap: number): [Bot, Bot] {
   a.x = 0;
   a.z = 0;
   a.heading = 0;
-  a.turretAngle = 0;
   b.x = 0;
   b.z = gap;
   b.heading = Math.PI;
@@ -288,7 +271,7 @@ describe('arsenal', () => {
       const [a, b] = faceOff(match, melee === 'magnet' ? 8 : 3.2);
       a.x = b.x = -20;
       a.input.melee = true;
-      if (melee === 'ram') a.input.throttle = 1;
+      if (melee === 'ram' || melee === 'forks') a.input.throttle = 1;
       const start = b.z;
       run(match, 1.2);
       const changed = b.hp < b.maxHp || Math.abs(b.z - start) > 0.5;
@@ -299,7 +282,8 @@ describe('arsenal', () => {
   it('every turret can hit a robot in front of it', () => {
     for (const turret of Object.keys(TURRETS) as TurretId[]) {
       const match = fight('foundry', { turret });
-      const [a, b] = faceOff(match, 7);
+      // A mortar lobs a fixed distance, so its target has to be standing there.
+      const [a, b] = faceOff(match, turret === 'mortar' ? 18 : 7);
       a.x = b.x = -20;
       a.input.turret = true;
       run(match, 3.5);
@@ -334,17 +318,6 @@ describe('arsenal', () => {
     expect(d.hp).toBe(d.maxHp);
   });
 
-  it('runs out of ammo, then recovers', () => {
-    const match = fight('foundry', { turret: 'rockets' });
-    const [a] = faceOff(match, 30);
-    a.input.turret = true;
-    run(match, 3);
-    expect(a.ammo).toBeLessThan(1);
-    a.input.turret = false;
-    run(match, 8);
-    expect(a.ammo).toBe(1);
-  });
-
   it('laser is blocked by cover', () => {
     const match = fight('pit', { turret: 'laser' });
     const [a, b] = faceOff(match, 8);
@@ -364,7 +337,6 @@ describe('arsenal', () => {
     a.x = 0;
     a.z = ARENA.half - 4;
     a.heading = 0;
-    a.turretAngle = 0;
     b.x = -28;
     b.z = -28;
     b.invulnT = 99;
@@ -394,18 +366,6 @@ describe('arsenal', () => {
     b.heading = 0;
     match.damage(b, 20, a.id);
     expect(b.maxHp - b.hp).toBeCloseTo(20);
-  });
-
-  it('cloaked robots cannot be targeted, unless the shooter has x-ray', () => {
-    const match = fight('foundry', { turret: 'minigun' });
-    const [a, b] = faceOff(match, 8);
-    a.x = b.x = -20;
-    b.cloakT = 5;
-    match.step();
-    expect(a.turretTarget).toBe(-1);
-    a.xrayT = 5;
-    match.step();
-    expect(a.turretTarget).toBe(b.id);
   });
 
   it('firing breaks your own cloak', () => {

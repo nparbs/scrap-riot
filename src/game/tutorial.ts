@@ -6,15 +6,14 @@ export interface TutorialInput {
   melee: boolean;
   turret: boolean;
   defense: boolean;
-  /** Total powerups the player has left. */
-  powerups: number;
+  boost: boolean;
 }
 
 interface Step {
   prompt: (keys: Bindings) => string;
   /** Seconds the player must do this for, so a stray tap doesn't skip the lesson. */
   hold: number;
-  done: (input: TutorialInput, used: boolean) => boolean;
+  done: (input: TutorialInput) => boolean;
 }
 
 const k = keyLabel;
@@ -31,7 +30,7 @@ const STEPS: Step[] = [
     done: (input) => input.steer !== 0,
   },
   {
-    prompt: (b) => `Hold ${k(b.turret)} to fire your turret. It aims itself.`,
+    prompt: (b) => `Press ${k(b.turret)} to fire your gun. It shoots straight ahead, and shots are limited.`,
     hold: 1,
     done: (input) => input.turret,
   },
@@ -46,9 +45,15 @@ const STEPS: Step[] = [
     done: (input) => input.defense,
   },
   {
-    prompt: (b) => `Press ${k(b.power6)} for Turbo. Powerups are limited, so choose your moment.`,
-    hold: 0,
-    done: (_, used) => used,
+    prompt: (b) => `Hold ${k(b.boost)} for a burst of speed. It runs on your battery, like your gun.`,
+    hold: 0.4,
+    done: (input) => input.boost,
+  },
+  {
+    // Just information, since a Repair Kit or Battery Pack does nothing while topped up.
+    prompt: (b) => `Keys ${k(b.power1)} to ${k(b.power6)} use powerups. They're limited, so choose your moment.`,
+    hold: 5,
+    done: () => true,
   },
 ];
 
@@ -56,7 +61,6 @@ const STEPS: Step[] = [
 export class Tutorial {
   private index = 0;
   private held = 0;
-  private lastPowerups: number | null = null;
 
   constructor(private readonly keys: Bindings) {}
 
@@ -70,10 +74,8 @@ export class Tutorial {
 
   update(dt: number, input: TutorialInput): void {
     if (this.finished) return;
-    const used = this.lastPowerups !== null && input.powerups < this.lastPowerups;
-    this.lastPowerups = input.powerups;
     const step = STEPS[this.index];
-    if (!step.done(input, used)) return;
+    if (!step.done(input)) return;
     this.held += dt;
     if (this.held >= step.hold) {
       this.index++;

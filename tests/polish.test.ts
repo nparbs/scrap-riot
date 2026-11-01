@@ -18,7 +18,7 @@ describe('key bindings', () => {
   it('defaults to WASD, with Space for the main weapon', () => {
     const b = DEFAULT_BINDINGS;
     expect([b.forward, b.left, b.back, b.right]).toEqual(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
-    expect([b.melee, b.turret, b.defense, b.rear]).toEqual(['Space', 'KeyQ', 'KeyR', 'KeyE']);
+    expect([b.melee, b.turret, b.defense, b.rear, b.boost]).toEqual(['Space', 'KeyQ', 'KeyR', 'KeyE', 'ShiftLeft']);
     expect(b.power6).toBe('Digit6');
     expect(new Set(Object.values(b)).size).toBe(Object.keys(b).length);
   });
@@ -67,6 +67,26 @@ describe('settings storage', () => {
     store.set(key, '{nope');
     expect(loadSettings(storage).quality).toBe('auto');
     expect(loadSettings(null).quality).toBe('auto');
+  });
+});
+
+describe('pilot name and music settings', () => {
+  it('starts with no name, music on, and remembers both', () => {
+    const store = new Map<string, string>();
+    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    const fresh = loadSettings(storage);
+    expect(fresh.pilotName).toBe('');
+    expect(fresh.music).toBe(true);
+    fresh.pilotName = 'Rusty';
+    fresh.music = false;
+    writeSettings(storage, fresh);
+    const back = loadSettings(storage);
+    expect(back.pilotName).toBe('Rusty');
+    expect(back.music).toBe(false);
+  });
+
+  it('ignores a corrupt name', () => {
+    expect(loadSettings({ getItem: () => JSON.stringify({ pilotName: 42 }) }).pilotName).toBe('');
   });
 });
 
@@ -128,7 +148,7 @@ describe('gamepad', () => {
 });
 
 describe('tutorial', () => {
-  const idle: TutorialInput = { throttle: 0, steer: 0, melee: false, turret: false, defense: false, powerups: 2 };
+  const idle: TutorialInput = { throttle: 0, steer: 0, melee: false, turret: false, defense: false, boost: false };
 
   it('advances only when the player does the thing, for long enough', () => {
     const t = new Tutorial(DEFAULT_BINDINGS);
@@ -143,16 +163,18 @@ describe('tutorial', () => {
   });
 
   it('runs to completion and shows rebound keys', () => {
-    const t = new Tutorial({ ...DEFAULT_BINDINGS, power6: 'KeyZ' });
+    const t = new Tutorial({ ...DEFAULT_BINDINGS, power1: 'KeyZ' });
     t.update(2, { ...idle, throttle: 1 });
     t.update(2, { ...idle, steer: 1 });
     t.update(2, { ...idle, turret: true });
     t.update(2, { ...idle, melee: true });
     t.update(0, { ...idle, defense: true });
+    t.update(1, { ...idle, boost: true });
     expect(t.prompt).toContain('Z');
+    // The last prompt only gives information, so it clears itself and can't get stuck.
     t.update(1, idle);
     expect(t.finished).toBe(false);
-    t.update(1, { ...idle, powerups: 1 });
+    t.update(5, idle);
     expect(t.finished).toBe(true);
     expect(t.prompt).toBe('');
   });

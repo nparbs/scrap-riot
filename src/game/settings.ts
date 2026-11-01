@@ -1,9 +1,9 @@
 // Bumped when the default keys change. Old settings are not carried over.
-const SETTINGS_KEY = 'scrap-riot.settings.v3';
+const SETTINGS_KEY = 'scrap-riot.settings.v4';
 
 export type Action =
   | 'forward' | 'back' | 'left' | 'right'
-  | 'melee' | 'turret' | 'defense'
+  | 'melee' | 'turret' | 'defense' | 'boost'
   | 'power1' | 'power2' | 'power3' | 'power4' | 'power5' | 'power6'
   | 'rear';
 
@@ -17,14 +17,15 @@ export const ACTIONS: { id: Action; label: string }[] = [
   { id: 'left', label: 'Turn left' },
   { id: 'right', label: 'Turn right' },
   { id: 'melee', label: 'Main weapon' },
-  { id: 'turret', label: 'Turret' },
+  { id: 'turret', label: 'Gun' },
   { id: 'defense', label: 'Defense' },
+  { id: 'boost', label: 'Speed boost' },
   { id: 'power1', label: 'Rage' },
   { id: 'power2', label: 'Mega Shield' },
   { id: 'power3', label: 'Cloaking' },
   { id: 'power4', label: 'X-Ray' },
   { id: 'power5', label: 'Repair Kit' },
-  { id: 'power6', label: 'Turbo' },
+  { id: 'power6', label: 'Battery Pack' },
   { id: 'rear', label: 'Look behind' },
 ];
 
@@ -36,6 +37,7 @@ export const DEFAULT_BINDINGS: Bindings = {
   melee: 'Space',
   turret: 'KeyQ',
   defense: 'KeyR',
+  boost: 'ShiftLeft',
   power1: 'Digit1',
   power2: 'Digit2',
   power3: 'Digit3',
@@ -89,10 +91,13 @@ export interface Settings {
   autoLevel: Level;
   showFps: boolean;
   tutorialDone: boolean;
+  music: boolean;
+  /** The name this player chose when first asked. Empty until then. */
+  pilotName: string;
 }
 
 export function defaultSettings(): Settings {
-  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, tutorialDone: false };
+  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, tutorialDone: false, music: true, pilotName: '' };
 }
 
 export function activeLevel(settings: Settings): Level {
@@ -112,6 +117,8 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null): Settings
     if (saved.quality === 'auto' || (saved.quality && saved.quality in QUALITY)) settings.quality = saved.quality;
     if (saved.autoLevel && saved.autoLevel in QUALITY) settings.autoLevel = saved.autoLevel;
     settings.showFps = saved.showFps === true;
+    settings.music = saved.music !== false;
+    if (typeof saved.pilotName === 'string') settings.pilotName = saved.pilotName;
     settings.tutorialDone = saved.tutorialDone === true;
   } catch {
     // Blocked storage or corrupt settings both fall back to the defaults.

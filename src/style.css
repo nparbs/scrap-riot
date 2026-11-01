@@ -202,32 +202,10 @@ button:disabled {
 
 /* Logo */
 .logo {
-  position: relative;
-  display: grid;
-  place-content: center;
-  width: 124px;
-  height: 124px;
+  display: block;
+  width: 150px;
+  height: 150px;
   margin: 0 auto;
-  font: italic 400 31px/0.92 var(--display);
-  letter-spacing: 0.02em;
-  text-align: center;
-  color: #e8481a;
-  text-shadow: 0 2px 0 #1a0802, 0 0 8px rgba(0, 0, 0, 0.8);
-}
-
-.logo svg {
-  position: absolute;
-  inset: 0;
-}
-
-.logo-cog {
-  fill: #12150e;
-  stroke: var(--accent);
-  stroke-width: 3;
-}
-
-.logo span {
-  position: relative;
 }
 
 /* Title, pause, results, lobby and settings */
@@ -383,6 +361,152 @@ button:disabled {
   color: var(--text);
   opacity: 0.85;
   font-size: 13px;
+}
+
+/* The opening logo */
+.screen-intro {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: radial-gradient(circle, #1b2422 0%, #050707 70%);
+  animation: intro-out 3s linear forwards;
+}
+
+.intro-stage {
+  position: relative;
+  text-align: center;
+}
+
+.intro-logo {
+  width: min(52vh, 70vw);
+  height: min(52vh, 70vw);
+  animation: intro-logo 3s cubic-bezier(0.2, 1.3, 0.4, 1) forwards;
+}
+
+.intro-line {
+  margin: 14px 0 0;
+  color: var(--accent);
+  font: italic 400 clamp(18px, 3.4vh, 30px) var(--display);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  animation: intro-line 3s linear forwards;
+}
+
+.intro-band {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 22px;
+  background: var(--hazard-strip);
+  animation: intro-band 3s ease-out forwards;
+}
+
+.intro-band-top {
+  top: 16%;
+}
+
+.intro-band-bottom {
+  bottom: 16%;
+  animation-direction: reverse;
+  animation-name: intro-band-back;
+}
+
+@keyframes intro-logo {
+  0% {
+    opacity: 0;
+    transform: scale(0.3) rotate(-120deg);
+  }
+
+  28% {
+    opacity: 1;
+    transform: scale(1.06) rotate(0);
+  }
+
+  36%,
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+
+@keyframes intro-line {
+  0%,
+  35% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  48%,
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes intro-band {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  25%,
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes intro-band-back {
+  0% {
+    transform: translateX(100%);
+  }
+
+  25%,
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes intro-out {
+  0%,
+  88% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intro-logo,
+  .intro-line,
+  .intro-band {
+    animation: none;
+  }
+}
+
+/* The name prompt */
+.name-card input {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 2px solid var(--accent-dark);
+  background: #050707;
+  color: #fff;
+  font: 700 18px var(--body);
+  text-align: center;
+}
+
+.name-card input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.name-error {
+  min-height: 1.3em;
+  margin: 6px 0 0;
+  color: #ffb0a0;
+  font-size: 13px;
+  text-align: center;
 }
 
 /* The workshop frame: tabs and a panel on the left, preview and buttons on the right */
@@ -632,6 +756,16 @@ button:disabled {
 /* The right column */
 .ws-right {
   gap: 0;
+  justify-content: space-between;
+}
+
+.ws-right > .nav-btns {
+  margin-top: auto;
+}
+
+.ws-logo .logo {
+  width: 104px;
+  height: 104px;
 }
 
 .ws-logo {
@@ -676,11 +810,14 @@ button:disabled {
   color: #fff;
 }
 
-/* See-through: the 3D robot is drawn on the canvas behind this window. */
+/* See-through: the 3D robot is drawn on the canvas behind this window. Always square: as wide as
+   the column, or as tall as the space left by everything else in it, whichever is smaller. */
 .preview-window,
 .side-view {
-  flex: 1;
-  min-height: 150px;
+  flex: none;
+  width: min(100%, calc(100vh - 306px));
+  aspect-ratio: 1;
+  align-self: center;
   border: 3px solid var(--accent-dark);
   border-top: 0;
 }
@@ -722,10 +859,9 @@ button:disabled {
 }
 
 .nav-btns {
-  display: flex;
+  display: grid;
   flex: none;
-  flex-direction: column;
-  align-items: flex-end;
+  grid-template-columns: 1fr 1fr;
   gap: 4px;
   padding: 8px 6px 6px;
   background: var(--circuit);
@@ -733,10 +869,15 @@ button:disabled {
 }
 
 .nav-btn {
-  width: min(190px, 100%);
-  padding: 5px 40px 5px 12px;
-  font-size: 15px;
+  padding: 5px 32px 5px 10px;
+  font-size: 14px;
+  white-space: nowrap;
 }
+
+.nav-btn::after {
+  width: 22px;
+}
+
 
 /* Cards, in the buy, sell and training panels */
 .buy-tabs {
@@ -894,23 +1035,6 @@ button:disabled {
   opacity: 1;
 }
 
-.swatches {
-  display: grid;
-  grid-template-columns: repeat(12, 1fr);
-  gap: 5px;
-}
-
-.swatch {
-  aspect-ratio: 1;
-  border: 2px solid transparent;
-  outline: 1px solid rgba(0, 0, 0, 0.5);
-  cursor: pointer;
-}
-
-.swatch-on {
-  border-color: #fff;
-}
-
 .choices {
   display: flex;
   flex-wrap: wrap;
@@ -930,6 +1054,184 @@ button:disabled {
   background: #050707;
   color: var(--text);
   font: inherit;
+}
+
+/* The paintshop */
+.paint-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px;
+  border: 2px solid var(--accent-dark);
+  background: linear-gradient(170deg, var(--plate), var(--plate-dark));
+}
+
+.paint-tools {
+  display: grid;
+  grid-template-columns: repeat(3, 30px);
+  gap: 3px;
+  align-content: start;
+}
+
+.paint-sizes,
+.paint-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tool-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  min-height: 18px;
+  padding: 2px;
+  border: 1px solid #0c1412;
+  background: linear-gradient(#55633e, #2c3a2c);
+  cursor: pointer;
+}
+
+.paint-tools .tool-btn,
+.paint-actions .tool-btn {
+  height: 30px;
+}
+
+.tool-btn:hover {
+  border-color: var(--accent);
+}
+
+.tool-on {
+  border-color: var(--accent);
+  background: linear-gradient(var(--accent), var(--accent-dark));
+}
+
+.tool-btn svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: #f0f0d8;
+  stroke-width: 2.2;
+}
+
+.tool-btn .solid {
+  fill: #f0f0d8;
+}
+
+.tool-on svg {
+  stroke: #10140c;
+}
+
+.tool-on .solid {
+  fill: #10140c;
+}
+
+.tool-btn i {
+  display: block;
+  width: 20px;
+  background: #f0f0d8;
+}
+
+.tool-on i {
+  background: #10140c;
+}
+
+.paint-palette {
+  display: grid;
+  flex: 1 1 280px;
+  grid-template-columns: repeat(20, 1fr);
+  grid-auto-rows: minmax(13px, 1fr);
+  gap: 1px;
+  padding: 2px;
+  background: #020303;
+}
+
+.paint-palette button {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+}
+
+.paint-palette .color-on {
+  outline: 2px solid #fff;
+  outline-offset: -1px;
+  z-index: 1;
+}
+
+.paint-lower {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.paint-board {
+  flex: none;
+}
+
+.paint-template {
+  position: relative;
+  width: 384px;
+  height: 384px;
+  max-width: 100%;
+  border: 2px solid var(--accent-dark);
+}
+
+.paint-canvas,
+.paint-guides {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.paint-canvas {
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.paint-guides {
+  pointer-events: none;
+}
+
+.paint-note {
+  max-width: 384px;
+  color: #ffd0c8;
+}
+
+.paint-note:empty {
+  display: none;
+}
+
+.paint-options {
+  flex: 1;
+  min-width: 0;
+}
+
+.paint-options .mini-btn {
+  min-width: 0;
+}
+
+.paint-color {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 5px;
+  font-size: 12px;
+}
+
+.paint-color i {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #0c1412;
+}
+
+.paint-color span {
+  flex: 1;
+  min-width: 90px;
+  font-weight: 700;
 }
 
 /* The match dock, along the bottom of the screen */
@@ -1184,6 +1486,14 @@ button:disabled {
   background: rgba(8, 14, 12, 0.72);
 }
 
+.slot-shots {
+  position: absolute !important;
+  top: 2px;
+  right: 5px;
+  color: var(--accent);
+  font-size: 14px;
+}
+
 .slot-power b {
   position: absolute;
   top: 2px;
@@ -1432,18 +1742,13 @@ button:disabled {
     display: none;
   }
 
-  .nav-btns {
-    flex-flow: row wrap;
-    justify-content: center;
+  .preview-window,
+  .side-view {
+    width: min(100%, 150px);
   }
 
-  .nav-btn {
-    width: auto;
-    flex: 1 1 30%;
-  }
-
-  .swatches {
-    grid-template-columns: repeat(6, 1fr);
+  .paint-lower {
+    flex-direction: column;
   }
 
   .hud-powers .slot {

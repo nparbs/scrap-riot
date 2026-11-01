@@ -14,7 +14,7 @@ describe('robot parts', () => {
   it('a starter robot has the plain stats of its chassis', () => {
     const stats = buildStats(newSave().loadout);
     const { hp, speed, accel, turn, mass } = CHASSIS.brawler;
-    expect(stats).toMatchObject({ hp, speed, accel, turn, mass, track: 1, regen: 1 });
+    expect(stats).toMatchObject({ hp, speed, accel, turn, mass, regen: 1 });
   });
 
   it('armour trades speed and room for toughness', () => {
@@ -31,12 +31,20 @@ describe('robot parts', () => {
     const [tuned, plain] = match.bots;
     expect(tuned.chassis.mass).toBeGreaterThan(plain.chassis.mass);
     expect(tuned.chassis.accel).toBeGreaterThan(plain.chassis.accel);
-    expect(tuned.trackMult).toBe(TOWERS.large.track);
+    expect(tuned.maxHp).toBeCloseTo(plain.maxHp * TOWERS.large.hp!);
     expect(tuned.batteryRegen).toBeGreaterThan(plain.batteryRegen);
     tuned.ammo = 0;
     plain.ammo = 0;
     match.step();
     expect(tuned.ammo).toBeGreaterThan(plain.ammo);
+  });
+
+  it('a large tower adds armour and room, as it did in the original', () => {
+    const { loadout } = newSave();
+    const large = { ...loadout, tower: 'large' as const };
+    expect(spaceCapacity(large)).toBeGreaterThan(spaceCapacity(loadout));
+    expect(buildStats(large).hp).toBeGreaterThan(buildStats(loadout).hp);
+    expect(buildStats({ ...loadout, tower: 'small' }).hp).toBeLessThan(buildStats(loadout).hp);
   });
 
   it('a new robot has room to spare', () => {
@@ -47,7 +55,7 @@ describe('robot parts', () => {
   it('a bought part that does not fit goes on the shelf', () => {
     const save = newSave();
     save.money = 99999;
-    expect(buyOrEquip(save, 'turret', 'seeker')).toBe(true);
+    expect(buyOrEquip(save, 'turret', 'bunkerbuster')).toBe(true);
     expect(buyOrEquip(save, 'defense', 'emp')).toBe(true);
     expect(buyOrEquip(save, 'melee', 'claw')).toBe(true);
     expect(buyOrEquip(save, 'engine', 'turbo')).toBe(true);
@@ -69,7 +77,7 @@ describe('robot parts', () => {
     const save = newSave();
     save.money = 99999;
     save.owned.chassis.push('scout');
-    buyOrEquip(save, 'turret', 'seeker');
+    buyOrEquip(save, 'turret', 'bunkerbuster');
     expect(buyOrEquip(save, 'chassis', 'scout')).toBe(false);
     expect(save.loadout.chassis).toBe('brawler');
   });

@@ -1,7 +1,7 @@
 import { sawPos } from '../sim/arena';
 import { keyLabel, type Action, type Bindings } from '../game/settings';
 import { QUICK_CHAT } from '../net/protocol';
-import { DEFENSES, MELEE, MODES, POWERUPS, POWERUP_ORDER, TURRETS, UPGRADES } from '../sim/data';
+import { DEFENSES, legibleColor, MELEE, MODES, POWERUPS, POWERUP_ORDER, TURRETS, UPGRADES } from '../sim/data';
 import { relativeBearing, type Bot, type GameEvent, type Match } from '../sim/match';
 
 const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
@@ -10,7 +10,7 @@ const MAP_INTERVAL = 1 / 20;
 const q = (root: HTMLElement, selector: string) => root.querySelector<HTMLElement>(selector)!;
 
 function hex(color: number): string {
-  return `#${color.toString(16).padStart(6, '0')}`;
+  return `#${legibleColor(color).toString(16).padStart(6, '0')}`;
 }
 
 /** Online, robot names come from other players, so they must always pass through this. */
@@ -50,6 +50,7 @@ export class Hud {
   private readonly ping: HTMLElement;
   private readonly blind: HTMLElement;
   private readonly battery: HTMLElement;
+  private readonly shots: HTMLElement;
   private readonly rivalName: HTMLElement;
   private readonly rivalFill: HTMLElement;
   private readonly rivalWeapon: HTMLElement;
@@ -98,7 +99,7 @@ export class Hud {
           <div class="dock-field"><label>Armour:</label><div class="hp-bar"><div class="hp-fill"></div><span class="hp-text"></span></div></div>
           <div class="dock-slots">
             ${this.slot(keyLabel(keys.melee), MELEE[loadout.melee].name, 'melee')}
-            ${this.slot(keyLabel(keys.turret), TURRETS[loadout.turret].name, 'turret')}
+            ${this.slot(keyLabel(keys.turret), TURRETS[loadout.turret].name, 'turret', '<b class="slot-shots" data-shots></b>')}
             ${this.slot(keyLabel(keys.defense), DEFENSES[loadout.defense].name, 'defense')}
           </div>
           <div class="dock-battery"><div class="battery"><i data-battery></i></div><label>Battery:</label></div>
@@ -124,6 +125,7 @@ export class Hud {
     this.ping = q('.hud-ping');
     this.blind = q('.hud-blind');
     this.battery = q('[data-battery]');
+    this.shots = q('[data-shots]');
     this.rivalName = q('[data-rival-name]');
     this.rivalFill = q('[data-rival-fill]');
     this.rivalWeapon = q('[data-rival-weapon]');
@@ -213,8 +215,8 @@ export class Hud {
     while (this.feed.children.length > 5) this.feed.lastElementChild?.remove();
   }
 
-  private slot(key: string, name: string, id: string): string {
-    return `<div class="slot"><div class="slot-cd" data-cd="${id}"></div><kbd>${key}</kbd><span>${name}</span></div>`;
+  private slot(key: string, name: string, id: string, extra = ''): string {
+    return `<div class="slot"><div class="slot-cd" data-cd="${id}"></div><kbd>${key}</kbd><span>${name}</span>${extra}</div>`;
   }
 
   private markDamage(source: number): void {
@@ -286,11 +288,15 @@ export class Hud {
 
     const { loadout } = player;
     const fraction = (left: number, total: number) => (total > 0 ? left / total : 0);
-    this.setCooldown('melee', fraction(player.meleeCd, MELEE[loadout.melee].cooldown));
+    // A spinner fills up as it reaches speed, so the bar shows how much is still to come.
+    const meleeDef = MELEE[loadout.melee];
+    this.setCooldown('melee', meleeDef.kind === 'spinner' && player.meleeCd <= 0 ? 1 - player.meleeCharge : fraction(player.meleeCd, meleeDef.cooldown));
     this.setCooldown('turret', fraction(player.turretCd, TURRETS[loadout.turret].cooldown));
     this.setCooldown('defense', fraction(player.defenseCd, DEFENSES[loadout.defense].cooldown));
     this.battery.style.height = `${Math.max(0, player.ammo) * 100}%`;
-    this.battery.style.background = player.ammo < TURRETS[loadout.turret].ammo ? '#e84a3a' : '#d8d84a';
+    this.battery.style.background = player.ammo < TURRETS[loadout.turret].battery ? '#e84a3a' : '#d8d84a';
+    // The flamethrower is limited only by the battery.
+    this.setText(this.shots, TURRETS[loadout.turret].shots > 0 ? String(player.shots) : '');
     this.updateRival();
     this.blind.style.opacity = String(Math.min(1, player.blindT * 1.2));
     POWERUP_ORDER.forEach((id, i) => {
@@ -303,7 +309,8 @@ export class Hud {
     });
 
     const tags: string[] = [];
-    if (player.turboT > 0) tags.push('TURBO');
+    if (player.boostT > 0) tags.push('BOOST');
+    if (player.airT > 0) tags.push('AIRBORNE');
     if (player.rageT > 0) tags.push('RAGE');
     if (player.shieldT > 0) tags.push('FORCE FIELD');
     if (player.megaT > 0) tags.push('MEGA SHIELD');

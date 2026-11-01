@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { SAW_RADIUS, type ArenaDef, type Block } from '../sim/arena';
+import { drawLogo } from './logo';
 
 /** `rusty` adds rust and rivets. Natural ground such as ice or rock leaves them out. */
 function floorTexture(rusty: boolean): THREE.CanvasTexture {
@@ -185,37 +186,32 @@ function billboardTexture(): THREE.CanvasTexture {
   return texture;
 }
 
-/** A cog with the name across it, for the sign standing behind the roof. */
-function gearSignTexture(): THREE.CanvasTexture {
-  const size = 256;
+let sharedLogo: THREE.CanvasTexture | null = null;
+
+/** The game's logo, shared by every sign and floor marking. */
+function logoTexture(): THREE.CanvasTexture {
+  if (sharedLogo) return sharedLogo;
   const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const g = canvas.getContext('2d')!;
-  g.translate(size / 2, size / 2);
-  g.strokeStyle = '#a8a832';
-  g.fillStyle = 'rgba(18,18,10,0.92)';
-  g.lineWidth = 5;
-  g.beginPath();
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2;
-    const next = ((i + 0.5) / 12) * Math.PI * 2;
-    g.lineTo(Math.cos(a) * 122, Math.sin(a) * 122);
-    g.lineTo(Math.cos(a + 0.18) * 122, Math.sin(a + 0.18) * 122);
-    g.lineTo(Math.cos(next + 0.1) * 92, Math.sin(next + 0.1) * 92);
-    g.lineTo(Math.cos(next + 0.25) * 92, Math.sin(next + 0.25) * 92);
-  }
-  g.closePath();
-  g.fill();
-  g.stroke();
-  g.font = 'italic 900 58px Impact, Arial Black, sans-serif';
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.fillStyle = '#e8481a';
-  g.fillText('SCRAP', 0, -24);
-  g.fillText('RIOT', 0, 30);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
+  canvas.width = canvas.height = 512;
+  drawLogo(canvas.getContext('2d')!, 512);
+  sharedLogo = new THREE.CanvasTexture(canvas);
+  sharedLogo.colorSpace = THREE.SRGBColorSpace;
+  sharedLogo.anisotropy = 4;
+  return sharedLogo;
+}
+
+/** Painted flat on the floor, faded as if it has been driven over a lot. */
+function addFloorLogo(scene: THREE.Scene, x: number, z: number, radius: number): void {
+  const mark = new THREE.Mesh(
+    new THREE.PlaneGeometry(radius * 2, radius * 2),
+    new THREE.MeshStandardMaterial({ map: logoTexture(), transparent: true, opacity: 0.82, depthWrite: false, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2 }),
+  );
+  mark.rotation.x = -Math.PI / 2;
+  // Facing the way robots come at it from the middle of the map.
+  mark.rotation.z = Math.PI;
+  mark.position.set(x, 0.018, z);
+  mark.receiveShadow = true;
+  scene.add(mark);
 }
 
 function graffitiTexture(): THREE.CanvasTexture {
@@ -330,7 +326,7 @@ function buildNightCity(scene: THREE.Scene, half: number): void {
   // The gear sign on two poles behind the back of the roof.
   const gear = new THREE.Mesh(
     new THREE.PlaneGeometry(9, 9),
-    new THREE.MeshBasicMaterial({ map: gearSignTexture(), transparent: true, alphaTest: 0.3 }),
+    new THREE.MeshBasicMaterial({ map: logoTexture(), transparent: true, alphaTest: 0.3 }),
   );
   gear.position.set(-8, 8, half + 1);
   gear.rotation.y = Math.PI;
@@ -447,6 +443,11 @@ function addShed(scene: THREE.Scene, b: Block): void {
   shed.castShadow = true;
   shed.receiveShadow = true;
   scene.add(shed);
+  // The logo painted up on the wall facing the roof.
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 4.6), new THREE.MeshStandardMaterial({ map: logoTexture(), transparent: true, depthWrite: false, roughness: 0.9 }));
+  sign.position.set(b.x - b.w * 0.28, height * 0.56, b.z - b.d / 2 - 0.03);
+  sign.rotation.y = Math.PI;
+  scene.add(sign);
 }
 
 function hazardTexture(): THREE.CanvasTexture {
@@ -676,6 +677,7 @@ export function buildArena(def: ArenaDef): ArenaScene {
   }
 
   buildBackdrop(scene, def);
+  addFloorLogo(scene, def.logo.x, def.logo.z, def.logo.r);
   const metal = new THREE.MeshStandardMaterial({ color: 0x34352d, metalness: 0.4, roughness: 0.7 });
   const link = def.blocks.some((b) => b.kind === 'fence') ? chainLinkTexture() : null;
   for (const block of def.blocks) {

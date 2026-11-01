@@ -10,6 +10,7 @@ export interface PadState {
   melee: boolean;
   turret: boolean;
   defense: boolean;
+  boost: boolean;
   rear: boolean;
   /** Index of a powerup pressed this read, or -1. */
   powerup: number;
@@ -17,7 +18,7 @@ export interface PadState {
 }
 
 const BUTTON = { a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, lt: 6, rt: 7, start: 9, up: 12, down: 13, left: 14, right: 15 };
-const POWERUP_BUTTONS = [BUTTON.up, BUTTON.right, BUTTON.down, BUTTON.left, BUTTON.lb, BUTTON.x];
+const POWERUP_BUTTONS = [BUTTON.up, BUTTON.right, BUTTON.down, BUTTON.left, BUTTON.lb];
 const DEADZONE = 0.18;
 
 export function deadzone(value: number, zone = DEADZONE): number {
@@ -50,6 +51,7 @@ export class PadReader {
       melee: down(BUTTON.a),
       turret: down(BUTTON.rb),
       defense: down(BUTTON.b),
+      boost: down(BUTTON.x),
       rear: down(BUTTON.y),
       powerup,
       pausePressed,

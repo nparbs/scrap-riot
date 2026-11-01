@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Accounts } from './accounts';
 
-const MAX_BODY_BYTES = 16 * 1024;
+// Has to fit a paint job, which is the largest thing anyone sends.
+const MAX_BODY_BYTES = 32 * 1024;
 const WINDOW_MS = 60_000;
 const REQUESTS_PER_WINDOW = 120;
 const GUESTS_PER_HOUR = 20;

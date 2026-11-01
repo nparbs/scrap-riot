@@ -3,18 +3,18 @@ import type { Bot, GameEvent, Match, MineKind, PatchKind, ProjectileKind } from 
 import type { SnapshotMessage } from './protocol';
 
 // Bots travel as flat number arrays. A JSON object per robot at 20 Hz would be several times larger.
-const MOTION = ['x', 'z', 'heading', 'vx', 'vz', 'turretAngle'] as const;
+const MOTION = ['x', 'z', 'heading', 'vx', 'vz'] as const;
 const STATE = [
-  'hp', 'respawnT', 'meleeCd', 'turretCd', 'defenseCd', 'shieldT', 'megaT', 'turboT', 'rageT', 'stunT',
+  'hp', 'respawnT', 'meleeCd', 'turretCd', 'defenseCd', 'shieldT', 'megaT', 'boostT', 'rageT', 'stunT',
   'invulnT', 'flashT', 'burnT', 'slowT', 'blindT', 'cloakT', 'xrayT', 'regenT', 'bladesT', 'kamikazeT',
-  'meleeWindup', 'meleeSwing', 'lungeT', 'ammo', 'hillScore', 'kills', 'deaths', 'damageDealt', 'earned', 'eliminatedAt',
+  'meleeWindup', 'meleeSwing', 'lungeT', 'ammo', 'shots', 'airT', 'meleeCharge', 'hillScore', 'kills', 'deaths', 'damageDealt', 'earned', 'eliminatedAt',
 ] as const;
 const FLAGS = ['alive', 'out', 'meleeActive', 'turretFiring', 'oiled', 'glued'] as const;
 
 const FLAGS_AT = MOTION.length + STATE.length;
 const POWERUPS_AT = FLAGS_AT + 1;
 
-const PROJECTILE_KINDS: ProjectileKind[] = ['bullet', 'rocket', 'homing', 'mortar', 'grenade', 'disc', 'spear'];
+const PROJECTILE_KINDS: ProjectileKind[] = ['bullet', 'rocket', 'mortar', 'grenade', 'disc', 'spear'];
 const PATCH_KINDS: PatchKind[] = ['oil', 'glue', 'nails'];
 const MINE_KINDS: MineKind[] = ['mine', 'charge'];
 const KIND_REPAIR = 0;
@@ -83,8 +83,8 @@ export function encodeSnapshot(match: Match, events: GameEvent[]): Omit<Snapshot
   };
 }
 
-export function readMotion(row: number[]): { x: number; z: number; heading: number; vx: number; vz: number; turretAngle: number } {
-  return { x: row[0], z: row[1], heading: row[2], vx: row[3], vz: row[4], turretAngle: row[5] };
+export function readMotion(row: number[]): { x: number; z: number; heading: number; vx: number; vz: number } {
+  return { x: row[0], z: row[1], heading: row[2], vx: row[3], vz: row[4] };
 }
 
 export function readAlive(row: number[]): boolean {
@@ -110,7 +110,7 @@ export function applyWorldState(match: Match, snap: SnapshotMessage, ahead: numb
   for (const [id, kind, x, z, vx, vz, life, flight] of snap.proj) {
     match.projectiles.push({
       id, owner: -1, kind: PROJECTILE_KINDS[kind], x: x + vx * ahead, z: z + vz * ahead, vx, vz,
-      life: Math.max(0, life - ahead), flight, damage: 0, splash: 0, knockback: 0, target: -1, homing: 0, bounces: 0, ricocheted: false,
+      life: Math.max(0, life - ahead), flight, damage: 0, splash: 0, knockback: 0, bounces: 0, ricocheted: false,
     });
   }
   match.mines.length = 0;
