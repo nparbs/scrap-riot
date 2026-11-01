@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ARENA_ORDER, ARENAS } from '../src/sim/arena';
-import { DEFENSES, MATCH, MELEE, TURRETS, type DefenseId, type MeleeId, type TurretId } from '../src/sim/data';
+import { DEFENSES, MATCH, MELEE, type DefenseId, type MeleeId } from '../src/sim/data';
 import { Match, STEP, type Bot, type BotSetup, type Loadout } from '../src/sim/match';
 import { makeRivals, newSave } from '../src/game/progress';
 
@@ -10,7 +10,6 @@ function loadout(over: Partial<Loadout> = {}): Loadout {
   return {
     chassis: 'brawler',
     melee: 'chainsaw',
-    turret: 'minigun',
     defense: 'shield',
     powerups: { rage: 1, megashield: 1, cloaking: 1, xray: 1, repair: 1, battery: 1 },
     upgrades: { armor: 0, engine: 0, weapons: 0 },
@@ -201,13 +200,13 @@ describe('combat', () => {
     const bot = match.bots[0];
     bot.stunT = 1;
     bot.input.throttle = 1;
-    bot.input.turret = true;
+    bot.input.melee = true;
     const heading = bot.heading;
     bot.input.steer = 1;
     run(match, 0.5);
     expect(Math.hypot(bot.vx, bot.vz)).toBeLessThan(0.01);
     expect(bot.heading).toBe(heading);
-    expect(match.projectiles).toHaveLength(0);
+    expect(bot.meleeActive).toBe(false);
   });
 });
 
@@ -318,18 +317,6 @@ describe('arsenal', () => {
     }
   });
 
-  it('every turret can hit a robot in front of it', () => {
-    for (const turret of Object.keys(TURRETS) as TurretId[]) {
-      const match = fight('foundry', { turret });
-      // A mortar lobs a fixed distance, so its target has to be standing there.
-      const [a, b] = faceOff(match, turret === 'mortar' ? 18 : 7);
-      a.x = b.x = -20;
-      a.input.turret = true;
-      run(match, 3.5);
-      expect(b.hp, turret).toBeLessThan(b.maxHp);
-    }
-  });
-
   it('every defense can be used without breaking the match', () => {
     for (const defense of Object.keys(DEFENSES) as DefenseId[]) {
       const match = fight('pit', { defense });
@@ -343,50 +330,21 @@ describe('arsenal', () => {
   });
 
   it('flamethrower only reaches short range, and sets robots burning', () => {
-    const near = fight('foundry', { turret: 'flamethrower' });
+    const near = fight('foundry', { melee: 'flamethrower' });
     const [a, b] = faceOff(near, 6);
     a.x = b.x = -20;
-    a.input.turret = true;
+    a.input.melee = true;
     near.step();
     expect(b.burnT).toBeGreaterThan(0);
-    const far = fight('foundry', { turret: 'flamethrower' });
+    const far = fight('foundry', { melee: 'flamethrower' });
     const [c, d] = faceOff(far, 16);
     c.x = d.x = -20;
-    c.input.turret = true;
+    c.input.melee = true;
     run(far, 0.5);
     expect(d.hp).toBe(d.maxHp);
   });
 
-  it('laser is blocked by cover', () => {
-    const match = fight('pit', { turret: 'laser' });
-    const [a, b] = faceOff(match, 8);
-    const pillar = ARENA.pillars[0];
-    a.x = pillar.x;
-    a.z = pillar.z - 6;
-    b.x = pillar.x;
-    b.z = pillar.z + 6;
-    a.input.turret = true;
-    run(match, 1);
-    expect(b.hp).toBe(b.maxHp);
-  });
-
-  it('razor discs can ricochet back and hit the shooter', () => {
-    const match = fight('pit', { turret: 'discs' });
-    const [a, b] = faceOff(match, 8);
-    a.x = 0;
-    a.z = ARENA.half - 4;
-    a.heading = 0;
-    b.x = -28;
-    b.z = -28;
-    b.invulnT = 99;
-    a.input.turret = true;
-    match.step();
-    a.input.turret = false;
-    run(match, 1.5);
-    expect(a.hp).toBeLessThan(a.maxHp);
-  });
-
-  it('a plow clears mines and throws discs back', () => {
+  it('a plow clears mines', () => {
     const match = fight('foundry', {}, { defense: 'plow', rearMelee: true });
     const [a, b] = faceOff(match, 6);
     a.x = b.x = -20;
@@ -457,12 +415,12 @@ describe('arsenal', () => {
     expect(dropped(true)).toBeGreaterThan(0);
   });
 
-  it('firing breaks your own cloak', () => {
-    const match = fight('foundry', { turret: 'minigun' });
-    const [a, b] = faceOff(match, 8);
+  it('landing a hit breaks your own cloak', () => {
+    const match = fight('foundry', { melee: 'chainsaw' });
+    const [a, b] = faceOff(match, 3);
     a.x = b.x = -20;
     a.cloakT = 5;
-    a.input.turret = true;
+    a.input.melee = true;
     match.step();
     expect(a.cloakT).toBe(0);
   });
@@ -703,7 +661,7 @@ describe('modes', () => {
     expect(order[2]).toBe(a);
   });
 
-  it('king of the hill scores only when one robot holds the zone', () => {
+  it('king of the hill pays in full to a robot alone in the zone, and splits it when shared', () => {
     const match = fight('pit', {}, {}, 'koth');
     const [a, b] = match.bots;
     const { hill } = match.arena;
@@ -720,7 +678,8 @@ describe('modes', () => {
     a.z = hill.z;
     a.vx = a.vz = b.vx = b.vz = 0;
     run(match, 0.5);
-    expect(a.hillScore).toBe(held);
+    expect(a.hillScore).toBeCloseTo(held + 0.25, 1);
+    expect(b.hillScore).toBeCloseTo(0.25, 1);
     a.hillScore = match.hillTarget;
     match.step();
     expect(match.over).toBe(true);

@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { applyCheat, buyOrEquip, buyPowerup, buyUpgrade, CATALOG, newSave, sellPart, setArmour, type Save, type Slot } from '../src/game/progress';
+import { applyCheat, buyOrEquip, buyPowerup, buyUpgrade, CATALOG, newSave, retireGuns, sellPart, setArmour, type Save, type Slot } from '../src/game/progress';
 import { DEFAULT_NAME, OFFLINE_PAYOUT_MAX, sanitizeName, sanitizePaint, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineStatus, type Profile } from '../src/net/protocol';
 import { isArenaId } from '../src/sim/arena';
 import { DEFAULT_PAINT, MODES, POWERUPS, UPGRADES, type ModeId, type PowerupId, type UpgradeId } from '../src/sim/data';
@@ -69,7 +69,7 @@ function codeHash(code: string): Buffer {
 function toSave(row: PlayerRow): Save {
   // Rows from before a part type existed simply start with the free one.
   const state = { ...row.state, owned: { ...newSave().owned, ...row.state.owned } };
-  return { name: row.name, money: row.money, matches: row.matches, wins: row.wins, ...state };
+  return retireGuns({ name: row.name, money: row.money, matches: row.matches, wins: row.wins, ...state });
 }
 
 function toProfile(row: PlayerRow): Profile {

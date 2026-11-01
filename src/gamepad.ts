@@ -8,7 +8,6 @@ export interface PadState {
   throttle: number;
   steer: number;
   melee: boolean;
-  turret: boolean;
   defense: boolean;
   boost: boolean;
   rear: boolean;
@@ -48,8 +47,7 @@ export class PadReader {
       throttle: value(BUTTON.rt) - value(BUTTON.lt),
       // Stick right is positive, while the sim's steering treats left as positive.
       steer: -deadzone(pad.axes[0] ?? 0),
-      melee: down(BUTTON.a),
-      turret: down(BUTTON.rb),
+      melee: down(BUTTON.a) || down(BUTTON.rb),
       defense: down(BUTTON.b),
       boost: down(BUTTON.x),
       rear: down(BUTTON.y),

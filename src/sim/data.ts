@@ -3,10 +3,8 @@
 export type ChassisId = 'scout' | 'ghost' | 'brawler' | 'rhino' | 'juggernaut';
 export type MeleeId =
   | 'chainsaw' | 'drill' | 'dagger' | 'rollingpin' | 'hammer' | 'axe' | 'ram' | 'claw' | 'magnet'
-  | 'vertdisc' | 'vertbar' | 'horizbar' | 'undercutter' | 'drum' | 'eggbeater' | 'shell' | 'hammersaw' | 'flipper' | 'crusher' | 'forks';
-export type TurretId =
-  | 'minigun' | 'rockets' | 'heavyrocket' | 'bunkerbuster' | 'mortar' | 'grenade'
-  | 'flamethrower' | 'laser' | 'discs' | 'spear' | 'arc';
+  | 'vertdisc' | 'vertbar' | 'horizbar' | 'undercutter' | 'drum' | 'eggbeater' | 'shell' | 'hammersaw' | 'flipper' | 'crusher' | 'forks'
+  | 'flamethrower' | 'tesla' | 'spear';
 export type DefenseId =
   | 'shield' | 'mines' | 'oil' | 'glue' | 'nails' | 'steelram' | 'plow' | 'blades' | 'cutter'
   | 'teleport' | 'flash' | 'regen' | 'cloak' | 'emp' | 'minibot' | 'remote' | 'kamikaze';
@@ -32,11 +30,11 @@ export interface ChassisDef {
 }
 
 export const CHASSIS: Record<ChassisId, ChassisDef> = {
-  scout: { name: 'Whippet', blurb: 'Fast and twitchy. Folds if you stop moving.', price: 700, hp: 140, speed: 16, accel: 26, turn: 3.2, mass: 0.75, radius: 1.25, space: 70 },
-  ghost: { name: 'Wraith', blurb: 'Quick, with more armor than it looks.', price: 950, hp: 155, speed: 14.5, accel: 22, turn: 2.9, mass: 0.9, radius: 1.3, space: 80 },
-  brawler: { name: 'Bruiser', blurb: 'The honest all-rounder.', price: 0, hp: 175, speed: 12.5, accel: 18, turn: 2.6, mass: 1, radius: 1.45, space: 100 },
+  scout: { name: 'Whippet', blurb: 'Fast and twitchy. Folds if you stop moving.', price: 700, hp: 130, speed: 16, accel: 26, turn: 3.2, mass: 0.75, radius: 1.25, space: 70 },
+  ghost: { name: 'Wraith', blurb: 'Quick, with more armor than it looks.', price: 950, hp: 148, speed: 14.5, accel: 22, turn: 2.9, mass: 0.9, radius: 1.3, space: 80 },
+  brawler: { name: 'Bruiser', blurb: 'The honest all-rounder.', price: 0, hp: 185, speed: 12.5, accel: 18, turn: 2.6, mass: 1, radius: 1.45, space: 100 },
   rhino: { name: 'Rhino', blurb: 'Heavy nose, big shove. Hard to knock off a ledge.', price: 1200, hp: 205, speed: 11, accel: 14, turn: 2.2, mass: 1.3, radius: 1.6, space: 115 },
-  juggernaut: { name: 'Anvil', blurb: 'A slow wall that hits like a truck.', price: 1500, hp: 235, speed: 9.5, accel: 11, turn: 1.9, mass: 1.6, radius: 1.75, space: 130 },
+  juggernaut: { name: 'Anvil', blurb: 'A slow wall that hits like a truck.', price: 1500, hp: 235, speed: 10, accel: 11, turn: 1.9, mass: 1.6, radius: 1.75, space: 130 },
 };
 
 /** A part changes a stat by multiplying it, so anything left out stays as it was. */
@@ -78,7 +76,7 @@ export const ENGINES: Record<EngineId, PartDef> = {
 };
 
 export const POWER_SOURCES: Record<PowerId, PartDef> = {
-  alkaline: { name: 'Alkaline Battery', blurb: 'Recharges slowly. The battery runs your gun and your boost.', price: 0, space: 4 },
+  alkaline: { name: 'Alkaline Battery', blurb: 'Recharges slowly. The battery runs your boost and any powered weapon.', price: 0, space: 4 },
   lithium: { name: 'Lithium Pack', blurb: 'Recharges 40% faster.', price: 300, space: 7, regen: 1.4 },
   fuelcell: { name: 'Fuel Cell', blurb: 'Recharges 90% faster.', price: 650, space: 10, regen: 1.9 },
   reactor: { name: 'Micro Reactor', blurb: 'Boost almost whenever you like.', price: 1200, space: 15, regen: 2.5 },
@@ -91,7 +89,6 @@ export const ARMOUR = { min: 25, max: 150, step: 25, default: 75, spacePerPoint:
 export interface PartsChoice {
   chassis: ChassisId;
   melee: MeleeId;
-  turret: TurretId;
   defense: DefenseId;
   tower?: TowerId;
   wheels?: WheelsId;
@@ -112,7 +109,7 @@ export function weaponSpace(price: number): number {
 export function spaceUsed(l: PartsChoice): number {
   const p = installedParts(l);
   const parts = TOWERS[p.tower].space + WHEELS[p.wheels].space + ENGINES[p.engine].space + POWER_SOURCES[p.power].space;
-  const weapons = weaponSpace(MELEE[l.melee].price) + weaponSpace(TURRETS[l.turret].price) + weaponSpace(DEFENSES[l.defense].price);
+  const weapons = weaponSpace(MELEE[l.melee].price) + weaponSpace(DEFENSES[l.defense].price);
   return Math.round(parts + weapons + p.armour * ARMOUR.spacePerPoint);
 }
 
@@ -170,6 +167,12 @@ export interface MeleeDef {
   saw?: number;
   /** Fraction of the battery each strike uses. */
   battery?: number;
+  /** Fraction of the battery a held weapon uses per second. */
+  drain?: number;
+  /** Anything it touches keeps burning for a moment. */
+  burns?: boolean;
+  /** A strike also jumps to the nearest other robot within this distance, at half damage. */
+  chain?: number;
   /** Seconds a held weapon can run before it has to stop and cool down. */
   runTime?: number;
   /** Multiplies top speed. Spinning the whole body is hard on the drive. */
@@ -183,66 +186,29 @@ const melee = (d: Partial<MeleeDef> & Pick<MeleeDef, 'name' | 'type' | 'blurb' |
 // Spinners store energy: hold the key to spin up, and each hit spends most of it, throwing both
 // robots apart. A hit at low speed is weak. That trade-off is how the real ones behave.
 export const MELEE: Record<MeleeId, MeleeDef> = {
-  chainsaw: melee({ name: 'Chainsaw', type: 'Chainsaw', blurb: 'Hold to shred. Long reach, steady damage.', price: 0, kind: 'held', range: 3.5, arc: 0.6, damage: 36 }),
-  drill: melee({ name: 'Drill', type: 'Drill', blurb: 'Hold to bore in. Hits harder than a saw, but short, narrow, and it overheats.', price: 300, kind: 'held', range: 2.6, arc: 0.35, damage: 54, cooldown: 1.5, runTime: 3 }),
-  dagger: melee({ name: 'Dagger', type: 'Spike', blurb: 'Always out, no key needed. Just drive into them.', price: 150, kind: 'held', range: 2.3, arc: 0.7, damage: 30, passive: true }),
-  rollingpin: melee({ name: 'Rolling Pin', type: 'Roller', blurb: 'A spinning drum that bogs down whatever it touches.', price: 350, kind: 'held', range: 2.5, arc: 0.85, damage: 30, slow: 0.5 }),
-  hammer: melee({ name: 'Sledgehammer', type: 'Hammer', blurb: 'A heavy swing that lands a huge hit on the top armour. Stuns the target.', price: 400, kind: 'strike', range: 3.0, arc: 0.8, damage: 40, cooldown: 1.6, windup: 0.18, stun: 0.6, knockback: 16 }),
-  axe: melee({ name: 'Power Axe', type: 'Axe', blurb: 'A lightning-fast overhead chop you can keep repeating.', price: 450, kind: 'strike', range: 2.7, arc: 0.6, damage: 20, cooldown: 0.55, windup: 0.08, knockback: 7 }),
-  ram: melee({ name: 'Spike Ram', type: 'Ram', blurb: 'More than doubles ram damage. Press to lunge.', price: 350, kind: 'ram', cooldown: 1.1, knockback: 26 }),
-  claw: melee({ name: 'Claw', type: 'Grappler', blurb: 'Grab a robot and carry it, into a saw or off a ledge.', price: 650, kind: 'claw', range: 3.3, arc: 0.55, damage: 15, cooldown: 4, windup: 2.5 }),
-  magnet: melee({ name: 'Magnet', type: 'Magnet', blurb: 'Hold to drag robots toward you from far away.', price: 600, kind: 'magnet', range: 15, arc: 0.7, damage: 34, knockback: 40 }),
-  vertdisc: melee({ name: 'Vertical Disc', type: 'Vertical spinner', blurb: 'Hold to spin up, then land one brutal hit that throws them in the air.', price: 700, kind: 'spinner', range: 3.1, arc: 0.35, damage: 46, cooldown: 1.4, windup: 0.75, stun: 0.2, knockback: 15, launch: 0.45 }),
-  vertbar: melee({ name: 'Vertical Bar', type: 'Vertical spinner', blurb: 'The biggest single hit in the game. Takes the longest to wind up.', price: 850, kind: 'spinner', range: 3.3, arc: 0.3, damage: 58, cooldown: 2, windup: 1, stun: 0.3, knockback: 18, launch: 0.55 }),
-  horizbar: melee({ name: 'Horizontal Bar', type: 'Horizontal spinner', blurb: 'A wide sweep that swats robots across the roof.', price: 800, kind: 'spinner', range: 3.4, arc: 0.75, damage: 44, cooldown: 1.4, windup: 0.75, knockback: 20 }),
-  undercutter: melee({ name: 'Undercutter', type: 'Horizontal spinner', blurb: 'A low blade that goes for the wheels, leaving them crawling.', price: 550, kind: 'spinner', range: 2.9, arc: 0.8, damage: 27, cooldown: 0.9, windup: 0.45, knockback: 14, slow: 1.5 }),
-  drum: melee({ name: 'Drum', type: 'Drum', blurb: 'Spins up fast and bites often, popping robots off the ground.', price: 450, kind: 'spinner', range: 2.6, arc: 0.55, damage: 20, cooldown: 0.5, windup: 0.25, knockback: 8, launch: 0.3 }),
-  eggbeater: melee({ name: 'Eggbeater', type: 'Eggbeater', blurb: 'A lighter, toothier drum. More hit, less spin.', price: 500, kind: 'spinner', range: 2.8, arc: 0.45, damage: 28, cooldown: 0.7, windup: 0.35, knockback: 10, launch: 0.35 }),
-  shell: melee({ name: 'Ring Spinner', type: 'Full body spinner', blurb: 'Hits from every side, but it is slow to wind up and slows you down.', price: 1000, kind: 'spinner', range: 2.7, arc: Math.PI, damage: 36, cooldown: 2.2, windup: 1.2, knockback: 22, drive: 0.85 }),
-  hammersaw: melee({ name: 'Hammer Saw', type: 'Hammer saw', blurb: 'Slams a spinning blade down, then keeps cutting while you hold.', price: 750, kind: 'strike', range: 3.0, arc: 0.5, damage: 20, cooldown: 2, windup: 0.15, stun: 0.4, knockback: 5, saw: 22 }),
-  flipper: melee({ name: 'Pneumatic Flipper', type: 'Flipper', blurb: 'Hurls robots through the air, and they land upside down until they right themselves. Little damage, but deadly near an edge. Uses battery.', price: 800, kind: 'strike', range: 2.8, arc: 0.55, damage: 8, cooldown: 3.2, windup: 0.05, stun: 0.3, knockback: 15, launch: 0.55, flips: true, battery: 0.14 }),
-  crusher: melee({ name: 'Hydraulic Crusher', type: 'Crusher', blurb: 'Bites down and holds on. Enormous damage if you can catch them.', price: 900, kind: 'claw', range: 2.9, arc: 0.45, damage: 58, cooldown: 4, windup: 1.6 }),
-  forks: melee({ name: 'Lifting Forks', type: 'Lifter', blurb: 'Scoop a robot up and drive it wherever you like. Almost no damage.', price: 400, kind: 'claw', range: 3.1, arc: 0.6, damage: 6, cooldown: 2.5, windup: 3.5 }),
-};
-
-export type TurretKind = 'shot' | 'lob' | 'grenade' | 'flame' | 'beam' | 'disc' | 'arc';
-
-export interface TurretDef {
-  name: string;
-  blurb: string;
-  price: number;
-  kind: TurretKind;
-  /** Per shot, or per second for the flamethrower. */
-  damage: number;
-  cooldown: number;
-  range: number;
-  projectileSpeed: number;
-  splash: number;
-  /** Shots for each life, where a burst counts as one. Melee is meant to be the main event, so these are few. */
-  shots: number;
-  /** How many rounds one press fires, one after another. */
-  burst?: number;
-  /** Fraction of the battery used per shot, or per second for the flamethrower. */
-  battery: number;
-  /** Half-angle of the flame or arc. */
-  cone?: number;
-  knockback?: number;
-  bounces?: number;
-}
-
-// Guns point straight ahead with the robot, as they did in the original. To aim, turn the robot.
-export const TURRETS: Record<TurretId, TurretDef> = {
-  minigun: { name: 'Chaingun', blurb: 'Each press fires a burst of 10 light rounds.', price: 0, kind: 'shot', damage: 2.5, cooldown: 1.4, range: 24, projectileSpeed: 64, splash: 0, shots: 6, battery: 0.08, burst: 10 },
-  rockets: { name: 'Missile Pod', blurb: 'Fast, straight missiles with a big splash.', price: 600, kind: 'shot', damage: 25, cooldown: 1.7, range: 30, projectileSpeed: 42, splash: 4.2, shots: 4, battery: 0.14 },
-  heavyrocket: { name: 'Heavy Rocket', blurb: 'A big, heavy round with a blast that is hard to dodge.', price: 700, kind: 'shot', damage: 32, cooldown: 2.2, range: 34, projectileSpeed: 30, splash: 5, shots: 3, battery: 0.18 },
-  bunkerbuster: { name: 'Bunker Buster', blurb: 'A huge warhead. You only get two.', price: 1100, kind: 'shot', damage: 46, cooldown: 4, range: 36, projectileSpeed: 36, splash: 4.4, shots: 2, battery: 0.28 },
-  mortar: { name: 'Mortar', blurb: 'Lobs a shell a fixed distance ahead, over any cover.', price: 750, kind: 'lob', damage: 46, cooldown: 2.2, range: 26, projectileSpeed: 0, splash: 5.5, shots: 3, battery: 0.2 },
-  grenade: { name: 'Grenade Launcher', blurb: 'Bouncing grenades on a short fuse.', price: 550, kind: 'grenade', damage: 13, cooldown: 1.4, range: 20, projectileSpeed: 24, splash: 3.6, shots: 6, battery: 0.1 },
-  flamethrower: { name: 'Flamethrower', blurb: 'Hold for a short-range cone that sets robots burning. Thirsty.', price: 650, kind: 'flame', damage: 24, cooldown: 0, range: 9, projectileSpeed: 0, splash: 0, shots: 0, battery: 0.22, cone: 0.4 },
-  laser: { name: 'Laser Cannon', blurb: 'Instant long-range beam. Blocked by cover.', price: 1000, kind: 'beam', damage: 25, cooldown: 2, range: 36, projectileSpeed: 0, splash: 0, shots: 4, battery: 0.2 },
-  discs: { name: 'Razor Discs', blurb: 'Ricochet off walls. Can come back and hit you.', price: 500, kind: 'disc', damage: 17, cooldown: 1.2, range: 34, projectileSpeed: 38, splash: 0, shots: 6, battery: 0.1, bounces: 3 },
-  spear: { name: 'Spear Gun', blurb: 'One heavy bolt that shoves the target back.', price: 550, kind: 'shot', damage: 19, cooldown: 1.7, range: 32, projectileSpeed: 60, splash: 0, shots: 4, battery: 0.12, knockback: 20 },
-  arc: { name: 'Arc Coil', blurb: 'Zaps whatever is close in front, jumping to a second robot.', price: 800, kind: 'arc', damage: 9, cooldown: 0.9, range: 15, projectileSpeed: 0, splash: 0, shots: 8, battery: 0.1, cone: 0.25 },
+  chainsaw: melee({ name: 'Chainsaw', type: 'Chainsaw', blurb: 'Hold to shred. Long reach, steady damage.', price: 0, kind: 'held', range: 3.5, arc: 0.6, damage: 50 }),
+  drill: melee({ name: 'Drill', type: 'Drill', blurb: 'Hold to bore in. Hits harder than a saw, but short, narrow, and it overheats.', price: 300, kind: 'held', range: 2.6, arc: 0.42, damage: 72, cooldown: 1.5, runTime: 3.5 }),
+  dagger: melee({ name: 'Dagger', type: 'Spike', blurb: 'Always out, no key needed. Just drive into them.', price: 150, kind: 'held', range: 2.3, arc: 0.7, damage: 42, passive: true }),
+  rollingpin: melee({ name: 'Rolling Pin', type: 'Roller', blurb: 'A spinning drum that bogs down whatever it touches.', price: 350, kind: 'held', range: 2.5, arc: 0.85, damage: 35, slow: 0.5 }),
+  hammer: melee({ name: 'Sledgehammer', type: 'Hammer', blurb: 'A heavy swing that lands a huge hit on the top armour. Stuns the target.', price: 400, kind: 'strike', range: 3.0, arc: 0.8, damage: 25, cooldown: 1.9, windup: 0.18, stun: 0.3, knockback: 10 }),
+  axe: melee({ name: 'Power Axe', type: 'Axe', blurb: 'A lightning-fast overhead chop you can keep repeating.', price: 450, kind: 'strike', range: 2.7, arc: 0.6, damage: 14, cooldown: 0.68, windup: 0.08, knockback: 4 }),
+  ram: melee({ name: 'Spike Ram', type: 'Ram', blurb: 'More than doubles ram damage. Press to lunge.', price: 350, kind: 'ram', cooldown: 0.9, knockback: 26 }),
+  claw: melee({ name: 'Claw', type: 'Grappler', blurb: 'Grab a robot and carry it, into a saw or off a ledge.', price: 650, kind: 'claw', range: 3.3, arc: 0.55, damage: 21, cooldown: 3.5, windup: 2.5 }),
+  magnet: melee({ name: 'Magnet', type: 'Magnet', blurb: 'Hold to drag robots toward you from far away.', price: 600, kind: 'magnet', range: 15, arc: 0.9, damage: 46, knockback: 40 }),
+  vertdisc: melee({ name: 'Vertical Disc', type: 'Vertical spinner', blurb: 'Hold to spin up, then land one brutal hit that throws them in the air.', price: 700, kind: 'spinner', range: 3.1, arc: 0.35, damage: 34, cooldown: 1.4, windup: 0.75, stun: 0.2, knockback: 15, launch: 0.45 }),
+  vertbar: melee({ name: 'Vertical Bar', type: 'Vertical spinner', blurb: 'The biggest single hit in the game. Takes the longest to wind up.', price: 850, kind: 'spinner', range: 3.3, arc: 0.3, damage: 31, cooldown: 2, windup: 1, stun: 0.3, knockback: 15, launch: 0.55 }),
+  horizbar: melee({ name: 'Horizontal Bar', type: 'Horizontal spinner', blurb: 'A wide sweep that swats robots across the roof.', price: 800, kind: 'spinner', range: 3.4, arc: 0.75, damage: 30, cooldown: 1.4, windup: 0.75, knockback: 12 }),
+  undercutter: melee({ name: 'Undercutter', type: 'Horizontal spinner', blurb: 'A low blade that goes for the wheels, leaving them crawling.', price: 550, kind: 'spinner', range: 2.9, arc: 0.8, damage: 24, cooldown: 0.9, windup: 0.45, knockback: 10, slow: 0.7 }),
+  drum: melee({ name: 'Drum', type: 'Drum', blurb: 'Spins up fast and bites often, popping robots off the ground.', price: 450, kind: 'spinner', range: 2.6, arc: 0.55, damage: 24, cooldown: 0.5, windup: 0.25, knockback: 8, launch: 0.3 }),
+  eggbeater: melee({ name: 'Eggbeater', type: 'Eggbeater', blurb: 'A lighter, toothier drum. More hit, less spin.', price: 500, kind: 'spinner', range: 2.8, arc: 0.45, damage: 24, cooldown: 0.7, windup: 0.35, knockback: 10, launch: 0.35 }),
+  shell: melee({ name: 'Ring Spinner', type: 'Full body spinner', blurb: 'Hits from nearly every side, but it is slow to wind up and slows you down.', price: 1000, kind: 'spinner', range: 2.7, arc: 2.6, damage: 16, cooldown: 1.7, windup: 0.9, knockback: 15, drive: 0.92 }),
+  hammersaw: melee({ name: 'Hammer Saw', type: 'Hammer saw', blurb: 'Slams a spinning blade down, then keeps cutting while you hold.', price: 750, kind: 'strike', range: 3.0, arc: 0.5, damage: 20, cooldown: 1.7, windup: 0.15, stun: 0.4, knockback: 5, saw: 25 }),
+  flipper: melee({ name: 'Pneumatic Flipper', type: 'Flipper', blurb: 'Hurls robots through the air, and they land upside down until they right themselves. Little damage, but deadly near an edge. Uses battery.', price: 800, kind: 'strike', range: 2.8, arc: 0.55, damage: 8, cooldown: 4, windup: 0.05, stun: 0.3, knockback: 12, launch: 0.55, flips: true, battery: 0.14 }),
+  crusher: melee({ name: 'Hydraulic Crusher', type: 'Crusher', blurb: 'Bites down and holds on. Enormous damage if you can catch them.', price: 900, kind: 'claw', range: 2.9, arc: 0.45, damage: 48, cooldown: 4, windup: 1.6 }),
+  forks: melee({ name: 'Lifting Forks', type: 'Lifter', blurb: 'Scoop a robot up and drive it wherever you like. Almost no damage.', price: 400, kind: 'claw', range: 3.1, arc: 0.6, damage: 14, cooldown: 2.5, windup: 3.5 }),
+  flamethrower: melee({ name: 'Flamethrower', type: 'Flame', blurb: 'Hold for a cone of fire that keeps them burning. Longest reach of any weapon, but it drinks the battery.', price: 650, kind: 'held', range: 7, arc: 0.42, damage: 30, drain: 0.2, burns: true }),
+  tesla: melee({ name: 'Tesla Coil', type: 'Tesla', blurb: 'A short-range bolt that stuns, then jumps to a second robot nearby. Uses battery.', price: 800, kind: 'strike', range: 5, arc: 0.6, damage: 17, cooldown: 1.1, windup: 0.05, stun: 0.25, battery: 0.09, chain: 7 }),
+  spear: melee({ name: 'Pneumatic Spear', type: 'Spike', blurb: 'Fires a steel spike straight out and back. Long and narrow, and it shoves hard.', price: 550, kind: 'strike', range: 4.4, arc: 0.3, damage: 30, cooldown: 1.25, windup: 0.06, knockback: 20 }),
 };
 
 /** Battery refilled per second, from 0 to 1. */
@@ -251,8 +217,6 @@ export const BATTERY_REGEN = 0.03;
 export const BOOST_DRAIN = 0.1;
 export const BOOST_SPEED = 1.45;
 export const BOOST_ACCEL = 1.4;
-/** Seconds between rounds in a burst. */
-export const BURST_GAP = 0.05;
 /** A spinner below this speed glances off without doing anything. */
 export const SPINNER_MIN_SPEED = 0.2;
 /** How much speed a spinner keeps after a hit. */
@@ -281,22 +245,22 @@ const defense = (d: Partial<DefenseDef> & Pick<DefenseDef, 'name' | 'blurb' | 'p
 });
 
 export const DEFENSES: Record<DefenseId, DefenseDef> = {
-  shield: defense({ name: 'Force Field', blurb: 'Blocks 75% of damage for a moment.', price: 0, cooldown: 8, duration: 2.5 }),
+  shield: defense({ name: 'Force Field', blurb: 'Blocks 75% of damage for a moment.', price: 0, cooldown: 7, duration: 2.5 }),
   mines: defense({ name: 'Land Mines', blurb: 'Drops a proximity mine. Three at a time.', price: 300, cooldown: 5, duration: 45, damage: 35, radius: 3.5, mounted: true }),
   oil: defense({ name: 'Oil Spreader', blurb: 'Leaves a slippery patch for whoever is chasing you.', price: 350, cooldown: 9, duration: 8, radius: 4.5, mounted: true }),
   glue: defense({ name: 'Glue Spreader', blurb: 'Leaves a sticky patch that slows robots to a crawl.', price: 350, cooldown: 8, duration: 8, radius: 4, mounted: true }),
-  nails: defense({ name: 'Nail Spreader', blurb: 'Scatters nails that hurt anything rolling over them.', price: 300, cooldown: 8, duration: 9, damage: 12, radius: 3.8, mounted: true }),
+  nails: defense({ name: 'Nail Spreader', blurb: 'Scatters nails that hurt anything rolling over them.', price: 300, cooldown: 8, duration: 9, damage: 9, radius: 3.8, mounted: true }),
   steelram: defense({ name: 'Steel Ram', blurb: 'A heavy plate. Halves damage from the side it covers, always on.', price: 550, damage: 0.5, passive: true, mounted: true }),
-  plow: defense({ name: 'Plow', blurb: 'Clears mines and nails, and throws discs back. Always on.', price: 250, passive: true, mounted: true }),
-  blades: defense({ name: 'Side Blades', blurb: 'Spin up blades that cut anything alongside you.', price: 500, cooldown: 8, duration: 3, damage: 24, radius: 1.6 }),
-  cutter: defense({ name: 'Cutter', blurb: 'One sweeping cut all around you that throws robots back.', price: 500, cooldown: 6, damage: 28, radius: 5 }),
-  teleport: defense({ name: 'Teleport', blurb: 'Jump a long way forward in an instant.', price: 800, cooldown: 8, radius: 14 }),
-  flash: defense({ name: 'Flash Bomb', blurb: 'Briefly dazzles pilots close by.', price: 450, cooldown: 14, duration: 1.2, radius: 8 }),
-  regen: defense({ name: 'Armor Regenerator', blurb: 'Rebuilds armor over five seconds.', price: 700, cooldown: 12, duration: 5, damage: 11 }),
-  cloak: defense({ name: 'Cloaking Device', blurb: 'Vanish for a few seconds. Firing breaks it.', price: 800, cooldown: 14, duration: 5 }),
+  plow: defense({ name: 'Plow', blurb: 'Clears mines and nails, and takes a fifth off hits from the side it covers. Always on.', price: 250, damage: 0.8, passive: true, mounted: true }),
+  blades: defense({ name: 'Side Blades', blurb: 'Spin up blades that cut anything alongside you.', price: 500, cooldown: 10, duration: 2.5, damage: 13, radius: 1.6 }),
+  cutter: defense({ name: 'Cutter', blurb: 'One sweeping cut all around you that throws robots back.', price: 500, cooldown: 8, damage: 17, radius: 4.2 }),
+  teleport: defense({ name: 'Teleport', blurb: 'Jump a long way forward in an instant.', price: 800, cooldown: 6, radius: 14 }),
+  flash: defense({ name: 'Flash Bomb', blurb: 'Dazzles and slows pilots close by.', price: 450, cooldown: 11, duration: 1.6, radius: 10 }),
+  regen: defense({ name: 'Armor Regenerator', blurb: 'Rebuilds armor over five seconds.', price: 700, cooldown: 16, duration: 5, damage: 7 }),
+  cloak: defense({ name: 'Cloaking Device', blurb: 'Vanish for a few seconds. Landing a hit breaks it.', price: 800, cooldown: 14, duration: 5 }),
   emp: defense({ name: 'EMP', blurb: 'Stuns every robot around you.', price: 900, cooldown: 14, duration: 1.5, radius: 9 }),
-  minibot: defense({ name: 'Mini-Robot', blurb: 'Releases a small robot that hunts and explodes.', price: 750, cooldown: 9, duration: 8, damage: 22, radius: 3.5, mounted: true }),
-  remote: defense({ name: 'Remote Charges', blurb: 'Press to plant. Press again to set them all off.', price: 600, cooldown: 1, duration: 60, damage: 40, radius: 5, mounted: true }),
+  minibot: defense({ name: 'Mini-Robot', blurb: 'Releases a small robot that hunts and explodes.', price: 750, cooldown: 9, duration: 8, damage: 18, radius: 3.5, mounted: true }),
+  remote: defense({ name: 'Remote Charges', blurb: 'Press to plant. Press again to set them all off.', price: 600, cooldown: 1, duration: 60, damage: 46, radius: 5, mounted: true }),
   kamikaze: defense({ name: 'Kamikaze Bomb', blurb: 'Destroys you and everything close by. Last resort.', price: 500, cooldown: 1, duration: 1.2, damage: 95, radius: 8 }),
 };
 
@@ -312,7 +276,7 @@ export const POWERUP_ORDER: PowerupId[] = ['rage', 'megashield', 'cloaking', 'xr
 export const POWERUPS: Record<PowerupId, PowerupDef> = {
   rage: { name: 'Rage', blurb: '+75% damage for 6 s.', price: 120 },
   megashield: { name: 'Mega Shield', blurb: 'Blocks 90% of damage for 5 s.', price: 140 },
-  cloaking: { name: 'Cloaking', blurb: 'Invisible for 6 s, or until you fire.', price: 110 },
+  cloaking: { name: 'Cloaking', blurb: 'Invisible for 6 s, or until you land a hit.', price: 110 },
   xray: { name: 'X-Ray', blurb: 'See every robot through walls and cloaks for 10 s.', price: 70 },
   repair: { name: 'Repair Kit', blurb: 'Restores 40% of max HP.', price: 80 },
   battery: { name: 'Battery Pack', blurb: 'Refills your battery at once.', price: 60 },
@@ -345,11 +309,13 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
 
 export const REWARD = {
   kill: 100,
+  /** For hurting a robot that someone else then finished off. */
+  assist: 40,
   damage: 0.4,
   scrap: 25,
   repairPickup: 0.3,
   hillPerSecond: 3,
-  placement: [300, 180, 100, 50, 25, 10],
+  placement: [300, 180, 100, 50, 25, 10, 5, 0],
   /** The least anyone earns for seeing a match through to the end. */
   minimum: 100,
   duel: [300, 50],
@@ -359,14 +325,19 @@ export type ModeId = 'duel' | 'ffa' | 'lms' | 'koth';
 
 export const MODES: Record<ModeId, { name: string; blurb: string; duration: number }> = {
   duel: { name: 'Duel', blurb: 'One on one, one life. Wreck them or knock them off the roof.', duration: 180 },
-  ffa: { name: 'Free-for-All', blurb: 'First to 12 kills, or the most when time runs out.', duration: 150 },
+  ffa: { name: 'Free-for-All', blurb: 'First to 8 kills, or the most when time runs out.', duration: 150 },
   lms: { name: 'Last Robot Standing', blurb: 'One life each. Outlast everyone.', duration: 180 },
-  koth: { name: 'King of the Hill', blurb: 'Hold the zone alone to score. First to 45 seconds wins.', duration: 180 },
+  koth: { name: 'King of the Hill', blurb: 'Hold the zone to score, and share the points with anyone in there with you.', duration: 180 },
 };
 
 export const HILL_TARGET = 45;
-/** Long enough to watch the loser fall before the results appear. */
-export const DUEL_OUTRO = 1.5;
+/** With this many robots the zone is rarely empty, so the race is shorter. */
+export const HILL_CROWD = 5;
+export const HILL_TARGET_CROWD = 30;
+/** Long enough to watch the loser come apart, and the screen go black, before the results appear. */
+export const DUEL_OUTRO = 3;
+/** Giving up has nothing to watch, so the results come sooner. */
+export const FORFEIT_OUTRO = 1.5;
 /** What someone knocked out of a match can do while it runs on without them. */
 export const SPECTATE = {
   /** Money for each second they stay and watch. */
@@ -395,20 +366,31 @@ export const TRAP = {
 
 /** Seconds of 3, 2, 1 before a match starts. */
 export const COUNTDOWN = 3;
+/** The face-off a duel opens with, which runs before those 3, 2, 1. */
+export const DUEL_INTRO = 3.4;
+/** How long a destroyed robot tumbles before it blows. The rest of the respawn time is a fade to black. */
+export const RAGDOLL_TIME = 1;
 
 export const MATCH = {
   duration: MODES.ffa.duration,
-  killTarget: 12,
+  killTarget: 8,
   respawnTime: 3,
   spawnInvuln: 2,
   repairInterval: 20,
   ramMinSpeed: 5,
   ramCapSpeed: 22,
   ramDamage: 1.1,
-  spikeRamMult: 2.4,
+  spikeRamMult: 2.6,
   ramCooldown: 0.5,
   shieldAbsorb: 0.75,
+  /** Hitting a robot within this long of it dying earns an assist. */
+  assistWindow: 6,
 };
+
+/** Being hit by several robots at once mustn't mean never moving again, so stuns soon after a stun are shorter. */
+export const STUN_GUARD = { time: 1.5, share: 0.35 };
+/** Splash loses a share of its damage for each robot past the first, so a crowd can't be wiped in one blast. */
+export const CROWD_SPLASH = 0.25;
 
 // --- Cosmetics. All free, and all validated by the server before other players see them. ---
 

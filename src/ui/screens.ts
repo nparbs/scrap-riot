@@ -7,10 +7,10 @@ import { ARENA_ORDER, ARENAS, type ArenaId } from '../sim/arena';
 import {
   ARMOUR,
   buildStats,
+  CHASSIS,
   DEFENSES,
   MELEE,
   REWARD,
-  TURRETS,
   DEFAULT_PAINT,
   installedParts,
   MODES,
@@ -26,7 +26,7 @@ import {
   type MeleeId,
   type ModeId,
   type Paint,
-  type TurretId,
+  type PartDef,
   type PowerupId,
   type UpgradeId,
 } from '../sim/data';
@@ -49,10 +49,9 @@ function controlsTable(keys: Bindings): string {
   return `
   <table class="controls">
     <tr><td>${key('forward')}${key('back')}${key('left')}${key('right')}</td><td>Drive</td></tr>
-    <tr><td>${key('melee')}</td><td>Main weapon</td></tr>
+    <tr><td>${key('melee')}<kbd>Left click</kbd></td><td>Main weapon</td></tr>
+    <tr><td>${key('defense')}<kbd>Right click</kbd></td><td>Defense</td></tr>
     <tr><td>${key('boost')}</td><td>Speed boost (uses battery)</td></tr>
-    <tr><td>${key('turret')}</td><td>Gun (fires straight ahead)</td></tr>
-    <tr><td>${key('defense')}</td><td>Defense</td></tr>
     <tr><td>${key('power1')}${key('power2')}${key('power3')}${key('power4')}${key('power5')}${key('power6')}</td><td>Powerups</td></tr>
     <tr><td>${key('rear')}</td><td>Look behind</td></tr>
     <tr><td><kbd>M</kbd> / <kbd>Esc</kbd></td><td>Mute / Pause</td></tr>
@@ -223,14 +222,19 @@ export type GarageTab = 'workshop' | 'paintshop' | 'sell' | 'bots' | 'stats' | '
 export type SideTab = 'stats' | 'highscore' | 'players';
 export type BuyCategory = Slot | 'powerups' | 'upgrades';
 
-const TOP_TABS: [GarageTab, string][] = [['workshop', 'Workshop'], ['paintshop', 'Paintshop'], ['sell', 'Sell Parts']];
+const TOP_TABS: [GarageTab, string][] = [['workshop', 'Workshop'], ['paintshop', 'Paintshop'], ['sell', 'Sell Parts'], ['bots', 'Fight Bots'], ['stats', 'Stats'], ['help', 'Help']];
 const SIDE_TABS: [SideTab, string][] = [['stats', 'Specs'], ['highscore', 'Highscore'], ['players', 'Players']];
 const SLOT_LABELS: Record<Slot, string> = {
   chassis: 'Chassis', tower: 'Tower', wheels: 'Wheels', engine: 'Engine', power: 'Power source',
-  melee: 'Main weapon', turret: 'Gun', defense: 'Defense',
+  melee: 'Main weapon', defense: 'Defense',
 };
 const SLOTS = Object.keys(SLOT_LABELS) as Slot[];
-const BUY_CATEGORIES: [BuyCategory, string][] = [...SLOTS.map((slot): [BuyCategory, string] => [slot, SLOT_LABELS[slot]]), ['powerups', 'Powerups'], ['upgrades', 'Upgrades']];
+/** The shop's sections down the side, in the order you'd think about a robot. */
+const SHOP_GROUPS: [string, [BuyCategory, string][]][] = [
+  ['Weapons', [['melee', SLOT_LABELS.melee], ['defense', SLOT_LABELS.defense]]],
+  ['Robot', [['chassis', SLOT_LABELS.chassis], ['tower', SLOT_LABELS.tower], ['wheels', SLOT_LABELS.wheels], ['engine', SLOT_LABELS.engine], ['power', SLOT_LABELS.power]]],
+  ['Extras', [['powerups', 'Powerups'], ['upgrades', 'Upgrades']]],
+];
 const STAT_MAX = { speed: 24, hp: 440 };
 
 export interface GarageOptions {
@@ -331,22 +335,53 @@ function partName(slot: Slot, id: string): string {
   return (CATALOG[slot] as Record<string, { name: string }>)[id].name;
 }
 
+/** Small facts on a part's card. Good ones and bad ones are coloured, so a card can be read at a glance. */
+function chip(text: string, tone: 'good' | 'bad' | '' = ''): string {
+  return `<i class="chip${tone ? ` chip-${tone}` : ''}">${text}</i>`;
+}
+
+function percentChip(value: number | undefined, label: string, lowerIsBetter = false): string {
+  if (value === undefined || value === 1) return '';
+  const better = lowerIsBetter ? value < 1 : value > 1;
+  return chip(`${value > 1 ? '+' : '−'}${Math.round(Math.abs(value - 1) * 100)}% ${label}`, better ? 'good' : 'bad');
+}
+
 /** What the shop says about a part. Weapons take room according to their price, and the chassis provides it. */
-function partDetails(slot: Slot, id: string): string {
-  const def = (CATALOG[slot] as Record<string, { price: number; space?: number }>)[id];
-  if (slot === 'chassis') return `Room for ${def.space}`;
-  const room = `Takes ${slot === 'melee' || slot === 'turret' || slot === 'defense' ? weaponSpace(def.price) : def.space} room`;
+function partChips(slot: Slot, id: string): string {
+  if (slot === 'chassis') {
+    const c = CHASSIS[id as keyof typeof CHASSIS];
+    return chip(`${c.hp} HP`) + chip(`Speed ${c.speed}`) + chip(`${c.mass} t`) + chip(`Room ${c.space}`, 'good');
+  }
   if (slot === 'melee') {
     const weapon = MELEE[id as MeleeId];
-    return `${weapon.type} · ${weapon.cooldown >= 1 ? `${weapon.cooldown}s cooldown · ` : ''}${room}`;
+    const held = weapon.kind === 'held' || weapon.kind === 'magnet' || weapon.kind === 'claw';
+    return [
+      weapon.damage ? chip(`${weapon.damage}${held ? ' per sec' : ' dmg'}`) : '',
+      weapon.range ? chip(`Reach ${weapon.range}`) : '',
+      weapon.cooldown >= 0.3 ? chip(`${weapon.cooldown}s reload`) : '',
+      weapon.battery || weapon.drain ? chip('Battery', 'bad') : '',
+      chip(`Takes ${weaponSpace(weapon.price)} room`),
+    ].join('');
   }
-  if (slot === 'turret') {
-    const shots = TURRETS[id as TurretId].shots;
-    const gun = TURRETS[id as TurretId];
-    const count = shots > 0 ? `${shots} ${gun.burst ? 'bursts' : 'shots'} per life` : 'Battery only';
-    return `${count} · ${gun.cooldown >= 1 ? `${gun.cooldown}s cooldown · ` : ''}${room}`;
+  if (slot === 'defense') {
+    const defense = DEFENSES[id as keyof typeof DEFENSES];
+    return [
+      defense.passive ? chip('Always on', 'good') : chip(`${defense.cooldown}s reload`),
+      defense.mounted ? chip('One side') : chip('All around', 'good'),
+      chip(`Takes ${weaponSpace(defense.price)} room`),
+    ].join('');
   }
-  return room;
+  const part = (CATALOG[slot] as Record<string, PartDef>)[id];
+  return [
+    percentChip(part.hp, 'armour'),
+    percentChip(part.speed, 'speed'),
+    percentChip(part.accel, 'accel'),
+    percentChip(part.turn, 'turning'),
+    percentChip(part.mass, 'weight', true),
+    percentChip(part.regen, 'recharge'),
+    part.room ? chip(`+${part.room} room`, 'good') : '',
+    chip(`Takes ${part.space} room`),
+  ].join('');
 }
 
 function bar(label: string, fraction: number, over = false): string {
@@ -368,13 +403,15 @@ function partCards(save: Save, slot: Slot, preview: PartPreview | null): string 
       const trying = preview?.slot === slot && preview.id === id;
       const broke = !has && save.money < item.price;
       const fits = partFits(save, slot, id);
-      const about = `<strong>${item.name}</strong><span>${item.blurb}</span><small>${partDetails(slot, id)}</small>`;
+      const type = slot === 'melee' ? `<small class="card-type">${MELEE[id as MeleeId].type}</small>` : '';
+      const about = `<strong>${item.name}</strong>${type}<span>${item.blurb}</span><div class="chips">${partChips(slot, id)}</div>`;
+      const price = has ? '<small class="card-owned">Owned</small>' : `<small class="card-price">$${item.price.toLocaleString()}</small>`;
       const action = has
         ? `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${fits ? '' : 'disabled'}>${fits ? 'Fit' : 'No room'}</button>`
-        : `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${broke ? 'disabled' : ''}>Buy $${item.price}</button>`;
+        : `<button class="plate-btn plate-buy" data-slot="${slot}" data-id="${id}" ${broke ? 'disabled' : ''}>Buy</button>`;
       return on
-        ? `<div class="card part-card card-on"><div class="part-card-about">${about}</div><em>Fitted</em></div>`
-        : `<div class="card part-card${trying ? ' card-trying' : ''}${broke ? ' card-broke' : ''}"><button class="part-card-about" data-preview-slot="${trying ? '' : slot}" data-preview-id="${id}" aria-pressed="${trying}">${about}</button>${action}</div>`;
+        ? `<div class="card part-card card-on"><div class="part-card-about">${about}</div><div class="card-foot"><small class="card-owned">Fitted</small></div></div>`
+        : `<div class="card part-card${trying ? ' card-trying' : ''}${broke ? ' card-broke' : ''}"><button class="part-card-about" data-preview-slot="${trying ? '' : slot}" data-preview-id="${id}" aria-pressed="${trying}">${about}</button><div class="card-foot">${price}${action}</div></div>`;
     })
     .join('');
 }
@@ -419,35 +456,40 @@ function workshopPanel(save: Save, options: GarageOptions): string {
   const rear = loadout.rearMelee === true;
   const placement = {
     melee: `<select data-placement aria-label="Main weapon placement"><option value="0"${rear ? '' : ' selected'}>Front</option><option value="1"${rear ? ' selected' : ''}>Back</option></select>`,
-    turret: '<b>Fixed forward</b>',
     defense: DEFENSES[shown.defense].mounted ? `<span><b>${rear ? 'Front' : 'Back'}</b>, opposite main weapon</span>` : '<b>All around</b>',
   };
-  const weaponRow = category === 'melee' || category === 'turret' || category === 'defense'
-    ? `<div class="part-row part-weapon"><span class="part-key">Key: <kbd>${keyLabel(options.keys[category])}</kbd></span>
-        <span class="part-place">Placement: ${placement[category]}</span></div>`
+  const weaponRow = category === 'melee' || category === 'defense'
+    ? `<div class="part-row part-weapon"><span class="part-key">Controls <kbd>${keyLabel(options.keys[category])}</kbd><kbd>${category === 'melee' ? 'Left click' : 'Right click'}</kbd></span>
+        <span class="part-place">Placement ${placement[category]}</span></div>`
     : '';
 
-  const tabs = BUY_CATEGORIES.map(([id, label]) => {
+  const rail = SHOP_GROUPS.map(([group, items]) => `<h4>${group}</h4>${items.map(([id, label]) => {
     const current = id === 'powerups' || id === 'upgrades' ? '' : `<small>${partName(id, fittedPart(shown, id))}</small>`;
-    return `<button class="mini-btn part-tab${category === id ? ' mini-on' : ''}${preview?.slot === id ? ' part-trying' : ''}" data-buy="${id}">${label}${current}</button>`;
-  }).join('');
+    return `<button class="rail-item${category === id ? ' rail-on' : ''}${preview?.slot === id ? ' part-trying' : ''}" data-buy="${id}"><span>${label}</span>${current}</button>`;
+  }).join('')}`).join('');
+  const title = SHOP_GROUPS.flatMap(([, items]) => items).find(([id]) => id === category)?.[1] ?? '';
   const cards = category === 'powerups' ? powerupCards(save, options.keys) : category === 'upgrades' ? upgradeCards(save) : partCards(save, category, preview);
   const hint = category === 'powerups' || category === 'upgrades'
     ? ''
-    : `<div class="preview-note">${preview ? `Previewing <b>${partName(preview.slot, preview.id)}</b>. Nothing has changed yet.` : 'Click a part to try it on your robot. Nothing is bought until you press its button.'}</div>`;
+    : `<p class="preview-note${preview ? ' preview-on' : ''}">${preview ? `Previewing <b>${partName(preview.slot, preview.id)}</b>. Nothing has changed yet.` : 'Click a part to try it on your robot. Nothing is bought until you press its button.'}</p>`;
   return `
-    <div class="workshop-sheet">
-      <div class="stat-bars">
-        ${bar(`Used space (${used}/${capacity})`, used / capacity, used > capacity)}
-        ${bar('Max speed', stats.speed / STAT_MAX.speed)}
-        ${bar('Armour', stats.hp / STAT_MAX.hp)}
+    <div class="shop">
+      <nav class="shop-rail">${rail}</nav>
+      <div class="shop-main">
+        <div class="shop-head">
+          <h3>${title}</h3>
+          <div class="stat-bars">
+            ${bar(`Room ${used} / ${capacity}`, used / capacity, used > capacity)}
+            ${bar('Top speed', stats.speed / STAT_MAX.speed)}
+            ${bar('Armour', stats.hp / STAT_MAX.hp)}
+          </div>
+          ${armour}
+        </div>
+        ${weaponRow}
+        ${hint}
+        <div class="cards">${cards}</div>
       </div>
-      <div class="part-row">${armour}</div>
-    </div>
-    <div class="part-tabs">${tabs}</div>
-    ${weaponRow}
-    ${hint}
-    <div class="cards">${cards}</div>`;
+    </div>`;
 }
 
 function statsPanel(save: Save, preview: PartPreview | null): string {
@@ -463,7 +505,7 @@ function statsPanel(save: Save, preview: PartPreview | null): string {
     ['Weight', `${stats.mass.toFixed(2)} t`],
     ['Used space', `${used} / ${room}`, used > room ? 'spec-over' : ''],
     ['Battery recharge', `${Math.round(stats.regen * 100)}%`],
-    ['Gun shots', TURRETS[shown.turret].shots > 0 ? String(TURRETS[shown.turret].shots) : 'Battery'],
+    ['Main weapon', MELEE[shown.melee].name],
   ];
   return `<dl class="spec-grid">${rows.map(([label, value, cls]) => `<div class="${cls ?? ''}"><dt>${label}</dt><dd>${value}</dd></div>`).join('')}</dl>`;
 }
@@ -564,14 +606,15 @@ function helpPanel(keys: Bindings): string {
       'Build a robot in the Workshop. Every part takes up room, so a bigger chassis fits more.',
       'Robots only turn while rolling, so a stopped robot has to drive forward or back to change direction.',
       'Your defense goes on the opposite side from your main weapon, so moving the weapon to the back moves the defense to the front.',
-      'Your main weapon does the real damage. Spinners have to reach speed before they bite, so hold the key on the way in.',
-      'Guns only fire straight ahead and have few shots per life. Your battery runs your gun and your speed boost.',
+      'Your main weapon is how you win. Spinners have to reach speed before they bite, so hold the key on the way in.',
+      'There are no guns. Everything is up close, the way real combat robots fight.',
+      'Your battery runs your speed boost and any powered weapon, such as the Flamethrower, Tesla Coil and Flipper.',
       'Strong weapons have a cooldown, shown in red on the panel at the bottom.',
       'A flipper lands you upside down, and you can\'t do anything until your robot rights itself about three seconds later.',
     ])}</section>
     <section><h3>Ways to play</h3>${list([
       '<b>Online Duel:</b> one on one on the roof. Wreck them or knock them off. If time runs out, the most armour left wins.',
-      '<b>Online Brawl:</b> up to eight robots on a random map, with bots in any seats no pilot takes. Wrecked robots come back, and first to 12 kills wins.',
+      '<b>Online Brawl:</b> up to eight robots on a random map, with bots in any seats no pilot takes. Wrecked robots come back, first to 8 kills wins, and helping with a kill pays too.',
       '<b>Offline vs Bots and Career:</b> pick a map and mode, or climb the ladder of fights.',
       '<b>Knocked out of Last Robot Standing?</b> Stay and watch from above. You earn money every second, and you can steer a marker and set off the map\'s traps. Leaving means no payout.',
       'Every match you finish pays at least $100, online or offline.',
@@ -609,20 +652,21 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
   const topTabs = TOP_TABS.map(([id, label]) => `<button class="top-tab${options.tab === id ? ' top-tab-on' : ''}" data-tab="${id}">${label}</button>`).join('');
   const sideTabs = SIDE_TABS.map(([id, label]) => `<button class="side-tab${options.side === id ? ' side-tab-on' : ''}" data-side="${id}">${label}</button>`).join('');
   const navButton = (label: string, attr: string, extra = '') => `<button class="nav-btn${extra}" ${attr}>${label}</button>`;
+  const money = save.money.toLocaleString();
   const onlineButton = (label: string, queue: OnlineQueue) =>
     navButton(`${label}<small data-queue="${queue}">${queueLabel(options.online, queue)}</small>`, options.onlineAvailable ? `data-online="${queue}"` : 'disabled title="No game server is connected"', ' nav-btn-play');
 
   el.innerHTML = `
     <div class="ws">
-      <div class="ws-left">
+      <header class="ws-bar">
+        <div class="ws-brand">${logoHtml()}</div>
         <nav class="top-tabs">${topTabs}</nav>
+        <div class="garage-money" data-money><small>Balance</small>$${money}</div>
+      </header>
+      <div class="ws-left">
         <div class="ws-panel">${options.notice ? `<div class="garage-notice" role="alert">${escapeText(options.notice)}</div>` : ''}${body()}</div>
       </div>
       <div class="ws-right">
-        <div class="ws-logo">
-          ${logoHtml()}
-          <div class="garage-money">$${save.money}</div>
-        </div>
         <div class="preview-window" data-preview>
           <div class="zoom-row"><button class="step-btn" data-zoom="0.15" aria-label="Zoom out">−</button><button class="step-btn" data-zoom="-0.15" aria-label="Zoom in">+</button></div>
         </div>
@@ -631,11 +675,9 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
         <div class="nav-btns">
           ${onlineButton('Online Duel', 'duel')}
           ${onlineButton('Online Brawl', 'brawl')}
-          ${navButton('Offline vs Bots', 'data-tab="bots"')}
+          ${navButton('Fight Bots', 'data-tab="bots"')}
           ${navButton('Training', 'data-training')}
-          ${navButton('Stats', 'data-tab="stats"')}
-          ${navButton('Help', 'data-tab="help"')}
-          ${navButton('Quit', 'data-quit')}
+          ${navButton('Back to title', 'data-quit', ' nav-btn-quiet')}
         </div>
       </div>
     </div>`;
@@ -693,7 +735,7 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
   const headline = drawn ? 'A draw.' : mine.place === 1 ? 'Last bot rolling!' : duel ? 'Scrapped.' : mine.place <= 3 ? 'Still in one piece.' : 'Back to the scrapyard.';
   const rows = standings
     .map(
-      (s) => `<tr class="${s.bot.id === playerId ? 'row-me' : ''}"><td>${s.place}</td><td>${escapeText(s.bot.name)}</td><td>${s.bot.kills}</td><td>${s.bot.deaths}</td><td>${Math.round(s.bot.damageDealt)}</td><td>$${s.total}</td></tr>`,
+      (s) => `<tr class="${s.bot.id === playerId ? 'row-me' : ''}"><td>${s.place}</td><td>${escapeText(s.bot.name)}</td><td>${s.bot.kills}</td><td>${s.bot.assists}</td><td>${s.bot.deaths}</td><td>${Math.round(s.bot.damageDealt)}</td><td>$${s.total}</td></tr>`,
     )
     .join('');
   el.innerHTML = `
@@ -701,7 +743,7 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
       <h2>${headline}</h2>
       ${note ? `<p class="payout"><small>${escapeText(note)}</small></p>` : `<p class="payout">You earned <b>$${mine.total}</b> <small>($${Math.round(mine.bot.earned)} in battle + $${mine.bonus} bonus)${mine.total > Math.round(mine.bot.earned + mine.bonus) ? `. Every finished match pays at least $${REWARD.minimum}.` : ''}</small></p>`}
       <table class="results">
-        <thead><tr><th>#</th><th>Robot</th><th>Kills</th><th>Deaths</th><th>Damage</th><th>Payout</th></tr></thead>
+        <thead><tr><th>#</th><th>Robot</th><th>Kills</th><th>Assists</th><th>Deaths</th><th>Damage</th><th>Payout</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       <button class="btn btn-primary" data-continue>Back to the workshop</button>
@@ -765,9 +807,9 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
         <button class="mini-btn${settings.muted ? ' mini-on' : ''}" data-mute>${settings.muted ? 'Muted' : 'Off'}</button></div>
       <h3>Keyboard</h3>
       ${bindings}
-      <p class="settings-hint">Esc cancels a rebind. Using a key that's taken swaps the two actions. Esc and M stay reserved for pause and mute, and Ctrl for browser shortcuts.</p>
+      <p class="settings-hint">Esc cancels a rebind. Using a key that's taken swaps the two actions. Esc and M stay reserved for pause and mute, and Ctrl for browser shortcuts. Left click always fires the main weapon and right click the defense.</p>
       <h3>Gamepad</h3>
-      <p class="settings-hint">Right and left triggers drive, the left stick steers. A: main weapon, RB: gun, B: defense, X: speed boost, D-pad: first four powerups, LB: Repair Kit, Y: look behind, Start: menu.</p>
+      <p class="settings-hint">Right and left triggers drive, the left stick steers. A or RB: main weapon, B: defense, X: speed boost, D-pad: first four powerups, LB: Repair Kit, Y: look behind, Start: menu.</p>
       <button class="btn" data-reset>Reset keys</button>
       <button class="btn btn-primary" data-back>Done</button>
     </div>`;

@@ -15,7 +15,6 @@ import {
   spaceCapacity,
   spaceUsed,
   TOWERS,
-  TURRETS,
   UPGRADES,
   WHEELS,
   type ChassisId,
@@ -29,7 +28,6 @@ import {
   type PowerupId,
   type BodyId,
   type TowerId,
-  type TurretId,
   type UpgradeId,
   type WheelsId,
   installedParts,
@@ -41,7 +39,7 @@ import { makeRng } from '../sim/rng';
 // Bumped when the shape of a save changes. Old saves are not carried over, so everyone starts fresh.
 const SAVE_KEY = 'scrap-riot.save.v3';
 
-export type Slot = 'chassis' | 'tower' | 'wheels' | 'engine' | 'power' | 'melee' | 'turret' | 'defense';
+export type Slot = 'chassis' | 'tower' | 'wheels' | 'engine' | 'power' | 'melee' | 'defense';
 
 export interface Save {
   name: string;
@@ -55,14 +53,13 @@ export interface Save {
     engine: EngineId[];
     power: PowerId[];
     melee: MeleeId[];
-    turret: TurretId[];
     defense: DefenseId[];
   };
   loadout: Loadout;
   practice: { arena: ArenaId; mode: ModeId };
 }
 
-export const CATALOG = { chassis: CHASSIS, tower: TOWERS, wheels: WHEELS, engine: ENGINES, power: POWER_SOURCES, melee: MELEE, turret: TURRETS, defense: DEFENSES };
+export const CATALOG = { chassis: CHASSIS, tower: TOWERS, wheels: WHEELS, engine: ENGINES, power: POWER_SOURCES, melee: MELEE, defense: DEFENSES };
 
 const SELL_RATE = 0.5;
 /** Enough to buy a couple of parts straight away. */
@@ -74,7 +71,7 @@ export function newSave(): Save {
     money: STARTING_MONEY,
     matches: 0,
     wins: 0,
-    owned: { chassis: ['brawler'], tower: ['medium'], wheels: ['large4'], engine: ['medium'], power: ['alkaline'], melee: ['chainsaw'], turret: ['minigun'], defense: ['shield'] },
+    owned: { chassis: ['brawler'], tower: ['medium'], wheels: ['large4'], engine: ['medium'], power: ['alkaline'], melee: ['chainsaw'], defense: ['shield'] },
     loadout: {
       chassis: 'brawler',
       tower: 'medium',
@@ -83,7 +80,6 @@ export function newSave(): Save {
       power: 'alkaline',
       armour: ARMOUR.default,
       melee: 'chainsaw',
-      turret: 'minigun',
       defense: 'shield',
       powerups: { rage: 0, megashield: 0, cloaking: 0, xray: 0, repair: 1, battery: 1 },
       upgrades: { armor: 0, engine: 0, weapons: 0 },
@@ -93,10 +89,29 @@ export function newSave(): Save {
   };
 }
 
+/** What each gun cost, for paying back saves from before guns were removed. Three of them live on as main weapons. */
+const OLD_GUN_PRICES: Record<string, number> = {
+  minigun: 0, rockets: 600, heavyrocket: 700, bunkerbuster: 1100, mortar: 750, grenade: 550, laser: 1000, discs: 500,
+};
+const OLD_GUN_WEAPONS: Record<string, MeleeId> = { flamethrower: 'flamethrower', arc: 'tesla', spear: 'spear' };
+
+/** Guns came out of the game, so anyone who bought one gets the money back, or the weapon it became. */
+export function retireGuns<T extends { money: number; owned: Save['owned']; loadout: Loadout }>(save: T): T {
+  const owned = save.owned as Save['owned'] & { turret?: string[] };
+  for (const id of owned.turret ?? []) {
+    const weapon = OLD_GUN_WEAPONS[id];
+    if (!weapon) save.money += OLD_GUN_PRICES[id] ?? 0;
+    else if (!owned.melee.includes(weapon)) owned.melee.push(weapon);
+  }
+  delete owned.turret;
+  delete (save.loadout as Loadout & { turret?: string }).turret;
+  return save;
+}
+
 export function loadSave(storage: Pick<Storage, 'getItem'> | null): Save {
   try {
     const raw = storage?.getItem(SAVE_KEY);
-    if (raw) return { ...newSave(), ...(JSON.parse(raw) as Partial<Save>) };
+    if (raw) return retireGuns({ ...newSave(), ...(JSON.parse(raw) as Partial<Save>) });
   } catch {
     // Blocked storage or a corrupt save both just start a new game.
   }
@@ -268,7 +283,6 @@ export function makeRivals(
     const loadout: Loadout = {
       chassis: pick(affordable(CHASSIS).length > 1 ? affordable(CHASSIS) : (['brawler', 'scout'] as ChassisId[]), rng),
       melee: pick(affordable(MELEE), rng),
-      turret: pick(affordable(TURRETS), rng),
       defense: pick(affordable(DEFENSES), rng),
       powerups: { rage: level >= 2 ? 1 : 0, megashield: level >= 3 ? 1 : 0, cloaking: 0, xray: 0, repair: 1, battery: 1 },
       upgrades: { armor: level, engine: level, weapons: level },

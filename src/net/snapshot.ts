@@ -1,20 +1,19 @@
 import { POWERUP_ORDER } from '../sim/data';
-import type { Bot, GameEvent, Match, MineKind, PatchKind, ProjectileKind, Trap } from '../sim/match';
+import type { Bot, GameEvent, Match, MineKind, PatchKind, Trap } from '../sim/match';
 import type { SnapshotMessage } from './protocol';
 
 // Bots travel as flat number arrays. A JSON object per robot at 20 Hz would be several times larger.
 const MOTION = ['x', 'z', 'heading', 'vx', 'vz'] as const;
 const STATE = [
-  'hp', 'respawnT', 'meleeCd', 'turretCd', 'defenseCd', 'shieldT', 'megaT', 'boostT', 'rageT', 'stunT',
+  'hp', 'respawnT', 'meleeCd', 'defenseCd', 'shieldT', 'megaT', 'boostT', 'rageT', 'stunT',
   'invulnT', 'flashT', 'burnT', 'slowT', 'blindT', 'cloakT', 'xrayT', 'regenT', 'bladesT', 'kamikazeT',
-  'meleeWindup', 'meleeSwing', 'lungeT', 'ammo', 'shots', 'trapX', 'trapZ', 'strikeCd', 'slickCd', 'pullCd', 'airT', 'flipT', 'meleeCharge', 'hillScore', 'kills', 'deaths', 'damageDealt', 'earned', 'eliminatedAt',
+  'meleeWindup', 'meleeSwing', 'lungeT', 'ammo', 'trapX', 'trapZ', 'strikeCd', 'slickCd', 'pullCd', 'airT', 'flipT', 'meleeCharge', 'hillScore', 'kills', 'assists', 'deaths', 'damageDealt', 'earned', 'eliminatedAt',
 ] as const;
-const FLAGS = ['alive', 'out', 'forfeited', 'meleeActive', 'turretFiring', 'oiled', 'glued'] as const;
+const FLAGS = ['alive', 'out', 'forfeited', 'meleeActive', 'oiled', 'glued'] as const;
 
 const FLAGS_AT = MOTION.length + STATE.length;
 const POWERUPS_AT = FLAGS_AT + 1;
 
-const PROJECTILE_KINDS: ProjectileKind[] = ['bullet', 'rocket', 'mortar', 'grenade', 'disc', 'spear'];
 const PATCH_KINDS: PatchKind[] = ['oil', 'glue', 'nails'];
 const MINE_KINDS: MineKind[] = ['mine', 'charge'];
 const TRAP_KINDS: Trap['kind'][] = ['strike', 'pull'];
@@ -74,9 +73,6 @@ export function encodeSnapshot(match: Match, events: GameEvent[]): Omit<Snapshot
         ...POWERUP_ORDER.map((id) => bot.powerups[id]),
       ];
     }),
-    proj: match.projectiles.map((p) => [
-      p.id, PROJECTILE_KINDS.indexOf(p.kind), round(p.x), round(p.z), round(p.vx), round(p.vz), round(p.life), round(p.flight),
-    ]),
     mines: match.mines.map((m) => [m.id, m.owner, round(m.x), round(m.z), round(m.armT), MINE_KINDS.indexOf(m.kind)]),
     oil: match.oil.map((p) => [p.id, p.owner, round(p.x), round(p.z), p.r, round(p.life), PATCH_KINDS.indexOf(p.kind)]),
     traps: match.traps.map((t) => [t.id, t.owner, TRAP_KINDS.indexOf(t.kind), round(t.x), round(t.z), round(t.t)]),
@@ -107,15 +103,8 @@ export function applyBotState(bot: Bot, row: number[]): void {
   });
 }
 
-/** Rebuilds the shared lists the renderer reads. `ahead` extrapolates shots to the render time. */
+/** Rebuilds the shared lists the renderer reads. `ahead` brings timers up to the render time. */
 export function applyWorldState(match: Match, snap: SnapshotMessage, ahead: number): void {
-  match.projectiles.length = 0;
-  for (const [id, kind, x, z, vx, vz, life, flight] of snap.proj) {
-    match.projectiles.push({
-      id, owner: -1, kind: PROJECTILE_KINDS[kind], x: x + vx * ahead, z: z + vz * ahead, vx, vz,
-      life: Math.max(0, life - ahead), flight, damage: 0, splash: 0, knockback: 0, bounces: 0, ricocheted: false,
-    });
-  }
   match.mines.length = 0;
   for (const [id, owner, x, z, armT, kind] of snap.mines) {
     match.mines.push({ id, owner, kind: MINE_KINDS[kind], x, z, armT, life: 1, damage: 0, radius: 0 });

@@ -10,16 +10,16 @@ describe('key bindings', () => {
     const b = { ...DEFAULT_BINDINGS };
     expect(rebind(b, 'melee', 'KeyZ')).toBe(true);
     expect(b.melee).toBe('KeyZ');
-    expect(rebind(b, 'melee', 'KeyQ')).toBe(true);
-    expect(b.melee).toBe('KeyQ');
-    expect(b.turret).toBe('KeyZ');
+    expect(rebind(b, 'melee', 'KeyR')).toBe(true);
+    expect(b.melee).toBe('KeyR');
+    expect(b.defense).toBe('KeyZ');
     expect(new Set(Object.values(b)).size).toBe(Object.keys(b).length);
   });
 
   it('defaults to WASD, with Space for the main weapon', () => {
     const b = DEFAULT_BINDINGS;
     expect([b.forward, b.left, b.back, b.right]).toEqual(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
-    expect([b.melee, b.turret, b.defense, b.rear, b.boost]).toEqual(['Space', 'KeyQ', 'KeyR', 'KeyE', 'ShiftLeft']);
+    expect([b.melee, b.defense, b.rear, b.boost]).toEqual(['Space', 'KeyR', 'KeyE', 'ShiftLeft']);
     expect(b.power6).toBe('Digit6');
     expect(new Set(Object.values(b)).size).toBe(Object.keys(b).length);
   });
@@ -58,11 +58,11 @@ describe('settings storage', () => {
     expect(loadSettings(storage).bindings.melee).toBe('KeyZ');
 
     const key = [...store.keys()][0];
-    store.set(key, JSON.stringify({ quality: 'ultra', bindings: { melee: 'Escape', turret: 7 }, showFps: 'yes' }));
+    store.set(key, JSON.stringify({ quality: 'ultra', bindings: { melee: 'Escape', defense: 7 }, showFps: 'yes' }));
     const odd = loadSettings(storage);
     expect(odd.quality).toBe('auto');
     expect(odd.bindings.melee).toBe('Space');
-    expect(odd.bindings.turret).toBe('KeyQ');
+    expect(odd.bindings.defense).toBe('KeyR');
     expect(odd.showFps).toBe(false);
 
     store.set(key, '{nope');
@@ -193,7 +193,7 @@ describe('gamepad', () => {
 });
 
 describe('tutorial', () => {
-  const idle: TutorialInput = { throttle: 0, steer: 0, melee: false, turret: false, defense: false, boost: false };
+  const idle: TutorialInput = { throttle: 0, steer: 0, melee: false, defense: false, boost: false };
 
   it('advances only when the player does the thing, for long enough', () => {
     const t = new Tutorial(DEFAULT_BINDINGS);
@@ -211,7 +211,6 @@ describe('tutorial', () => {
     const t = new Tutorial({ ...DEFAULT_BINDINGS, power1: 'KeyZ' });
     t.update(2, { ...idle, throttle: 1 });
     t.update(2, { ...idle, steer: 1, throttle: 1 });
-    t.update(2, { ...idle, turret: true });
     t.update(2, { ...idle, melee: true });
     t.update(0, { ...idle, defense: true });
     t.update(1, { ...idle, boost: true });

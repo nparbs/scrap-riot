@@ -8,7 +8,7 @@ import { googleVerifier } from '../server/google';
 import { STARTING_MONEY } from '../src/game/progress';
 import { NetClient } from '../src/net/client';
 import { OFFLINE_PAYOUT_MAX, PROTOCOL_VERSION, type OnlineStatus, type Profile, type ServerMessage } from '../src/net/protocol';
-import { MELEE, TURRETS } from '../src/sim/data';
+import { MELEE } from '../src/sim/data';
 
 const CLIENT_ID = 'test-client.apps.googleusercontent.com';
 const MEMBER_CODE = 'Secret Handshake';
@@ -220,16 +220,16 @@ describe('garage on the server', () => {
     }
     const save = (await accounts.profile(token))!.save;
     expect(save.money).toBe(STARTING_MONEY);
-    expect(save.owned.turret).toEqual(['minigun']);
+    expect(save.owned.melee).toEqual(['chainsaw']);
   });
 
   it('cannot spend the same money twice at once', async () => {
     const { token } = await accounts.createGuest();
-    await give(token, TURRETS.laser.price);
+    await give(token, MELEE.shell.price);
     const results = await Promise.all([
-      accounts.garage(token, { type: 'equip', slot: 'turret', id: 'laser' }),
-      accounts.garage(token, { type: 'equip', slot: 'turret', id: 'arc' }),
-      accounts.garage(token, { type: 'equip', slot: 'turret', id: 'bunkerbuster' }),
+      accounts.garage(token, { type: 'equip', slot: 'melee', id: 'shell' }),
+      accounts.garage(token, { type: 'equip', slot: 'melee', id: 'vertbar' }),
+      accounts.garage(token, { type: 'equip', slot: 'melee', id: 'crusher' }),
     ]);
     const save = (await accounts.profile(token))!.save;
     expect(save.money).toBeGreaterThanOrEqual(0);
@@ -394,7 +394,7 @@ describe('over the network', () => {
 
     const buy = await api(s, '/api/garage', { method: 'POST', body: JSON.stringify({ action: { type: 'equip', slot: 'melee', id: 'dagger' } }) }, guest.token);
     expect((await buy.json()).profile.save.loadout.melee).toBe('dagger');
-    const broke = await api(s, '/api/garage', { method: 'POST', body: JSON.stringify({ action: { type: 'equip', slot: 'turret', id: 'bunkerbuster' } }) }, guest.token);
+    const broke = await api(s, '/api/garage', { method: 'POST', body: JSON.stringify({ action: { type: 'equip', slot: 'chassis', id: 'juggernaut' } }) }, guest.token);
     expect(broke.status).toBe(400);
 
     const signIn = await api(s, '/api/auth/google', { method: 'POST', body: JSON.stringify({ credential: await credential(uniqueSub()) }) }, guest.token);
@@ -441,14 +441,14 @@ describe('over the network', () => {
     await opened;
     ws.send(JSON.stringify({
       t: 'join', v: PROTOCOL_VERSION, session: guest.token, name: 'Liar',
-      loadout: { chassis: 'juggernaut', turret: 'bunkerbuster', upgrades: { armor: 99 }, powerups: { rage: 99 } },
+      loadout: { chassis: 'juggernaut', melee: 'vertbar', upgrades: { armor: 99 }, powerups: { rage: 99 } },
     }));
     await until(() => inbox.some((m) => m.t === 'start'));
     const start = inbox.find((m) => m.t === 'start')!;
-    const mine = (start as { setups: { name: string; loadout: { chassis: string; turret: string; upgrades: { armor: number }; powerups: { rage: number } } }[] }).setups[0];
+    const mine = (start as { setups: { name: string; loadout: { chassis: string; melee: string; upgrades: { armor: number }; powerups: { rage: number } } }[] }).setups[0];
     expect(mine.name).toBe(state.name);
     expect(mine.loadout.chassis).toBe('brawler');
-    expect(mine.loadout.turret).toBe('minigun');
+    expect(mine.loadout.melee).toBe('chainsaw');
     expect(mine.loadout.upgrades.armor).toBe(2);
     expect(mine.loadout.powerups.rage).toBe(0);
   });

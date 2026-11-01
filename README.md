@@ -8,7 +8,7 @@ Scrap Riot is a fan-made homage to *Robot Rage*, the Miniclip web game. All code
 
 ## Play
 
-**[Play in your browser](https://nparbs.github.io/scrap-riot/)**. A keyboard and a WebGL-capable browser are required.
+**[Play in your browser](https://nparbs.github.io/scrap-riot/)**. A WebGL-capable browser is required, with a keyboard and mouse, a gamepad or a touch screen.
 
 To run it locally:
 
@@ -20,15 +20,14 @@ npm run dev
 | Key | Action |
 | --- | --- |
 | W A S D | Drive |
-| Space | Main weapon |
+| Space or left click | Main weapon |
+| R or right click | Defense |
 | Shift (hold) | Speed boost, using battery |
-| Q | Gun (fires straight ahead, with few shots per life and a cooldown) |
-| R | Defense |
 | 1 to 6 | Rage, Mega Shield, Cloaking, X-Ray, Repair, Battery Pack |
 | E (hold) | Look behind |
 | M / Esc | Mute / Pause |
 
-These are the default keys. You can rebind them in Settings, which also lists the gamepad layout.
+These are the default keys. You can rebind them in Settings, which also lists the gamepad layout. On phones and tablets, a thumbstick and buttons appear on screen.
 
 A duel is one on one with one life each. It ends when a robot is wrecked or falls off the roof, when a pilot surrenders, or when both agree to a draw. If three minutes run out, the most armour left wins. Damage, kills and scrap pickups earn money, and the winner gets a bonus. Progress is saved in the browser's local storage.
 
@@ -46,7 +45,7 @@ The server is authoritative: it runs the same simulation as the game, and client
 - **A soundtrack and sound effects** synthesized live in the browser, with different sounds for each weapon family and no audio files. Music can be turned off in Settings.
 - **A paintshop** in the style of the original: paint directly on your unfolded robot with a pencil, spray can, shapes, fill and a 120-colour palette, and see it live on the 3D model. Your opponent sees it too.
 - **A workshop** in the style of the original: 5 chassis, plus towers, wheels, engines, power sources and an armour dial. Every part takes up room, and the chassis decides how much there is.
-- **48 weapons:** 20 main weapons, 11 guns and 17 defenses, drawn from every version of the original and from real combat robots such as spinners, flippers and crushers ([research notes](docs/original-research.md))
+- **40 weapons, and no guns:** 23 main weapons and 17 defenses, drawn from every version of the original and from real combat robots such as spinners, flippers, crushers and flamethrowers ([research notes](docs/original-research.md))
 - **6 powerups:** Rage, Mega Shield, Cloaking, X-Ray, Repair Kit, Battery Pack
 - **3 upgrade tracks** of 5 levels each: armor, engine, weapons
 - **7 maps:** The Skyscraper for duels, plus for Offline vs Bots walled pits, a rooftop and a canyon with lethal drops, a furnace, a piston foundry, and a frozen lake

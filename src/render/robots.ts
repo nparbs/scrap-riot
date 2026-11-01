@@ -1,12 +1,11 @@
 import * as THREE from 'three';
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { decodeSkin, ERASED, SKIN_PANELS, SKIN_SIZE, type PanelId } from '../game/skin';
-import { DEFAULT_PAINT, PAINT_COLORS, type BodyId, type ChassisId, type DefenseId, type MeleeId, type Paint, type PatternId, type TowerId, type TurretId, type WheelsId } from '../sim/data';
+import { DEFAULT_PAINT, PAINT_COLORS, type BodyId, type ChassisId, type DefenseId, type MeleeId, type Paint, type PatternId, type TowerId, type WheelsId } from '../sim/data';
 
 export interface RobotBuild {
   chassis: ChassisId;
   melee: MeleeId;
-  turret: TurretId;
   defense: DefenseId;
   paint?: Paint;
   rearMelee?: boolean;
@@ -18,9 +17,6 @@ export interface RobotBuild {
 
 export interface RobotModel {
   root: THREE.Group;
-  turretPivot: THREE.Group;
-  /** Barrels that spin while firing. */
-  gunSpinner: THREE.Object3D | null;
   /** Runs a chainsaw's teeth around its bar. */
   chain: ((travel: number) => void) | null;
   meleePivot: THREE.Group;
@@ -525,143 +521,17 @@ function swingMount(pivot: THREE.Group, width: number): void {
   for (const side of [-1, 1]) pivot.add(rod([side * (width / 2 + 0.02), 0, 0.04], [side * (width / 2 + 0.04), 0, 0.04], 0.12, steel, ROUND_SIDES));
 }
 
-/** The tower is a low armoured drum, with the gun fixed to it pointing straight ahead. Returns barrels that spin when firing. */
-function buildTurret(pivot: THREE.Group, id: TurretId, head: THREE.Material): THREE.Object3D | null {
+/** The tower is a low armoured drum with a hatch and a sensor mast. */
+function buildTower(pivot: THREE.Group, head: THREE.Material): void {
   const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.5, 0.26, ROUND_SIDES * 2), head);
   tower.position.y = 0.13;
   tower.castShadow = true;
   pivot.add(tower);
   const y = 0.26;
-
-  switch (id) {
-    case 'minigun': {
-      // Six barrels held in clamps, spun by a motor at the back, fed from a drum on the side.
-      pivot.add(turned([[0, -0.15], [0.14, -0.15], [0.16, -0.1], [0.16, 0.22], [0.12, 0.3], [0, 0.3]], dark, 0, y));
-      pivot.add(box(0.2, 0.05, 0.16, steel, 0, y - 0.16, 0.08));
-      const drum = cylinder(0.14, 0.12, steel);
-      drum.rotation.z = Math.PI / 2;
-      drum.position.set(0.24, y, 0.02);
-      pivot.add(drum);
-      const barrels = new THREE.Group();
-      barrels.position.set(0, y, 0.3);
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        barrels.add(rod([Math.cos(a) * 0.075, Math.sin(a) * 0.075, 0], [Math.cos(a) * 0.075, Math.sin(a) * 0.075, 1.05], 0.024, steel, 8));
-      }
-      for (const z of [0.05, 0.55, 1.0]) barrels.add(turned([[0, z - 0.03], [0.115, z - 0.03], [0.115, z + 0.03], [0, z + 0.03]], dark, 0));
-      pivot.add(barrels);
-      return barrels;
-    }
-    case 'rockets': {
-      const pod = sideOn([[-0.1, y - 0.18], [0.75, y - 0.18], [0.9, y - 0.08], [0.9, y + 0.28], [0.72, y + 0.34], [-0.1, y + 0.34]], 0.82, dark, 0.03);
-      pivot.add(pod);
-      for (const x of [-0.2, 0.2]) {
-        for (const up of [y - 0.02, y + 0.2]) {
-          pivot.add(turned([[0.1, 0.88], [0.12, 0.88], [0.12, 0.93], [0.1, 0.93]], steel, 0, up, x));
-          pivot.add(turned([[0.08, 0.84], [0.08, 0.92], [0.05, 0.98], [0, 1.02]], hot, 0, up, x));
-        }
-      }
-      return null;
-    }
-    case 'heavyrocket':
-      // A single launch tube with a flared back, and the warhead poking out of the front.
-      pivot.add(turned([[0.24, -0.25], [0.16, -0.08], [0.17, 0.05], [0.17, 0.85], [0.2, 0.88], [0.2, 0.96], [0.15, 0.96]], dark, 0, y + 0.1));
-      pivot.add(turned([[0.14, 0.9], [0.14, 1.02], [0.1, 1.16], [0.04, 1.28], [0, 1.31]], warhead, 0, y + 0.1));
-      pivot.add(box(0.1, 0.1, 0.5, steel, 0, y - 0.07, 0.2));
-      return null;
-    case 'bunkerbuster':
-      for (const x of [-0.27, 0.27]) {
-        pivot.add(turned([[0.19, -0.2], [0.15, -0.05], [0.15, 0.88], [0.17, 0.92], [0.13, 0.92]], dark, 0, y, x));
-        pivot.add(turned([[0.12, 0.88], [0.12, 1.02], [0.09, 1.22], [0.03, 1.38], [0, 1.4]], warhead, 0, y, x));
-        for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
-          const fin = box(0.015, 0.1, 0.16, steel, x + Math.cos(a) * 0.2, y + Math.sin(a) * 0.2, -0.12);
-          fin.rotation.z = a - Math.PI / 2;
-          pivot.add(fin);
-        }
-      }
-      pivot.add(box(0.5, 0.08, 0.34, steel, 0, y - 0.1, 0.32));
-      return null;
-    case 'mortar': {
-      // A short, fat tube on a round base, propped up by a bipod.
-      pivot.add(turned([[0, 0], [0.3, 0], [0.33, 0.05], [0, 0.05]], steel, 0, y - 0.02));
-      const tube3d = turned([[0.17, 0], [0.17, 0.92], [0.21, 0.95], [0.21, 1.02], [0.15, 1.02]], dark);
-      tube3d.rotation.x = -0.72;
-      tube3d.position.set(0, y + 0.02, -0.02);
-      pivot.add(tube3d);
-      pivot.add(rod([-0.28, y - 0.02, 0.5], [-0.05, y + 0.42, 0.42], 0.022, steel, 8), rod([0.28, y - 0.02, 0.5], [0.05, y + 0.42, 0.42], 0.022, steel, 8));
-      return null;
-    }
-    case 'grenade':
-      // A revolving cylinder of chambers behind a short, stepped barrel.
-      pivot.add(turned([[0, -0.1], [0.23, -0.1], [0.25, -0.07], [0.25, 0.3], [0.2, 0.34], [0, 0.34]], steel, 0, y + 0.03));
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        pivot.add(rod([Math.cos(a) * 0.15, y + 0.03 + Math.sin(a) * 0.15, 0.3], [Math.cos(a) * 0.15, y + 0.03 + Math.sin(a) * 0.15, 0.35], 0.05, dark, 10));
-      }
-      pivot.add(turned([[0.13, 0.32], [0.13, 0.85], [0.16, 0.88], [0.16, 1.02], [0.12, 1.02]], dark, 0, y + 0.03));
-      return null;
-    case 'flamethrower':
-      // A nozzle flaring at the end of a pipe, with a fuel line and a pilot light beneath it.
-      pivot.add(turned([[0.08, 0], [0.08, 0.85], [0.1, 0.92], [0.17, 1.15], [0.17, 1.2], [0.12, 1.2]], dark, 0, y));
-      pivot.add(turned([[0.11, 0.28], [0.11, 0.36], [0, 0.36]], steel, 0, y), turned([[0.11, 0.62], [0.11, 0.7], [0, 0.7]], steel, 0, y));
-      pivot.add(tube([[0.14, y - 0.12, -0.1], [0.14, y - 0.1, 0.4], [0.05, y - 0.08, 0.8]], 0.022, copper, false, 12));
-      pivot.add(turned([[0.03, 0.8], [0.03, 1.1], [0.016, 1.16], [0, 1.18]], hot, 0, y - 0.09));
-      return null;
-    case 'laser':
-      // A barrel lined with cooling fins, ending in a lens.
-      pivot.add(turned([[0, -0.15], [0.13, -0.15], [0.15, -0.1], [0.15, 0.25], [0.1, 0.3], [0.08, 0.3], [0.08, 1.2], [0.12, 1.25], [0.12, 1.36], [0.09, 1.38]], steel, 0, y));
-      for (let i = 0; i < 6; i++) {
-        const z = 0.38 + i * 0.13;
-        pivot.add(turned([[0.08, z], [0.15, z + 0.01], [0.15, z + 0.03], [0.08, z + 0.04]], dark, 0, y));
-      }
-      pivot.add(turned([[0.09, 1.34], [0.07, 1.39], [0.03, 1.42], [0, 1.43]], glowBlue, 0, y));
-      return null;
-    case 'discs': {
-      // A flat launcher with the next blade sitting in its slot.
-      for (const up of [y - 0.05, y + 0.1]) {
-        const jaw = topOn([[-0.34, -0.1], [0.34, -0.1], [0.4, 0.45], [0.26, 0.95], [-0.26, 0.95], [-0.4, 0.45]], 0.05, dark, 0.012);
-        jaw.position.y = up;
-        pivot.add(jaw);
-      }
-      const saw = sawOnHub('y', 0.3, 0.035, 12, 0.05);
-      saw.position.set(0, y + 0.025, 0.72);
-      pivot.add(saw);
-      return null;
-    }
-    case 'spear': {
-      // A crossbow: a rail, a sprung bow, a string, and a barbed bolt ready to go.
-      pivot.add(sideOn([[-0.1, y - 0.1], [1.1, y - 0.06], [1.15, y], [-0.1, y + 0.03]], 0.13, dark, 0.012));
-      pivot.add(tube([[-0.62, y, 0.68], [-0.32, y, 0.9], [0, y, 0.98], [0.32, y, 0.9], [0.62, y, 0.68]], 0.024, steel, false, 16));
-      pivot.add(rod([-0.62, y, 0.68], [0, y, 0.25], 0.006, dark, 4), rod([0.62, y, 0.68], [0, y, 0.25], 0.006, dark, 4));
-      pivot.add(rod([0, y + 0.05, 0.2], [0, y + 0.05, 1.25], 0.018, steel, 8));
-      const head = topOn([[0, 1.55], [0.07, 1.27], [0.03, 1.3], [0.02, 1.22], [-0.02, 1.22], [-0.03, 1.3], [-0.07, 1.27]], 0.02, blade, 0.005);
-      head.position.y = y + 0.05;
-      pivot.add(head);
-      return null;
-    }
-    case 'arc': {
-      // A short Tesla coil: an insulated stack with a polished ring on top.
-      pivot.add(turned([[0, 0], [0.16, 0], [0.12, 0.08], [0.12, 0.34], [0, 0.34]], dark, 0, 0));
-      const stack = new THREE.Group();
-      stack.position.y = y;
-      for (let i = 0; i < 4; i++) {
-        const r = 0.15 - i * 0.015;
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.03, 8, ROUND_SIDES), copper);
-        ring.rotation.x = Math.PI / 2;
-        ring.position.y = i * 0.07;
-        stack.add(ring);
-      }
-      const post = cylinder(0.06, 0.34, steel);
-      post.position.y = 0.14;
-      stack.add(post);
-      const crown = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.055, 10, ROUND_SIDES), glowBlue);
-      crown.rotation.x = Math.PI / 2;
-      crown.position.y = 0.34;
-      stack.add(crown);
-      pivot.add(stack);
-      return null;
-    }
-  }
+  pivot.add(turned([[0, 0], [0.24, 0], [0.26, 0.02], [0.24, 0.06], [0, 0.07]], dark, 0, y));
+  pivot.add(box(0.2, 0.025, 0.04, steel, 0, y + 0.08, -0.08));
+  pivot.add(rod([0.2, y - 0.02, -0.18], [0.2, y + 0.42, -0.2], 0.012, steel, 6));
+  pivot.add(turned([[0, -0.025], [0.022, 0], [0, 0.025]], glowRed, y + 0.44, -0.2, 0.2, 8));
 }
 
 interface BuiltMelee {
@@ -765,6 +635,44 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec): BuiltMelee
       pivot.add(bit);
       return { spinner: bit, axis: 'z' };
     }
+    case 'flamethrower':
+      // A nozzle flaring at the end of a pipe, with a fuel line and a pilot light beneath it.
+      pivot.add(sideOn([[-0.08, -0.14], [0.2, -0.1], [0.24, 0.1], [-0.08, 0.14]], 0.34, dark, 0.02));
+      pivot.add(turned([[0.09, 0], [0.09, 0.85], [0.11, 0.92], [0.19, 1.15], [0.19, 1.2], [0.13, 1.2]], dark, 0, 0.06));
+      pivot.add(turned([[0.12, 0.28], [0.12, 0.36], [0, 0.36]], steel, 0, 0.06), turned([[0.12, 0.62], [0.12, 0.7], [0, 0.7]], steel, 0, 0.06));
+      pivot.add(tube([[0.15, -0.06, -0.05], [0.15, -0.05, 0.4], [0.05, -0.04, 0.8]], 0.022, copper, false, 12));
+      pivot.add(turned([[0.03, 0.8], [0.03, 1.1], [0.016, 1.16], [0, 1.18]], hot, 0, -0.04));
+      return { spinner: null, axis: 'x' };
+    case 'tesla': {
+      // An insulated stack on the nose, with a polished ring on top.
+      pivot.add(turned([[0, 0], [0.24, 0], [0.18, 0.08], [0.18, 0.2], [0, 0.2]], dark, 0.28, 0));
+      const stack = new THREE.Group();
+      stack.position.set(0, 0.2, 0.28);
+      for (let i = 0; i < 4; i++) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.2 - i * 0.02, 0.035, 8, ROUND_SIDES), copper);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = i * 0.09;
+        stack.add(ring);
+      }
+      const post = cylinder(0.07, 0.46, steel);
+      post.position.y = 0.2;
+      stack.add(post);
+      const crown = new THREE.Mesh(new THREE.TorusGeometry(0.21, 0.07, 10, ROUND_SIDES), glowBlue);
+      crown.rotation.x = Math.PI / 2;
+      crown.position.y = 0.46;
+      stack.add(crown);
+      pivot.add(stack);
+      return { spinner: stack, axis: 'y' };
+    }
+    case 'spear':
+      // A pneumatic cylinder with a long barbed spike that fires out of it.
+      pivot.add(turned([[0, -0.1], [0.18, -0.1], [0.2, -0.06], [0.2, 0.42], [0.15, 0.46], [0, 0.46]], dark));
+      pivot.add(turned([[0.06, 0.44], [0.06, 1.25], [0, 1.27]], steel));
+      {
+        const head = topOn([[0, 1.75], [0.13, 1.25], [0.05, 1.3], [0.04, 1.2], [-0.04, 1.2], [-0.05, 1.3], [-0.13, 1.25]], 0.03, blade, 0.006);
+        pivot.add(head);
+      }
+      return { spinner: null, axis: 'x' };
     case 'dagger': {
       // A mount and crossguard, then a long double-edged spike with a dark fuller down the middle.
       pivot.add(sideOn([[-0.08, -0.14], [0.2, -0.1], [0.24, 0.1], [-0.08, 0.14]], 0.3, dark, 0.02));
@@ -1117,14 +1025,14 @@ export function buildRobot(build: RobotBuild): RobotModel {
   const deckY = buildHull(root, build.chassis, paint.body, hullMaterial, trim, wheels, build.wheels ?? 'large4');
   const spec = HULLS[build.chassis];
 
-  const turretPivot = new THREE.Group();
+  const towerPivot = new THREE.Group();
   // Set back on the deck, leaving the nose clear for the main weapon.
   const towerScale = TOWER_SCALE[build.tower ?? 'medium'];
   const towerZ = -spec.length * 0.14;
-  turretPivot.position.set(0, towerSeat(spec, paint.body, towerZ, 0.35 * towerScale), towerZ);
-  turretPivot.scale.setScalar(towerScale);
-  const gunSpinner = buildTurret(turretPivot, build.turret, headMaterial);
-  root.add(turretPivot);
+  towerPivot.position.set(0, towerSeat(spec, paint.body, towerZ, 0.35 * towerScale), towerZ);
+  towerPivot.scale.setScalar(towerScale);
+  buildTower(towerPivot, headMaterial);
+  root.add(towerPivot);
 
   const meleePivot = new THREE.Group();
   meleePivot.position.set(0, deckY - spec.height * 0.45, build.rearMelee ? -spec.length / 2 : spec.length / 2);
@@ -1160,8 +1068,6 @@ export function buildRobot(build: RobotBuild): RobotModel {
 
   return {
     root,
-    turretPivot,
-    gunSpinner,
     chain,
     meleePivot,
     spinner,
@@ -1173,7 +1079,7 @@ export function buildRobot(build: RobotBuild): RobotModel {
     materials,
     plates,
     baseColors: materials.map((m) => m.color.clone()),
-    rollHeight: turretPivot.position.y + 0.3 * towerScale,
+    rollHeight: towerPivot.position.y + 0.3 * towerScale,
   };
 }
 

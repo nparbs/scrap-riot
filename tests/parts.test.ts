@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buyOrEquip, newSave, partFits, sellPart, setArmour } from '../src/game/progress';
 import { ARENAS } from '../src/sim/arena';
-import { ARMOUR, buildStats, CHASSIS, REWARD, spaceCapacity, spaceUsed, TOWERS, TURRETS } from '../src/sim/data';
+import { ARMOUR, buildStats, CHASSIS, REWARD, spaceCapacity, spaceUsed, TOWERS, DEFENSES } from '../src/sim/data';
 import { Match, type BotSetup, type Loadout } from '../src/sim/match';
 
 const pilot = (name: string, over: Partial<Loadout> = {}): BotSetup => ({ name, color: 0, isAI: false, loadout: { ...newSave().loadout, ...over } });
@@ -55,9 +55,8 @@ describe('robot parts', () => {
   it('a bought part that does not fit goes on the shelf', () => {
     const save = newSave();
     save.money = 99999;
-    expect(buyOrEquip(save, 'turret', 'bunkerbuster')).toBe(true);
     expect(buyOrEquip(save, 'defense', 'emp')).toBe(true);
-    expect(buyOrEquip(save, 'melee', 'claw')).toBe(true);
+    expect(buyOrEquip(save, 'melee', 'shell')).toBe(true);
     expect(buyOrEquip(save, 'engine', 'turbo')).toBe(true);
     expect(spaceUsed(save.loadout)).toBeLessThanOrEqual(spaceCapacity(save.loadout));
     // There's no room left for a reactor, so it's bought but not fitted.
@@ -77,7 +76,8 @@ describe('robot parts', () => {
     const save = newSave();
     save.money = 10000;
     save.owned.chassis.push('scout');
-    buyOrEquip(save, 'turret', 'bunkerbuster');
+    buyOrEquip(save, 'defense', 'emp');
+    buyOrEquip(save, 'melee', 'vertbar');
     expect(buyOrEquip(save, 'chassis', 'scout')).toBe(true);
     expect(save.loadout.chassis).toBe('scout');
     expect(save.loadout.armour).toBeLessThan(ARMOUR.default);
@@ -87,16 +87,16 @@ describe('robot parts', () => {
   it('sells unused parts for half, and nothing else', () => {
     const save = newSave();
     save.money = 1000;
-    buyOrEquip(save, 'turret', 'laser');
+    buyOrEquip(save, 'defense', 'emp');
     const after = save.money;
-    expect(sellPart(save, 'turret', 'laser')).toBe(false);
-    expect(sellPart(save, 'turret', 'minigun')).toBe(false);
-    buyOrEquip(save, 'turret', 'minigun');
-    expect(sellPart(save, 'turret', 'minigun')).toBe(false);
-    expect(sellPart(save, 'turret', 'laser')).toBe(true);
-    expect(save.money).toBe(after + TURRETS.laser.price / 2);
-    expect(save.owned.turret).toEqual(['minigun']);
-    expect(sellPart(save, 'turret', 'laser')).toBe(false);
+    expect(sellPart(save, 'defense', 'emp')).toBe(false);
+    expect(sellPart(save, 'defense', 'shield')).toBe(false);
+    buyOrEquip(save, 'defense', 'shield');
+    expect(sellPart(save, 'defense', 'shield')).toBe(false);
+    expect(sellPart(save, 'defense', 'emp')).toBe(true);
+    expect(save.money).toBe(after + DEFENSES.emp.price / 2);
+    expect(save.owned.defense).toEqual(['shield']);
+    expect(sellPart(save, 'defense', 'emp')).toBe(false);
   });
 
   it('armour stays in its steps and within the room available', () => {
@@ -121,7 +121,7 @@ describe('the duel', () => {
     expect(a.out).toBe(true);
     match.step();
     expect(match.over).toBe(false);
-    run(match, 3);
+    run(match, 3.2);
     expect(match.over).toBe(true);
     expect(a.alive).toBe(false);
     expect(match.standings()[0].bot).toBe(b);
@@ -242,7 +242,7 @@ describe('the skyscraper', () => {
     expect(a.z).toBeLessThan(block.z - block.d / 2 - a.radius + 0.01);
   });
 
-  it('stops at the fence, which shots still pass through', () => {
+  it('stops at the fence', () => {
     const match = duel();
     const [a] = match.bots;
     a.x = -13;

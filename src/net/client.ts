@@ -336,7 +336,7 @@ export class NetClient {
       s: this.seq,
       th: current.throttle,
       st: current.steer,
-      f: packFlags(current.melee, current.turret, current.defense, current.boost),
+      f: packFlags(current.melee, current.defense, current.boost),
       p: powerupIndex(current.powerup),
     });
     current.powerup = null;

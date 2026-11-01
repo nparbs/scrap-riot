@@ -1,7 +1,8 @@
 import { sawPos, TRAP_NAMES } from '../sim/arena';
+import { pickLastWords } from '../game/lastWords';
 import { keyLabel, type Action, type Bindings } from '../game/settings';
 import { QUICK_CHAT } from '../net/protocol';
-import { DEFENSES, leaveWait, legibleColor, MELEE, MODES, POWERUPS, POWERUP_ORDER, SPECTATE, TURRETS, UPGRADES } from '../sim/data';
+import { COUNTDOWN, DEFENSES, leaveWait, legibleColor, MATCH, MELEE, MODES, POWERUPS, POWERUP_ORDER, RAGDOLL_TIME, SPECTATE, UPGRADES } from '../sim/data';
 import { relativeBearing, type Bot, type GameEvent, type Match } from '../sim/match';
 
 const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
@@ -32,6 +33,8 @@ export interface HudActions {
 /** How long "Eliminated" stays up before it gets out of the way of the view. */
 const ELIMINATED_SHOWN = 2;
 const GO_SHOWN = 0.7;
+/** The battery bar goes red below this. */
+const BATTERY_LOW = 0.15;
 
 const SURRENDER_CONFIRM_MS = 3000;
 const DRAW_OFFER_MS = 15000;
@@ -46,7 +49,7 @@ export class Hud {
   private readonly center: HTMLElement;
   private readonly money: HTMLElement;
   private readonly effects: HTMLElement;
-  private readonly cooldowns: Record<'melee' | 'turret' | 'defense', HTMLElement>;
+  private readonly cooldowns: Record<'melee' | 'defense', HTMLElement>;
   private readonly powerCounts: HTMLElement[] = [];
   private readonly minimap: CanvasRenderingContext2D;
   private boardTimer = 0;
@@ -68,7 +71,11 @@ export class Hud {
   private readonly ping: HTMLElement;
   private readonly blind: HTMLElement;
   private readonly battery: HTMLElement;
-  private readonly shots: HTMLElement;
+  private readonly fade: HTMLElement;
+  private readonly fadeLine: HTMLElement;
+  private readonly fadeTimer: HTMLElement;
+  private deadFor = 0;
+  private lastWords = '';
   private readonly rivalName: HTMLElement;
   private readonly rivalFill: HTMLElement;
   private readonly rivalWeapon: HTMLElement;
@@ -109,7 +116,7 @@ export class Hud {
         <p class="spectate-earn" data-spectate-earn></p>
         <p class="spectate-hint"><kbd>${keyLabel(keys.forward)}</kbd><kbd>${keyLabel(keys.left)}</kbd><kbd>${keyLabel(keys.back)}</kbd><kbd>${keyLabel(keys.right)}</kbd> move the marker</p>
         ${this.trapRow(keyLabel(keys.melee), TRAP_NAMES[match.arena.id].strike, 'strike')}
-        ${this.trapRow(keyLabel(keys.turret), TRAP_NAMES[match.arena.id].slick, 'slick')}
+        ${this.trapRow(keyLabel(keys.boost), TRAP_NAMES[match.arena.id].slick, 'slick')}
         ${this.trapRow(keyLabel(keys.defense), TRAP_NAMES[match.arena.id].pull, 'pull')}
         <div class="spectate-leave">
           <p data-leave-text></p>
@@ -129,9 +136,8 @@ export class Hud {
           <div class="dock-field"><label>Name:</label><div class="dock-name" style="color:${hex(player.color)}">${escapeText(player.name)}</div></div>
           <div class="dock-field"><label>Armour:</label><div class="hp-bar"><div class="hp-fill"></div><span class="hp-text"></span></div></div>
           <div class="dock-slots">
-            ${this.slot(keyLabel(keys.melee), MELEE[loadout.melee].name, 'melee')}
-            ${this.slot(keyLabel(keys.turret), TURRETS[loadout.turret].name, 'turret', '<b class="slot-shots" data-shots></b>')}
-            ${this.slot(keyLabel(keys.defense), DEFENSES[loadout.defense].name, 'defense')}
+            ${this.slot(`${keyLabel(keys.melee)} / LMB`, MELEE[loadout.melee].name, 'melee')}
+            ${this.slot(`${keyLabel(keys.defense)} / RMB`, DEFENSES[loadout.defense].name, 'defense')}
           </div>
           <div class="dock-battery"><div class="battery"><i data-battery></i></div><label>Battery:</label></div>
         </div>
@@ -148,6 +154,7 @@ export class Hud {
           <div class="dock-battery"><div class="battery"><i data-rival-battery></i></div><label>Battery:</label></div>
         </div>
       </div>
+      <div class="death-fade"><p class="death-line"></p><small class="death-timer"></small></div>
     `;
     const q = (selector: string) => this.root.querySelector<HTMLElement>(selector)!;
     this.hpFill = q('.hp-fill');
@@ -156,7 +163,9 @@ export class Hud {
     this.ping = q('.hud-ping');
     this.blind = q('.hud-blind');
     this.battery = q('[data-battery]');
-    this.shots = q('[data-shots]');
+    this.fade = q('.death-fade');
+    this.fadeLine = q('.death-line');
+    this.fadeTimer = q('.death-timer');
     this.rivalName = q('[data-rival-name]');
     this.rivalFill = q('[data-rival-fill]');
     this.rivalWeapon = q('[data-rival-weapon]');
@@ -172,7 +181,7 @@ export class Hud {
     this.center = q('.hud-center');
     this.money = q('.hud-money');
     this.effects = q('.hud-effects');
-    this.cooldowns = { melee: q('[data-cd="melee"]'), turret: q('[data-cd="turret"]'), defense: q('[data-cd="defense"]') };
+    this.cooldowns = { melee: q('[data-cd="melee"]'), defense: q('[data-cd="defense"]') };
     POWERUP_ORDER.forEach((_, i) => this.powerCounts.push(q(`[data-power="${i}"]`)));
     this.minimap = this.root.querySelector<HTMLCanvasElement>('.hud-map')!.getContext('2d')!;
     if (!this.duel) {
@@ -226,6 +235,10 @@ export class Hud {
   private countdownText(dt: number): string {
     const { countdown } = this.match;
     let text = '';
+    if (countdown > COUNTDOWN) {
+      // A duel's face-off is still playing.
+      return '';
+    }
     if (countdown > 0) {
       text = String(Math.ceil(countdown));
     } else if (this.lastCount && this.lastCount !== 'GO!') {
@@ -238,6 +251,25 @@ export class Hud {
     if (text && text !== this.lastCount) this.onCountdown(text === 'GO!');
     this.lastCount = text;
     return text;
+  }
+
+  /** A second of tumbling, then black with a line to read until the robot's back. */
+  private updateDeathFade(dt: number): void {
+    const { player } = this;
+    if (player.alive || player.forfeited) {
+      this.deadFor = 0;
+      this.fade.classList.remove('death-fade-on');
+      return;
+    }
+    if (this.deadFor < RAGDOLL_TIME && this.deadFor + dt >= RAGDOLL_TIME) {
+      this.lastWords = pickLastWords(this.lastWords);
+      this.fadeLine.textContent = this.lastWords;
+    }
+    this.deadFor += dt;
+    // With no respawn to wait for, the view comes back for the end of the match.
+    const showing = this.deadFor >= RAGDOLL_TIME && (!player.out || this.deadFor < MATCH.respawnTime);
+    this.fade.classList.toggle('death-fade-on', showing);
+    this.setText(this.fadeTimer, showing && !player.out ? `Rebuilding in ${Math.ceil(player.respawnT)}` : '');
   }
 
   /** Once someone's out for good they may go, after a wait, if the match is still running without them. */
@@ -378,12 +410,10 @@ export class Hud {
     // A spinner fills up as it reaches speed, so the bar shows how much is still to come.
     const meleeDef = MELEE[loadout.melee];
     this.setCooldown('melee', meleeDef.kind === 'spinner' && player.meleeCd <= 0 ? 1 - player.meleeCharge : fraction(player.meleeCd, meleeDef.cooldown));
-    this.setCooldown('turret', fraction(player.turretCd, TURRETS[loadout.turret].cooldown));
     this.setCooldown('defense', fraction(player.defenseCd, DEFENSES[loadout.defense].cooldown));
     this.battery.style.height = `${Math.max(0, player.ammo) * 100}%`;
-    this.battery.style.background = player.ammo < TURRETS[loadout.turret].battery ? '#e8483a' : '#8fc1dc';
-    // The flamethrower is limited only by the battery.
-    this.setText(this.shots, TURRETS[loadout.turret].shots > 0 ? String(player.shots) : '');
+    this.battery.style.background = player.ammo < BATTERY_LOW ? '#e8483a' : '#8fc1dc';
+    this.updateDeathFade(dt);
     this.updateRival();
     this.blind.style.opacity = String(Math.min(BLIND_MAX, player.blindT * BLIND_MAX * 1.2));
     POWERUP_ORDER.forEach((id, i) => {
@@ -468,7 +498,7 @@ export class Hud {
     if (this.ping.textContent !== text) this.ping.textContent = text;
   }
 
-  private setCooldown(id: 'melee' | 'turret' | 'defense', fraction: number): void {
+  private setCooldown(id: 'melee' | 'defense', fraction: number): void {
     this.cooldowns[id].style.transform = `scaleY(${Math.min(1, fraction)})`;
   }
 
