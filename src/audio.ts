@@ -5,6 +5,10 @@ const MASTER_VOLUME = 0.6;
 const MUSIC_VOLUME = 0.6;
 /** Fast weapons can land hits every frame, and a sound for each would be a buzz. */
 const HIT_GAP = 0.05;
+/** Seconds between the knocks of an impact driver's hammer. */
+const DRILL_KNOCK = 0.026;
+/** The partials of a small bell: frequency, level and how long each one rings. They aren't in tune with each other, which is what makes it sound like metal. */
+const REGISTER_BELL = [[2093, 1, 0.75], [3140, 0.7, 0.6], [4700, 0.4, 0.4], [6280, 0.2, 0.25]] as const;
 
 /** What the continuous sounds should be doing right now. */
 // Each sound is built differently, so the same volume number comes out at very different loudness.
@@ -169,20 +173,21 @@ export class Sfx {
     if (this.volumes.music > 0) this.music?.play(track);
   }
 
-  private burst(volume: number, duration: number, freq: number, type: BiquadFilterType, sweepTo?: number): void {
+  private burst(volume: number, duration: number, freq: number, type: BiquadFilterType, sweepTo?: number, delay = 0): void {
     const { ctx, effects, noise } = this;
     if (!ctx || !effects || !noise || this.muted) return;
+    const start = ctx.currentTime + delay;
     const source = ctx.createBufferSource();
     source.buffer = noise;
     const filter = ctx.createBiquadFilter();
     filter.type = type;
-    filter.frequency.setValueAtTime(freq, ctx.currentTime);
-    if (sweepTo) filter.frequency.exponentialRampToValueAtTime(sweepTo, ctx.currentTime + duration);
+    filter.frequency.setValueAtTime(freq, start);
+    if (sweepTo) filter.frequency.exponentialRampToValueAtTime(sweepTo, start + duration);
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(volume, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    gain.gain.setValueAtTime(volume, start);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
     source.connect(filter).connect(gain).connect(effects);
-    source.start(0, Math.random() * 0.5, duration);
+    source.start(start, Math.random() * 0.5, duration);
   }
 
   private tone(volume: number, duration: number, from: number, to: number, type: OscillatorType = 'square', delay = 0): void {
@@ -361,6 +366,35 @@ export class Sfx {
 
   deny(): void {
     this.tone(0.12, 0.12, 180, 120);
+  }
+
+  /** An impact driver seating a bolt: a quick blip of the trigger, a longer run, then it bites. */
+  drill(delay = 0): void {
+    const hammering = (from: number, length: number, pitch: number) => {
+      // The motor whine climbs, and the hammer inside knocks over the top of it.
+      this.tone(0.035, length, pitch, pitch * 1.35, 'sawtooth', from);
+      for (let t = 0; t < length; t += DRILL_KNOCK) {
+        this.burst(0.2, 0.014, 2600, 'bandpass', undefined, from + t);
+        this.tone(0.13, 0.016, 210, 120, 'square', from + t);
+      }
+    };
+    hammering(delay, 0.1, 520);
+    hammering(delay + 0.16, 0.34, 640);
+    // The bolt seating, felt more than heard.
+    this.tone(0.3, 0.09, 170, 60, 'sine', delay + 0.5);
+    this.burst(0.18, 0.04, 1500, 'bandpass', undefined, delay + 0.5);
+  }
+
+  /** A cash register: the keys and drawer go ka-chunk, then the bell rings out over it. */
+  chaChing(): void {
+    this.burst(0.3, 0.05, 3200, 'bandpass');
+    this.tone(0.22, 0.06, 240, 90, 'square');
+    for (const [freq, level, ring] of REGISTER_BELL) {
+      this.tone(0.065 * level, ring, freq, freq * 0.998, 'sine', 0.1);
+      // A second strike right after the first is what makes it a "ching" rather than a "ding".
+      this.tone(0.05 * level, ring, freq, freq * 0.998, 'sine', 0.17);
+    }
+    this.burst(0.05, 0.09, 6500, 'highpass', undefined, 0.1);
   }
 
   setLoops(state: LoopState): void {

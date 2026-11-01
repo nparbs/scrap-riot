@@ -360,7 +360,7 @@ export class Hud {
     this.updateDamageMarks(dt);
     const health = player.hp / player.maxHp;
     this.hpFill.style.width = `${health * 100}%`;
-    this.hpFill.style.background = health > 0.5 ? '#d8d84a' : health > 0.25 ? '#f2a037' : '#e84a3a';
+    this.hpFill.style.background = health > 0.5 ? '#7ddba8' : health > 0.25 ? '#ffa94d' : '#e8483a';
     this.setText(this.hpText, `${Math.min(Math.ceil(player.hp), Math.round(player.maxHp))} / ${Math.round(player.maxHp)}`);
 
     const left = Math.ceil(match.timeLeft);
@@ -381,7 +381,7 @@ export class Hud {
     this.setCooldown('turret', fraction(player.turretCd, TURRETS[loadout.turret].cooldown));
     this.setCooldown('defense', fraction(player.defenseCd, DEFENSES[loadout.defense].cooldown));
     this.battery.style.height = `${Math.max(0, player.ammo) * 100}%`;
-    this.battery.style.background = player.ammo < TURRETS[loadout.turret].battery ? '#e84a3a' : '#d8d84a';
+    this.battery.style.background = player.ammo < TURRETS[loadout.turret].battery ? '#e8483a' : '#8fc1dc';
     // The flamethrower is limited only by the battery.
     this.setText(this.shots, TURRETS[loadout.turret].shots > 0 ? String(player.shots) : '');
     this.updateRival();
@@ -455,7 +455,7 @@ export class Hud {
     this.setText(this.rivalWeapon, MELEE[rival.loadout.melee].name);
     const health = rival.hp / rival.maxHp;
     this.rivalFill.style.width = `${health * 100}%`;
-    this.rivalFill.style.background = health > 0.5 ? '#d8d84a' : health > 0.25 ? '#f2a037' : '#e84a3a';
+    this.rivalFill.style.background = health > 0.5 ? '#7ddba8' : health > 0.25 ? '#ffa94d' : '#e8483a';
     this.rivalBattery.style.height = `${Math.max(0, rival.ammo) * 100}%`;
     // Without a map, this is how to find them on the roof.
     const seen = this.duel && rival.alive && player.alive && match.canSee(player, rival);
@@ -496,7 +496,7 @@ export class Hud {
     g.clearRect(0, 0, size, size);
     g.fillStyle = 'rgba(15,17,20,0.75)';
     g.fillRect(0, 0, size, size);
-    g.strokeStyle = '#e6b422';
+    g.strokeStyle = '#ff7f3f';
     g.lineWidth = 2;
     g.strokeRect(1, 1, size - 2, size - 2);
 

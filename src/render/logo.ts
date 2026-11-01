@@ -1,7 +1,7 @@
 // The game's logo, drawn in code so the page, the website icon and the maps all share one design.
 
-const INK = '#12150e';
-const GOLD = '#d8d84a';
+const INK = '#141516';
+const RIM = '#f2eadb';
 
 function cogOutline(g: CanvasRenderingContext2D, center: number, outer: number, inner: number, teeth: number): void {
   g.beginPath();
@@ -35,7 +35,7 @@ export function drawLogo(g: CanvasRenderingContext2D, size: number): void {
   g.fillStyle = INK;
   g.fill();
   g.lineWidth = size * 0.022;
-  g.strokeStyle = GOLD;
+  g.strokeStyle = RIM;
   g.stroke();
 
   // The hazard band, clipped to the middle of the cog.
@@ -43,12 +43,12 @@ export function drawLogo(g: CanvasRenderingContext2D, size: number): void {
   g.beginPath();
   g.arc(c, c, size * 0.355, 0, Math.PI * 2);
   g.clip();
-  g.fillStyle = '#24261c';
+  g.fillStyle = '#25282b';
   g.fillRect(0, 0, size, size);
   g.translate(c, c);
   g.rotate(-0.42);
   const band = size * 0.5;
-  g.fillStyle = '#e6c41f';
+  g.fillStyle = '#ff7f3f';
   g.fillRect(-size, -band / 2, size * 2, band);
   g.fillStyle = INK;
   const stripe = size * 0.075;
@@ -66,7 +66,7 @@ export function drawLogo(g: CanvasRenderingContext2D, size: number): void {
   g.beginPath();
   g.arc(c, c, size * 0.355, 0, Math.PI * 2);
   g.lineWidth = size * 0.016;
-  g.strokeStyle = GOLD;
+  g.strokeStyle = RIM;
   g.stroke();
 
   if (size >= 96) {
@@ -85,11 +85,11 @@ export function drawLogo(g: CanvasRenderingContext2D, size: number): void {
     const firstLine = c - height / 2 + top.actualBoundingBoxAscent;
     const secondLine = firstLine + gap + bottom.actualBoundingBoxAscent;
     const fill = g.createLinearGradient(0, firstLine - top.actualBoundingBoxAscent, 0, secondLine);
-    fill.addColorStop(0, '#ffd23a');
-    fill.addColorStop(0.55, '#ff6a1a');
-    fill.addColorStop(1, '#d8280e');
+    fill.addColorStop(0, '#fff1dc');
+    fill.addColorStop(0.55, '#ff9a5c');
+    fill.addColorStop(1, '#d8481a');
     g.fillStyle = fill;
-    g.strokeStyle = '#0a0b06';
+    g.strokeStyle = '#0b0c0d';
     centeredText(g, 'SCRAP', c, firstLine, size * 0.045);
     centeredText(g, 'RIOT', c, secondLine, size * 0.045);
   }

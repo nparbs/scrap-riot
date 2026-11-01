@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { applyCheat, buyOrEquip, buyPowerup, buyUpgrade, CATALOG, newSave, sellPart, setArmour, type Save, type Slot } from '../src/game/progress';
 import { DEFAULT_NAME, OFFLINE_PAYOUT_MAX, sanitizeName, sanitizePaint, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineStatus, type Profile } from '../src/net/protocol';
 import { isArenaId } from '../src/sim/arena';
@@ -27,6 +27,7 @@ interface PlayerRow {
   wins: number;
   kills: number;
   deaths: number;
+  member: boolean;
 }
 
 export interface MatchResult {
@@ -60,6 +61,11 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
+/** Spaces and capitals don't matter, so a code read out loud still works. */
+function codeHash(code: string): Buffer {
+  return createHash('sha256').update(code.trim().toLowerCase()).digest();
+}
+
 function toSave(row: PlayerRow): Save {
   // Rows from before a part type existed simply start with the free one.
   const state = { ...row.state, owned: { ...newSave().owned, ...row.state.owned } };
@@ -67,14 +73,14 @@ function toSave(row: PlayerRow): Save {
 }
 
 function toProfile(row: PlayerRow): Profile {
-  return { save: toSave(row), rating: row.rating, kills: row.kills, deaths: row.deaths, signedIn: row.google_sub !== null };
+  return { save: toSave(row), rating: row.rating, kills: row.kills, deaths: row.deaths, signedIn: row.google_sub !== null, member: row.member };
 }
 
 const has = (table: object, key: unknown): key is string => typeof key === 'string' && Object.prototype.hasOwnProperty.call(table, key);
 
 /** Everything about a player's account. All money changes happen inside a locked transaction. */
 export class Accounts {
-  constructor(private readonly db: Db, private readonly verifyGoogle: GoogleVerifier | null) {}
+  constructor(private readonly db: Db, private readonly verifyGoogle: GoogleVerifier | null, private readonly memberCode: string | null = null) {}
 
   async migrate(): Promise<void> {
     await this.db.query(SCHEMA);
@@ -223,6 +229,15 @@ export class Accounts {
     }
   }
 
+  /** Makes this account a member, if the code is right. With no code set up, nobody can join. */
+  async joinMembers(token: unknown, code: unknown): Promise<GarageResult | null> {
+    const row = await this.playerForToken(this.db, token);
+    if (!row) return null;
+    if (!this.memberCode || typeof code !== 'string' || !timingSafeEqual(codeHash(code), codeHash(this.memberCode))) return { ok: false, reason: 'rejected' };
+    const [updated] = await this.db.query<PlayerRow>('UPDATE players SET member = true, last_seen = now() WHERE id = $1 RETURNING *', [row.id]);
+    return { ok: true, profile: toProfile(updated) };
+  }
+
   /** Banks a finished match. It all commits together, so a crash can't pay out half a match. */
   async recordMatch(result: MatchResult): Promise<void> {
     if (result.players.length === 0) return;
@@ -260,19 +275,19 @@ export class Accounts {
     );
   }
 
-  /** Public, so it holds only what other players already see in a match. */
+  /** Public, so it holds only what other players already see in a match. Members only. */
   leaderboard(limit = 20): Promise<LeaderboardEntry[]> {
     return this.db.query<LeaderboardEntry>(
-      'SELECT name, rating, wins, matches, kills FROM players WHERE matches > 0 ORDER BY rating DESC, wins DESC, created_at ASC LIMIT $1',
+      'SELECT name, rating, wins, matches, kills FROM players WHERE member AND matches > 0 ORDER BY rating DESC, wins DESC, created_at ASC LIMIT $1',
       [limit],
     );
   }
 
-  /** Public. Guests who never chose a name are left out, as there's nobody to recognise. */
+  /** Public, and members only. Any who never chose a name are left out, as there's nobody to recognise. */
   recentPlayers(): Promise<OnlineStatus['recent']> {
     return this.db.query<OnlineStatus['recent'][number]>(
       `SELECT name, last_seen AS "lastSeen" FROM players
-       WHERE name <> $1 AND last_seen > now() - interval '${RECENT_DAYS} days'
+       WHERE member AND name <> $1 AND last_seen > now() - interval '${RECENT_DAYS} days'
        ORDER BY last_seen DESC LIMIT $2`,
       [DEFAULT_NAME, RECENT_LIMIT],
     );

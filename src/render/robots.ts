@@ -1045,7 +1045,10 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec): BuiltMelee
   }
 }
 
-/** Only gear that does its work out at the front or sides gets a model, which keeps the deck clear. */
+/**
+ * Only gear that does its work out at the ends or sides gets a model, which keeps the deck clear.
+ * It's all drawn at the nose, and the caller turns it to the side opposite the main weapon.
+ */
 function buildDefenseGear(root: THREE.Group, id: DefenseId, deckY: number, spec: HullSpec): THREE.Group | null {
   const front = spec.length / 2;
   switch (id) {
@@ -1129,7 +1132,10 @@ export function buildRobot(build: RobotBuild): RobotModel {
   const { spinner, axis, chain = null } = buildMelee(meleePivot, build.melee, spec);
   root.add(meleePivot);
 
-  const blades = buildDefenseGear(root, build.defense, deckY, spec);
+  const gear = new THREE.Group();
+  if (!build.rearMelee) gear.rotation.y = Math.PI;
+  const blades = buildDefenseGear(gear, build.defense, deckY, spec);
+  root.add(gear);
 
   const shield = new THREE.Mesh(
     new THREE.SphereGeometry(spec.length * 0.95, 20, 14),
