@@ -1,11 +1,11 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
-import { PROTOCOL_VERSION, type ClientMessage, type ErrorCode, type ServerMessage } from '../src/net/protocol';
+import { PROTOCOL_VERSION, type ClientMessage, type ErrorCode, type OnlineQueue, type ServerMessage } from '../src/net/protocol';
 import { STEP } from '../src/sim/match';
 import type { Accounts } from './accounts';
 import { createApi } from './api';
-import { DEFAULT_ROOM_OPTIONS, Room, type Conn, type Player, type RoomOptions } from './room';
+import { BRAWL_ROOM_OPTIONS, DEFAULT_ROOM_OPTIONS, Room, type Conn, type Player, type RoomOptions } from './room';
 
 export interface GameServerOptions {
   port: number;
@@ -20,6 +20,7 @@ export interface GameServerOptions {
   maxRooms?: number;
   maxConnectionsPerIp?: number;
   room?: Partial<RoomOptions>;
+  brawlRoom?: Partial<RoomOptions>;
   /** Turns on the API and server-owned progress. Without it, online play is anonymous. */
   accounts?: Accounts;
   /** Shown to the client so it can offer Google sign-in. */
@@ -57,7 +58,10 @@ function clientAddress(req: IncomingMessage, header: string | undefined): string
 }
 
 export function startGameServer(options: GameServerOptions): Promise<GameServer> {
-  const roomOptions: RoomOptions = { ...DEFAULT_ROOM_OPTIONS, ...options.room };
+  const roomOptions: Record<OnlineQueue, RoomOptions> = {
+    duel: { ...DEFAULT_ROOM_OPTIONS, ...options.room },
+    brawl: { ...BRAWL_ROOM_OPTIONS, ...options.brawlRoom },
+  };
   const allowed = new Set(options.allowedOrigins ?? []);
   const maxRooms = options.maxRooms ?? 50;
   const maxPerIp = options.maxConnectionsPerIp ?? 8;
@@ -70,14 +74,14 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
   const accountPlayers = new Map<string, { room: Room; player: Player }>();
   const addressOf = (req: IncomingMessage) => clientAddress(req, options.clientIpHeader);
   const presence = () => {
-    let queued = 0;
+    const queues: Record<OnlineQueue, number> = { duel: 0, brawl: 0 };
     let playing = 0;
     for (const room of rooms) {
       if (room.finished) continue;
       if (room.match) playing += room.connected;
-      else queued += room.players.size;
+      else queues[room.queue] += room.players.size;
     }
-    return { queued, playing };
+    return { queued: queues.duel + queues.brawl, queues, playing };
   };
   const api = accounts
     ? createApi({ accounts, allowedOrigins: allowed, googleClientId: options.googleClientId ?? null, clientAddress: addressOf, presence })
@@ -109,15 +113,15 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
     session.socket.close();
   };
 
-  const openRoom = (now: number): Room | null => {
-    for (const room of rooms) if (room.open) return room;
+  const openRoom = (now: number, queue: OnlineQueue): Room | null => {
+    for (const room of rooms) if (room.open && room.queue === queue) return room;
     if (rooms.size >= maxRooms) return null;
-    const room = new Room(roomOptions, now, accounts ? (result) => accounts.recordMatch(result) : undefined);
+    const room = new Room(roomOptions[queue], now, accounts ? (result) => accounts.recordMatch(result) : undefined);
     rooms.add(room);
     return room;
   };
 
-  const joinWithAccount = async (session: Session, token: unknown) => {
+  const joinWithAccount = async (session: Session, token: unknown, queue: OnlineQueue) => {
     let account: Awaited<ReturnType<Accounts['forMatch']>>;
     try {
       account = await accounts!.forMatch(token);
@@ -139,7 +143,7 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
       return;
     }
 
-    const room = openRoom(now);
+    const room = openRoom(now, queue);
     if (!room) return fail(session, 'full');
     session.room = room;
     session.player = room.join(session.conn, null, null, now, account);
@@ -153,8 +157,9 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
       case 'join': {
         if (session.room || session.joining) return;
         if (message.v !== PROTOCOL_VERSION) return fail(session, 'outdated');
+        const queue: OnlineQueue = message.queue === 'brawl' ? 'brawl' : 'duel';
         if (!accounts) {
-          const room = openRoom(now);
+          const room = openRoom(now, queue);
           if (!room) return fail(session, 'full');
           session.room = room;
           session.player = room.join(session.conn, message.name, message.loadout, now);
@@ -162,7 +167,7 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
           return;
         }
         session.joining = true;
-        void joinWithAccount(session, message.session).finally(() => {
+        void joinWithAccount(session, message.session, queue).finally(() => {
           session.joining = false;
         });
         return;

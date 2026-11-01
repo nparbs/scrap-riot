@@ -348,6 +348,8 @@ export const REWARD = {
   repairPickup: 0.3,
   hillPerSecond: 3,
   placement: [300, 180, 100, 50, 25, 10],
+  /** The least anyone earns for seeing a match through to the end. */
+  minimum: 100,
   duel: [300, 50],
 };
 
@@ -363,8 +365,8 @@ export const MODES: Record<ModeId, { name: string; blurb: string; duration: numb
 export const HILL_TARGET = 45;
 /** Long enough to watch the loser fall before the results appear. */
 export const DUEL_OUTRO = 1.5;
-/** Shorter duels pay no bonus, so two accounts can't farm money by surrendering to each other. */
-export const DUEL_MIN_PAID_TIME = 30;
+/** Shorter matches pay no bonus, so two accounts can't farm money by surrendering to each other. */
+export const MIN_PAID_TIME = 30;
 
 export const MATCH = {
   duration: MODES.ffa.duration,

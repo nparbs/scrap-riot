@@ -10,8 +10,10 @@ Where Scrap Riot stands, for picking the work up in a new session. Last updated 
 
 Update the page and server together whenever `PROTOCOL_VERSION` changes.
 
-## Latest work (protocol 6)
+## Latest work (protocol 7)
 
+- **Online Brawl:** a second online queue, set by `BRAWL_ROOM_OPTIONS` in `server/room.ts`. It's a Free-for-All on The Skyscraper for 2 to 6 pilots with no bots, starting 20 seconds after a second pilot joins, or 3 seconds after it fills. Leaving or staying disconnected removes the robot and ranks that pilot last, and the last pilot left wins. Rating runs evenly from +25 for first to -15 for last, and matches under 30 seconds pay no bonus in any mode.
+- **Minimum payout:** anyone still in a match when it ends earns at least `REWARD.minimum` ($100), including losers and draws. Anyone who surrendered or left doesn't get it. Because this ignores match length, two accounts can farm $100 per quick surrender in a duel, which the 30-second bonus rule used to prevent. Worth watching once there are real players.
 - **Sound levels matched:** every weapon sound was rendered and measured with A-weighting, then given a level in `MELEE_LEVEL` and `GUN_LEVEL` in `src/audio.ts`. The spinner whine dropped from 45 dB to 24 dB. Weapon families now sit within about 4–5 dB.
 - **Audio settings:** Master, Music and Sound Effects sliders plus Mute, saved per browser.
 - **Queue count:** "N in queue" on the Play Online button, refreshed every 15 seconds.
@@ -32,8 +34,8 @@ Update the page and server together whenever `PROTOCOL_VERSION` changes.
 
 Shipped before the latest work, and still true unless it says otherwise above.
 
-- **1v1 online:** Play Online is always a Duel on The Skyscraper with no bots. A match starts only once a second player joins.
-- **Three ways to play:** Play Online, Offline vs Bots (choice of map and mode, plus Career) and Training (a practice dummy, no payout).
+- **1v1 online:** Online Duel is always a Duel on The Skyscraper with no bots. A match starts only once a second player joins.
+- **Ways to play:** Online Duel, Online Brawl, Offline vs Bots (choice of map and mode, plus Career) and Training (a practice dummy, no payout).
 - **Workshop:** in the style of the original, with Chassis, Tower, Wheels, Engine, Power Source and an Armour dial, limited by Used Space.
 - **Paintshop:** paint on an unfolded robot with drawing tools and a 120-colour palette. Opponents see it. Paint jobs are in `src/game/skin.ts`.
 - **Melee first:** 20 main weapons, including spinners that store energy, a flipper, a crusher and forks.

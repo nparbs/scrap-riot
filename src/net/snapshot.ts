@@ -9,7 +9,7 @@ const STATE = [
   'invulnT', 'flashT', 'burnT', 'slowT', 'blindT', 'cloakT', 'xrayT', 'regenT', 'bladesT', 'kamikazeT',
   'meleeWindup', 'meleeSwing', 'lungeT', 'ammo', 'shots', 'airT', 'flipT', 'meleeCharge', 'hillScore', 'kills', 'deaths', 'damageDealt', 'earned', 'eliminatedAt',
 ] as const;
-const FLAGS = ['alive', 'out', 'meleeActive', 'turretFiring', 'oiled', 'glued'] as const;
+const FLAGS = ['alive', 'out', 'forfeited', 'meleeActive', 'turretFiring', 'oiled', 'glued'] as const;
 
 const FLAGS_AT = MOTION.length + STATE.length;
 const POWERUPS_AT = FLAGS_AT + 1;

@@ -1,7 +1,7 @@
 import { exportJWK, generateKeyPair, SignJWT, createLocalJWKSet, type JWK } from 'jose';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { embeddedDb } from '../scripts/embedded-db';
-import { Accounts } from '../server/accounts';
+import { Accounts, ratingChange } from '../server/accounts';
 import { connectPostgres, type Db } from '../server/db';
 import { startGameServer, type GameServer } from '../server/gameServer';
 import { googleVerifier } from '../server/google';
@@ -149,6 +149,13 @@ describe('accounts', () => {
   });
 });
 
+describe('rating', () => {
+  it('runs evenly from first to last, however many were in the match', () => {
+    expect([1, 2].map((place) => ratingChange(place, 2))).toEqual([25, -15]);
+    expect([1, 2, 3, 4, 5, 6].map((place) => ratingChange(place, 6))).toEqual([25, 17, 9, 1, -7, -15]);
+  });
+});
+
 describe('garage on the server', () => {
   const give = async (token: string, money: number) => {
     const { accountId } = (await accounts.forMatch(token))!;
@@ -229,7 +236,7 @@ describe('over the network', () => {
       accounts,
       googleClientId: CLIENT_ID,
       allowedOrigins,
-      room: { lobbyMs: 60, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', minPlayers: 1, capacity: 6, ...room },
+      room: { lobbyMs: 60, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', minPlayers: 1, capacity: 6, bots: true, ...room },
     });
     servers.push(s);
     return s;
@@ -275,6 +282,7 @@ describe('over the network', () => {
     await until(() => first.inbox.some((m) => m.t === 'queue'));
     const waiting = await online();
     expect([waiting.queued, waiting.playing]).toEqual([1, 0]);
+    expect(waiting.queues).toEqual({ duel: 1, brawl: 0 });
     const row = waiting.recent.find((p) => p.name === label)!;
     expect(row).toBeTruthy();
     expect(Object.keys(row).sort()).toEqual(['lastSeen', 'name']);
@@ -418,6 +426,23 @@ describe('over the network', () => {
     const board = await accounts.leaderboard(100);
     expect(board.length).toBeGreaterThanOrEqual(2);
     expect(Object.keys(board[0]).sort()).toEqual(['kills', 'matches', 'name', 'rating', 'wins']);
+  });
+
+  it('counts leaving a brawl as last place, and scales rating by the seats in the match', async () => {
+    const s = await server({ bots: false, minPlayers: 3, capacity: 3, lobbyMs: 20 });
+    const [quitter, second, third] = await Promise.all([accounts.createGuest(), accounts.createGuest(), accounts.createGuest()]);
+    const open = (guest: typeof quitter, events = {}) => new NetClient(`ws://127.0.0.1:${s.port}`, { name: 'x', loadout: guest.profile.save.loadout, session: guest.token }, events);
+    let over = 0;
+    const q = open(quitter, { onStart: () => setTimeout(() => q.leave(), 50) });
+    const b = open(second, { onStart: () => setTimeout(() => b.leave(), 150), onOver: () => over++ });
+    const c = open(third, { onOver: () => over++ });
+    [q, b, c].forEach((client) => client.connect());
+    await until(() => over > 0, 6000);
+    const start = quitter.profile.rating;
+    const rows = await Promise.all([quitter, second, third].map(async (guest) => (await accounts.profile(guest.token))!));
+    expect(rows.map((row) => row.save.matches)).toEqual([1, 1, 1]);
+    expect(rows.map((row) => row.rating - start).sort((x, y) => x - y)).toEqual([-15, -15, 25]);
+    expect(rows[2].rating - start).toBe(25);
   });
 
   it('pays nothing to a player who leaves early', async () => {

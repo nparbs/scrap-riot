@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket as NodeWebSocket } from 'ws';
 import { startGameServer, type GameServer } from '../server/gameServer';
 import { NetClient, type NetFailure } from '../src/net/client';
-import { onlineLoadout, PROTOCOL_VERSION, sanitizeName, type ServerMessage } from '../src/net/protocol';
+import { onlineLoadout, PROTOCOL_VERSION, sanitizeName, type OnlineQueue, type ServerMessage } from '../src/net/protocol';
 import { compactEvents } from '../src/net/snapshot';
 import { newSave } from '../src/game/progress';
 import type { BotInput } from '../src/sim/match';
@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 async function server(room: Record<string, unknown> = {}, extra: Record<string, unknown> = {}): Promise<GameServer> {
-  const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 80, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', minPlayers: 1, capacity: 6, ...room }, ...extra });
+  const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 80, fullLobbyMs: 10, graceMs: 200, arena: 'pit', mode: 'ffa', minPlayers: 1, capacity: 6, bots: true, ...room }, ...extra });
   servers.push(s);
   return s;
 }
@@ -35,9 +35,9 @@ async function until(check: () => boolean, ms = 3000): Promise<void> {
   }
 }
 
-function client(port: number, name = 'Tester') {
+function client(port: number, name = 'Tester', queue?: OnlineQueue) {
   const state = { started: false, over: false, failed: null as NetFailure | null, queue: 0, reconnecting: false };
-  const c = new NetClient(`ws://127.0.0.1:${port}`, { name, loadout: newSave().loadout }, {
+  const c = new NetClient(`ws://127.0.0.1:${port}`, { name, loadout: newSave().loadout, queue }, {
     onStart: () => (state.started = true),
     onOver: () => (state.over = true),
     onFail: (reason) => (state.failed = reason),
@@ -96,6 +96,93 @@ describe('protocol', () => {
 });
 
 describe('online match', () => {
+  describe('brawl', () => {
+    /** The real settings, with shorter waits. */
+    const brawlServer = async (brawlRoom: Record<string, unknown> = {}) => {
+      const s = await startGameServer({ port: 0, host: '127.0.0.1', brawlRoom: { lobbyMs: 150, fullLobbyMs: 10, graceMs: 200, ...brawlRoom } });
+      servers.push(s);
+      return s;
+    };
+    const brawler = (port: number, name: string) => client(port, name, 'brawl');
+
+    it('never starts with one player', async () => {
+      const s = await brawlServer({ lobbyMs: 20 });
+      const a = brawler(s.port, 'Ann');
+      await until(() => a.state.queue === 1);
+      await sleep(200);
+      expect(a.state.started).toBe(false);
+    });
+
+    it('waits out the countdown for more pilots, then fights on the roof with no bots', async () => {
+      const s = await brawlServer({ lobbyMs: 300 });
+      const a = brawler(s.port, 'Ann');
+      await until(() => a.state.queue === 1);
+      const b = brawler(s.port, 'Bea');
+      await until(() => a.state.queue === 2);
+      await sleep(50);
+      expect(a.state.started).toBe(false);
+      const c = brawler(s.port, 'Cal');
+      await until(() => a.state.started && b.state.started && c.state.started);
+      expect(a.c.match!.bots.map((bot) => bot.name).sort()).toEqual(['Ann', 'Bea', 'Cal']);
+      expect(a.c.match!.arena.id).toBe('skyscraper');
+      expect(a.c.match!.mode).toBe('ffa');
+      expect(s.stats().rooms).toBe(1);
+    });
+
+    it('starts at once when all six seats fill, and a seventh pilot waits for the next one', async () => {
+      const s = await brawlServer({ lobbyMs: 60_000 });
+      const six = ['A', 'B', 'C', 'D', 'E', 'F'].map((name) => brawler(s.port, name));
+      await until(() => six.every((p) => p.state.started));
+      expect(six[0].c.match!.bots).toHaveLength(6);
+      expect(new Set(six[0].c.match!.bots.map((bot) => bot.color)).size).toBe(6);
+      const seventh = brawler(s.port, 'G');
+      await until(() => seventh.state.queue === 1);
+      expect(seventh.state.started).toBe(false);
+      expect(s.stats().rooms).toBe(2);
+    });
+
+    it('keeps duels and brawls apart', async () => {
+      const s = await brawlServer({ lobbyMs: 60_000 });
+      const fighter = brawler(s.port, 'Ann');
+      await until(() => fighter.state.queue === 1);
+      const dueller = client(s.port, 'Bea', 'duel');
+      await until(() => dueller.state.queue === 1);
+      expect(fighter.state.queue).toBe(1);
+      expect(s.stats().rooms).toBe(2);
+    });
+
+    it('takes a leaver out of the match, and ends it when one pilot is left', async () => {
+      const s = await brawlServer();
+      const [a, b, c] = ['Ann', 'Bea', 'Cal'].map((name) => brawler(s.port, name));
+      await until(() => a.state.started && b.state.started && c.state.started);
+      const stops = [a, b, c].map((p) => pump(p.c));
+      const annId = a.c.player!.id;
+      a.c.leave();
+      await until(() => c.c.match!.bots[annId].out);
+      await sleep(100);
+      expect(c.state.over).toBe(false);
+      b.c.leave();
+      await until(() => c.state.over);
+      expect(c.c.match!.ranked()[0].name).toBe('Cal');
+      expect(c.c.match!.ranked().at(-1)!.out).toBe(true);
+      stops.forEach((stop) => stop());
+    });
+
+    it('holds a dropped robot for the grace period, then takes it out', async () => {
+      const s = await brawlServer();
+      const [a, b, c] = ['Ann', 'Bea', 'Cal'].map((name) => brawler(s.port, name));
+      await until(() => a.state.started && b.state.started && c.state.started);
+      const stops = [b, c].map((p) => pump(p.c));
+      const annId = a.c.player!.id;
+      a.c.close();
+      await sleep(80);
+      expect(b.c.match!.bots[annId].out).toBe(false);
+      await until(() => b.c.match!.bots[annId].out);
+      expect(b.state.over).toBe(false);
+      stops.forEach((stop) => stop());
+    });
+  });
+
   /** A server set up the way the real one is: duels only, and no bots. */
   const duelServer = async (room: Record<string, unknown> = {}) => {
     const s = await startGameServer({ port: 0, host: '127.0.0.1', room: { lobbyMs: 40, fullLobbyMs: 40, graceMs: 200, ...room } });

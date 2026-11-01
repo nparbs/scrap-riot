@@ -34,7 +34,6 @@ import {
   CHASSIS,
   CLOAK_TIME,
   DEFENSES,
-  DUEL_MIN_PAID_TIME,
   DUEL_OUTRO,
   FLIP_TIME,
   HILL_TARGET,
@@ -42,6 +41,7 @@ import {
   MEGA_ABSORB,
   MEGA_TIME,
   MELEE,
+  MIN_PAID_TIME,
   MODES,
   RAGE_MULT,
   RAGE_TIME,
@@ -132,6 +132,8 @@ export interface Bot {
   alive: boolean;
   /** Eliminated for good in Last Robot Standing. */
   out: boolean;
+  /** Surrendered or walked away, rather than being beaten. */
+  forfeited: boolean;
   eliminatedAt: number;
   respawnT: number;
   meleeCd: number;
@@ -390,7 +392,7 @@ export class Match {
       batteryRegen: stats.regen,
       radius: chassis.radius * size,
       mass: chassis.mass * size,
-      alive: true, out: false, eliminatedAt: 0, respawnT: 0,
+      alive: true, out: false, forfeited: false, eliminatedAt: 0, respawnT: 0,
       meleeCd: 0, meleeWindup: 0, meleeSwing: 99, meleeActive: false, meleeCharge: 0, lungeT: 0, clawTarget: -1, clawT: 0,
       ammo: 1, shots: TURRETS[setup.loadout.turret].shots, burstLeft: 0, burstT: 0, heldT: 0, airT: 0, flipT: 0, turretFiring: false, turretCd: 0, defenseCd: 0, defenseHeld: false,
       shieldT: 0, megaT: 0, boostT: 0, rageT: 0, stunT: 0,
@@ -447,6 +449,7 @@ export class Match {
     const bot = this.bots[id];
     if (bot.out) return;
     bot.out = true;
+    bot.forfeited = true;
     bot.alive = false;
     bot.hp = 0;
     bot.eliminatedAt = this.time;
@@ -1611,10 +1614,9 @@ export class Match {
   }
 
   private rank(a: Bot, b: Bot): number {
-    if (this.oneLife) {
-      if (a.out !== b.out) return a.out ? 1 : -1;
-      if (a.eliminatedAt !== b.eliminatedAt) return b.eliminatedAt - a.eliminatedAt;
-    }
+    // Anyone who's out comes last, which outside the one-life modes means they left.
+    if (a.out !== b.out) return a.out ? 1 : -1;
+    if (this.oneLife && a.eliminatedAt !== b.eliminatedAt) return b.eliminatedAt - a.eliminatedAt;
     if (this.mode === 'koth' && a.hillScore !== b.hillScore) return b.hillScore - a.hillScore;
     // A duel that runs out of time goes to whoever has more armour left.
     if (this.mode === 'duel' && a.hp / a.maxHp !== b.hp / b.maxHp) return b.hp / b.maxHp - a.hp / a.maxHp;
@@ -1627,15 +1629,16 @@ export class Match {
   }
 
   private bonusFor(index: number): number {
-    if (this.mode !== 'duel') return REWARD.placement[index] ?? 0;
-    if (this.drawn || this.time < DUEL_MIN_PAID_TIME) return 0;
-    return REWARD.duel[index] ?? 0;
+    if (this.drawn || this.time < MIN_PAID_TIME) return 0;
+    return (this.mode === 'duel' ? REWARD.duel : REWARD.placement)[index] ?? 0;
   }
 
   standings(): Standing[] {
     return this.ranked().map((bot, index) => {
-      const bonus = this.bonusFor(index);
-      return { bot, place: this.drawn ? 1 : index + 1, bonus, total: Math.round(bot.earned + bonus) };
+      // Outside the one-life modes, being out means walking away, which earns no bonus.
+      const bonus = bot.out && !this.oneLife ? 0 : this.bonusFor(index);
+      const earned = Math.round(bot.earned + bonus);
+      return { bot, place: this.drawn ? 1 : index + 1, bonus, total: bot.forfeited ? earned : Math.max(REWARD.minimum, earned) };
     });
   }
 }

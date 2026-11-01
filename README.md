@@ -50,7 +50,7 @@ The server is authoritative: it runs the same simulation as the game, and client
 - **6 powerups:** Rage, Mega Shield, Cloaking, X-Ray, Repair Kit, Battery Pack
 - **3 upgrade tracks** of 5 levels each: armor, engine, weapons
 - **7 maps:** The Skyscraper for duels, plus for Offline vs Bots walled pits, a rooftop and a canyon with lethal drops, a furnace, a piston foundry, and a frozen lake
-- **4 modes:** Duel online, plus for Offline vs Bots Free-for-All, Last Robot Standing and King of the Hill
+- **4 modes:** Online Duel and Online Brawl (up to 6 pilots in a Free-for-All), plus for Offline vs Bots Free-for-All, Last Robot Standing and King of the Hill
 - **Career:** 12 fights with medals and 3 boss robots, plus achievements
 - **Customization:** paint colors, patterns, body shapes and front or rear weapon mounts, all visible to other players
 - **Battle damage:** paint scorches and armor plates fall off as a robot gets hurt

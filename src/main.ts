@@ -8,7 +8,7 @@ import { Tutorial } from './game/tutorial';
 import { Keyboard } from './input';
 import { Api, ApiError } from './net/api';
 import { NetClient, type NetFailure } from './net/client';
-import { sanitizeName, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineStatus, type Profile } from './net/protocol';
+import { sanitizeName, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineQueue, type OnlineStatus, type Profile } from './net/protocol';
 import { GarageView } from './render/garageView';
 import { installLogoIcon } from './render/logo';
 import { MatchView } from './render/matchView';
@@ -387,8 +387,9 @@ class Game {
       // An older server or a blip. Whatever is showing stays until the next try.
       return;
     }
-    const queue = this.ui.querySelector('[data-queue]');
-    if (queue) queue.textContent = queueLabel(this.online);
+    for (const label of this.ui.querySelectorAll<HTMLElement>('[data-queue]')) {
+      label.textContent = queueLabel(this.online, label.dataset.queue as OnlineQueue);
+    }
     const players = this.ui.querySelector('[data-players]');
     if (players) players.innerHTML = playersPanel(this.online);
   }
@@ -572,7 +573,7 @@ class Game {
           onPowerup: (id) => change({ type: 'powerup', id }, () => buyPowerup(this.save, id)),
           onUpgrade: (id) => change({ type: 'upgrade', id }, () => buyUpgrade(this.save, id)),
           onFight: () => this.startMatch(),
-          onOnline: () => this.startOnline(),
+          onOnline: (queue) => this.startOnline(queue),
           onTraining: () => this.startTraining(),
           onSettings: () => this.openSettings(),
           onTab: (tab) => {
@@ -725,14 +726,14 @@ class Game {
     });
   }
 
-  private startOnline(): void {
+  private startOnline(queue: OnlineQueue): void {
     this.training = false;
     this.sfx.click();
     this.mode = 'lobby';
-    const lobby = lobbyScreen(() => this.showGarage(), this.profile !== null);
+    const lobby = lobbyScreen(queue, () => this.showGarage(), this.profile !== null);
     this.setScreen(lobby.el);
     const { name, loadout } = this.save;
-    const net = new NetClient(SERVER_URL, { name, loadout, session: this.api?.token ?? undefined }, {
+    const net = new NetClient(SERVER_URL, { name, loadout, session: this.api?.token ?? undefined, queue }, {
       onQueue: lobby.update,
       onStart: (match, player) => {
         this.match = match;
