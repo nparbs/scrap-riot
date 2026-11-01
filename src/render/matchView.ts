@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ARENAS, PISTON_REACH, pistonExtension, sawPos, shockerActive, type ArenaId } from '../sim/arena';
-import { MELEE, TURBO_MULT, TURRETS } from '../sim/data';
+import { BOOST_SPEED, legibleColor, MELEE, TURRETS } from '../sim/data';
 import { lerpAngle, type Bot, type GameEvent, type Match } from '../sim/match';
 import { buildArena, type ArenaScene } from './arenaScene';
 import { ArcBolts, Particles } from './fx';
@@ -14,6 +14,7 @@ const MAX_WRECKS = 12;
 const WRECK_LIFE = 12;
 const FALL_TIME = 1;
 const ENVIRONMENT_INTENSITY = 0.55;
+const THROW_HEIGHT = 3.2;
 const MATTE_METALNESS = 0.15;
 const FILL_LIGHT = 1.3;
 
@@ -26,6 +27,8 @@ interface BotVisual {
   wheelSpin: number;
   /** Counts down while the robot drops off a ledge or into a pit. */
   fallT: number;
+  /** The longest it has been thrown for in this flight, to shape the arc. */
+  airPeak: number;
   /** How many armor plates have come off so far. */
   platesLost: number;
 }
@@ -49,7 +52,7 @@ function nameSprite(name: string, color: number): THREE.Sprite {
   g.lineWidth = 5;
   g.strokeStyle = 'rgba(0,0,0,0.85)';
   g.strokeText(name, 128, 24);
-  g.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+  g.fillStyle = `#${legibleColor(color).toString(16).padStart(6, '0')}`;
   g.fillText(name, 128, 24);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -178,7 +181,7 @@ export class MatchView {
     const label = nameSprite(bot.name, bot.color);
     label.renderOrder = 12;
     this.arena.scene.add(model.root, barBack, barFront, label);
-    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, fallT: 0, platesLost: 0 });
+    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, fallT: 0, airPeak: 0, platesLost: 0 });
   }
 
   private clearMatch(): void {
@@ -333,7 +336,7 @@ export class MatchView {
         break;
       case 'powerup': {
         const bot = this.match!.bots[event.bot];
-        const color = { repair: 0x5be36a, turbo: 0xff8a2a, rage: 0xff3a3a, megashield: 0xffd23a, cloaking: 0x9fb8d0, xray: 0x7fe8ff }[event.kind];
+        const color = { repair: 0x5be36a, battery: 0xd8d84a, rage: 0xff3a3a, megashield: 0xffd23a, cloaking: 0x9fb8d0, xray: 0x7fe8ff }[event.kind];
         this.particles.burst(bot.x, bot.z, { count: 20, color, speed: 9, size: 0.2, life: 0.5, gravity: 0, spread: 1 });
         break;
       }
@@ -384,9 +387,11 @@ export class MatchView {
 
     const x = bot.prevX + (bot.x - bot.prevX) * alpha;
     const z = bot.prevZ + (bot.z - bot.prevZ) * alpha;
-    model.root.position.set(x, 0, z);
+    v.airPeak = bot.airT > 0 ? Math.max(v.airPeak, bot.airT) : 0;
+    const flight = v.airPeak > 0 ? Math.sin(Math.PI * (1 - bot.airT / v.airPeak)) : 0;
+    model.root.position.set(x, THROW_HEIGHT * flight, z);
     model.root.rotation.y = lerpAngle(bot.prevHeading, bot.heading, alpha);
-    model.turretPivot.rotation.y = bot.turretAngle - bot.heading;
+    model.root.rotation.x = -0.5 * flight;
 
     const forward = bot.vx * Math.sin(bot.heading) + bot.vz * Math.cos(bot.heading);
     v.wheelSpin += forward * dt * 2.5;
@@ -397,14 +402,17 @@ export class MatchView {
     model.shield.visible = bot.shieldT > 0 || bot.megaT > 0;
 
     const melee = MELEE[bot.loadout.melee];
-    if (model.spinner) model.spinner.rotation[model.spinAxis] += (bot.meleeActive ? 38 : 2) * dt;
+    if (model.spinner) {
+      const rate = melee.kind === 'spinner' ? 2 + bot.meleeCharge * 70 : bot.meleeActive ? 38 : 2;
+      model.spinner.rotation[model.spinAxis] += rate * dt;
+    }
     if (model.blades && bot.bladesT > 0) {
       for (const disc of model.blades.children) disc.rotation.x += 30 * dt;
       this.particles.burst(bot.x, bot.z, { count: 1, color: 0xffc860, speed: 8, size: 0.08, life: 0.2, y: 0.6 });
     }
     if (bot.turretFiring && TURRETS[bot.loadout.turret].kind === 'flame') {
-      const dx = Math.sin(bot.turretAngle);
-      const dz = Math.cos(bot.turretAngle);
+      const dx = Math.sin(bot.heading);
+      const dz = Math.cos(bot.heading);
       this.particles.burst(bot.x + dx * (bot.radius + 0.7), bot.z + dz * (bot.radius + 0.7), {
         count: 3, color: Math.random() < 0.5 ? 0xff8a2a : 0xffd24a, speed: 18, size: 0.4, life: 0.45, y: 1.2, gravity: -3, dir: { x: dx, z: dz, jitter: 5 },
       });
@@ -425,7 +433,11 @@ export class MatchView {
         count: 1, color: 0xff6a5a, speed: 18, size: 0.1, life: 0.5, y: 1, gravity: 0, dir: { x: -dx, z: -dz, jitter: 3 },
       });
     }
-    if (melee.kind === 'strike') {
+    if (bot.loadout.melee === 'flipper') {
+      // The plate snaps up as it fires, then settles back down.
+      const up = bot.meleeSwing < 0.18 ? -1 : 0;
+      model.meleePivot.rotation.x += (up - model.meleePivot.rotation.x) * Math.min(1, dt * (bot.meleeSwing < 0.18 ? 45 : 6));
+    } else if (melee.kind === 'strike') {
       // Raise during the windup, slam on the strike, then ease back to rest.
       const raised = bot.meleeWindup > 0 ? -1.15 : -0.3;
       const slam = bot.meleeSwing < 0.1 ? 0.25 : raised;
@@ -455,8 +467,8 @@ export class MatchView {
       v.smokeT = 0.05 + health * 0.25;
       this.particles.burst(bot.x, bot.z, { count: 1, color: health < 0.2 ? 0x1c1c1c : 0x555555, speed: 1.2, size: 0.6, life: 0.9, y: 1.6, gravity: -3 });
     }
-    if (bot.turboT > 0) {
-      const boost = Math.hypot(bot.vx, bot.vz) / (bot.chassis.speed * TURBO_MULT);
+    if (bot.boostT > 0) {
+      const boost = Math.hypot(bot.vx, bot.vz) / (bot.chassis.speed * BOOST_SPEED);
       this.particles.burst(bot.x - Math.sin(bot.heading) * bot.radius, bot.z - Math.cos(bot.heading) * bot.radius, {
         count: 1,
         color: 0xff8a2a,
@@ -635,7 +647,7 @@ export class MatchView {
       live.add(p.id);
       let mesh = this.projectileMeshes.get(p.id);
       if (!mesh) {
-        if (p.kind === 'rocket' || p.kind === 'homing') {
+        if (p.kind === 'rocket') {
           mesh = new THREE.Mesh(this.rocketGeo, this.rocketMat);
           mesh.rotation.order = 'YXZ';
           mesh.rotation.x = Math.PI / 2;
@@ -660,7 +672,7 @@ export class MatchView {
         y = 1.4 + 48 * t * (1 - t);
       }
       mesh.position.set(p.x, y, p.z);
-      if ((p.kind === 'rocket' || p.kind === 'homing') && Math.random() < 0.8) {
+      if (p.kind === 'rocket' && Math.random() < 0.8) {
         this.particles.burst(p.x, p.z, { count: 1, color: 0xaaaaaa, speed: 0.8, size: 0.35, life: 0.45, y: 1.4, gravity: -1 });
       }
     }

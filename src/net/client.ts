@@ -42,6 +42,7 @@ interface Pending {
   seq: number;
   throttle: number;
   steer: number;
+  boost: boolean;
 }
 
 export class NetClient {
@@ -85,7 +86,7 @@ export class NetClient {
     this.ws = ws;
     ws.onopen = () => {
       if (this.token) this.send({ t: 'resume', v: PROTOCOL_VERSION, token: this.token });
-      else this.send({ t: 'join', v: PROTOCOL_VERSION, name: this.hello.name, loadout: this.hello.loadout, session: this.hello.session });
+      else this.send({ t: 'join', v: PROTOCOL_VERSION, name: this.hello.name, loadout: this.withoutSkin(), session: this.hello.session });
     };
     ws.onmessage = (e) => this.handle(JSON.parse(String(e.data)) as ServerMessage);
     // Not every runtime follows a failed connection's error event with a close event.
@@ -94,6 +95,14 @@ export class NetClient {
       this.ws = null;
       this.handleClose();
     };
+  }
+
+  /** The server has an account's paint job already, and a paint job won't fit in a join message. */
+  private withoutSkin(): Loadout {
+    const { loadout } = this.hello;
+    if (!loadout.paint?.skin) return loadout;
+    const { skin: _skin, ...paint } = loadout.paint;
+    return { ...loadout, paint };
   }
 
   private send(message: ClientMessage): void {
@@ -221,7 +230,7 @@ export class NetClient {
       const steps = p.seq === ack ? Math.max(0, due) : INPUT_STEPS;
       const skipped = Math.min(skip, steps);
       skip -= skipped;
-      this.predictSteps(p.throttle, p.steer, steps - skipped);
+      this.predictSteps(p.throttle, p.steer, p.boost, steps - skipped);
     }
     // The server has outrun everything sent so far. Sending sooner gets back ahead of it, which
     // is what lets the replay above land exactly on the prediction.
@@ -248,7 +257,7 @@ export class NetClient {
     this.predFrom = { x, z, heading };
   }
 
-  private predictSteps(throttle: number, steer: number, steps = INPUT_STEPS): void {
+  private predictSteps(throttle: number, steer: number, boost: boolean, steps = INPUT_STEPS): void {
     const { match, player, pred } = this;
     if (!match || !player) return;
     player.x = pred.x;
@@ -256,7 +265,7 @@ export class NetClient {
     player.heading = pred.heading;
     player.vx = pred.vx;
     player.vz = pred.vz;
-    for (let i = 0; i < steps; i++) match.predict(player, throttle, steer, STEP);
+    for (let i = 0; i < steps; i++) match.predict(player, throttle, steer, boost, STEP);
     this.pred = { x: player.x, z: player.z, heading: player.heading, vx: player.vx, vz: player.vz };
   }
 
@@ -325,14 +334,14 @@ export class NetClient {
       s: this.seq,
       th: current.throttle,
       st: current.steer,
-      f: packFlags(current.melee, current.turret, current.defense),
+      f: packFlags(current.melee, current.turret, current.defense, current.boost),
       p: powerupIndex(current.powerup),
     });
     current.powerup = null;
     if (player.alive && this.ws?.readyState === WebSocket.OPEN) {
-      this.pending.push({ seq: this.seq, throttle: current.throttle, steer: current.steer });
+      this.pending.push({ seq: this.seq, throttle: current.throttle, steer: current.steer, boost: current.boost });
       if (this.pending.length > MAX_PENDING) this.pending.shift();
-      this.predictSteps(current.throttle, current.steer);
+      this.predictSteps(current.throttle, current.steer, current.boost);
     }
   }
 
@@ -371,13 +380,10 @@ export class NetClient {
       bot.x = bot.prevX = from.x + (to.x - from.x) * blend;
       bot.z = bot.prevZ = from.z + (to.z - from.z) * blend;
       bot.heading = bot.prevHeading = lerpAngle(from.heading, to.heading, blend);
-      bot.turretAngle = lerpAngle(from.turretAngle, to.turretAngle, blend);
       bot.vx = to.vx;
       bot.vz = to.vz;
     }
 
-    // The player's own turret tracks server truth, which is what the shots will follow.
-    player.turretAngle = readMotion(latest.bots[player.id]).turretAngle;
     applyWorldState(match, b, Math.max(0, this.renderTime - b.time));
   }
 }

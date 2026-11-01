@@ -1,9 +1,11 @@
 // All balance numbers live here. Nothing in this folder may import three.js or touch the DOM.
 
 export type ChassisId = 'scout' | 'ghost' | 'brawler' | 'rhino' | 'juggernaut';
-export type MeleeId = 'chainsaw' | 'drill' | 'dagger' | 'rollingpin' | 'hammer' | 'axe' | 'ram' | 'claw' | 'magnet';
+export type MeleeId =
+  | 'chainsaw' | 'drill' | 'dagger' | 'rollingpin' | 'hammer' | 'axe' | 'ram' | 'claw' | 'magnet'
+  | 'vertdisc' | 'vertbar' | 'horizbar' | 'undercutter' | 'drum' | 'eggbeater' | 'shell' | 'hammersaw' | 'flipper' | 'crusher' | 'forks';
 export type TurretId =
-  | 'minigun' | 'rockets' | 'guided' | 'seeker' | 'mortar' | 'grenade'
+  | 'minigun' | 'rockets' | 'heavyrocket' | 'bunkerbuster' | 'mortar' | 'grenade'
   | 'flamethrower' | 'laser' | 'discs' | 'spear' | 'arc';
 export type DefenseId =
   | 'shield' | 'mines' | 'oil' | 'glue' | 'nails' | 'steelram' | 'plow' | 'blades' | 'cutter'
@@ -12,7 +14,7 @@ export type TowerId = 'small' | 'medium' | 'large';
 export type WheelsId = 'small4' | 'large4' | 'six' | 'tracks';
 export type EngineId = 'small' | 'medium' | 'large' | 'turbo';
 export type PowerId = 'alkaline' | 'lithium' | 'fuelcell' | 'reactor';
-export type PowerupId = 'rage' | 'megashield' | 'cloaking' | 'xray' | 'repair' | 'turbo';
+export type PowerupId = 'rage' | 'megashield' | 'cloaking' | 'xray' | 'repair' | 'battery';
 export type UpgradeId = 'armor' | 'engine' | 'weapons';
 
 export interface ChassisDef {
@@ -47,16 +49,18 @@ export interface PartDef {
   accel?: number;
   turn?: number;
   mass?: number;
-  /** How fast the turret swings round. */
-  track?: number;
+  /** Towers, as in the original, add armour. */
+  hp?: number;
+  /** Towers also add to the room the chassis provides. */
+  room?: number;
   /** How fast the battery recharges. */
   regen?: number;
 }
 
 export const TOWERS: Record<TowerId, PartDef> = {
-  small: { name: 'Small Tower', blurb: 'Light, but the turret swings round slowly.', price: 100, space: 5, track: 0.8 },
+  small: { name: 'Small Tower', blurb: 'Light and low, with a little less armour.', price: 100, space: 5, hp: 0.92 },
   medium: { name: 'Medium Tower', blurb: 'Does the job.', price: 0, space: 8 },
-  large: { name: 'Large Tower', blurb: 'Keeps the turret on a target that is circling you.', price: 400, space: 12, track: 1.35 },
+  large: { name: 'Large Tower', blurb: 'More armour and more room for parts, but heavier.', price: 400, space: 12, hp: 1.15, room: 16, mass: 1.08 },
 };
 
 export const WHEELS: Record<WheelsId, PartDef> = {
@@ -74,10 +78,10 @@ export const ENGINES: Record<EngineId, PartDef> = {
 };
 
 export const POWER_SOURCES: Record<PowerId, PartDef> = {
-  alkaline: { name: 'Alkaline Battery', blurb: 'Recharges your turret slowly.', price: 0, space: 4 },
+  alkaline: { name: 'Alkaline Battery', blurb: 'Recharges slowly. The battery runs your gun and your boost.', price: 0, space: 4 },
   lithium: { name: 'Lithium Pack', blurb: 'Recharges 40% faster.', price: 300, space: 7, regen: 1.4 },
   fuelcell: { name: 'Fuel Cell', blurb: 'Recharges 90% faster.', price: 650, space: 10, regen: 1.9 },
-  reactor: { name: 'Micro Reactor', blurb: 'Keeps almost any turret firing.', price: 1200, space: 15, regen: 2.5 },
+  reactor: { name: 'Micro Reactor', blurb: 'Boost almost whenever you like.', price: 1200, space: 15, regen: 2.5 },
 };
 
 /** Armour is dialled up or down in the workshop. More of it is tougher, heavier and slower. */
@@ -113,39 +117,44 @@ export function spaceUsed(l: PartsChoice): number {
 }
 
 export function spaceCapacity(l: PartsChoice): number {
-  return CHASSIS[l.chassis].space;
+  return CHASSIS[l.chassis].space + (TOWERS[installedParts(l).tower].room ?? 0);
 }
 
-export function buildStats(l: PartsChoice): { hp: number; speed: number; accel: number; turn: number; mass: number; track: number; regen: number } {
+export function buildStats(l: PartsChoice): { hp: number; speed: number; accel: number; turn: number; mass: number; regen: number } {
   const c = CHASSIS[l.chassis];
   const p = installedParts(l);
   const wheels = WHEELS[p.wheels];
   const engine = ENGINES[p.engine];
+  const tower = TOWERS[p.tower];
+  const weapon = MELEE[l.melee];
   const extra = p.armour - ARMOUR.default;
   return {
-    hp: c.hp * (1 + extra * ARMOUR.hpPerPoint),
-    speed: c.speed * (wheels.speed ?? 1) * (engine.speed ?? 1) * (1 - extra * ARMOUR.speedPerPoint),
+    hp: c.hp * (tower.hp ?? 1) * (1 + extra * ARMOUR.hpPerPoint),
+    speed: c.speed * (wheels.speed ?? 1) * (engine.speed ?? 1) * (weapon.drive ?? 1) * (1 - extra * ARMOUR.speedPerPoint),
     accel: c.accel * (wheels.accel ?? 1) * (engine.accel ?? 1),
     turn: c.turn * (wheels.turn ?? 1),
-    mass: c.mass * (wheels.mass ?? 1) * (1 + extra * ARMOUR.massPerPoint),
-    track: TOWERS[p.tower].track ?? 1,
+    mass: c.mass * (wheels.mass ?? 1) * (tower.mass ?? 1) * (1 + extra * ARMOUR.massPerPoint),
     regen: POWER_SOURCES[p.power].regen ?? 1,
   };
 }
 
-export type MeleeKind = 'held' | 'strike' | 'ram' | 'claw' | 'magnet';
+export type MeleeKind = 'held' | 'strike' | 'ram' | 'claw' | 'magnet' | 'spinner';
 
 export interface MeleeDef {
   name: string;
+  /** The family of combat robot weapon it belongs to, shown in the shop. */
+  type: string;
   blurb: string;
   price: number;
   kind: MeleeKind;
   range: number;
   /** Half-angle of the hit cone, in radians. */
   arc: number;
-  /** Damage per second for held weapons, per strike for the rest. */
+  /** Damage per second for held weapons, per strike for the rest. For a spinner, at full speed. */
   damage: number;
+  /** Seconds before it can be used again. The stronger the weapon, the longer. */
   cooldown: number;
+  /** Before a strike lands. For a spinner, how long it takes to reach full speed. For a grabber, how long it can hold on. */
   windup: number;
   stun: number;
   knockback: number;
@@ -153,25 +162,48 @@ export interface MeleeDef {
   passive?: boolean;
   /** Seconds of slowdown applied to anything it touches. */
   slow?: number;
+  /** Seconds the target spends in the air, unable to drive. */
+  launch?: number;
+  /** A hammer-saw's blade: damage per second to whatever is under it while the key is held. */
+  saw?: number;
+  /** Fraction of the battery each strike uses. */
+  battery?: number;
+  /** Seconds a held weapon can run before it has to stop and cool down. */
+  runTime?: number;
+  /** Multiplies top speed. Spinning the whole body is hard on the drive. */
+  drive?: number;
 }
 
-const melee = (d: Partial<MeleeDef> & Pick<MeleeDef, 'name' | 'blurb' | 'price' | 'kind'>): MeleeDef => ({
+const melee = (d: Partial<MeleeDef> & Pick<MeleeDef, 'name' | 'type' | 'blurb' | 'price' | 'kind'>): MeleeDef => ({
   range: 0, arc: 0, damage: 0, cooldown: 0, windup: 0, stun: 0, knockback: 0, ...d,
 });
 
+// Spinners store energy: hold the key to spin up, and each hit spends most of it, throwing both
+// robots apart. A hit at low speed is weak. That trade-off is how the real ones behave.
 export const MELEE: Record<MeleeId, MeleeDef> = {
-  chainsaw: melee({ name: 'Chainsaw', blurb: 'Hold to shred. Long reach, steady damage.', price: 0, kind: 'held', range: 3.5, arc: 0.6, damage: 30 }),
-  drill: melee({ name: 'Drill', blurb: 'Hold to bore in. Hits harder than a saw, but short and narrow.', price: 300, kind: 'held', range: 2.6, arc: 0.35, damage: 42 }),
-  dagger: melee({ name: 'Dagger', blurb: 'Always out, no key needed. Just drive into them.', price: 150, kind: 'held', range: 2.3, arc: 0.7, damage: 22, passive: true }),
-  rollingpin: melee({ name: 'Rolling Pin', blurb: 'A spinning drum that bogs down whatever it touches.', price: 350, kind: 'held', range: 2.5, arc: 0.85, damage: 28, slow: 0.5 }),
-  hammer: melee({ name: 'Sledgehammer', blurb: 'Slow swing, huge hit, stuns the target.', price: 400, kind: 'strike', range: 3.0, arc: 0.8, damage: 34, cooldown: 1.5, windup: 0.35, stun: 0.6, knockback: 16 }),
-  axe: melee({ name: 'Power Axe', blurb: 'A quick overhead chop you can keep repeating.', price: 450, kind: 'strike', range: 2.7, arc: 0.6, damage: 17, cooldown: 0.75, windup: 0.16, knockback: 7 }),
-  ram: melee({ name: 'Spike Ram', blurb: '+40% ram damage. Press to lunge.', price: 350, kind: 'ram', cooldown: 3, knockback: 24 }),
-  claw: melee({ name: 'Claw', blurb: 'Grab a robot and carry it, into a saw or off a ledge.', price: 650, kind: 'claw', range: 3.3, arc: 0.55, damage: 14, cooldown: 5, windup: 2.5 }),
-  magnet: melee({ name: 'Magnet', blurb: 'Hold to drag robots toward you from far away.', price: 600, kind: 'magnet', range: 15, arc: 0.7, damage: 6, knockback: 34 }),
+  chainsaw: melee({ name: 'Chainsaw', type: 'Chainsaw', blurb: 'Hold to shred. Long reach, steady damage.', price: 0, kind: 'held', range: 3.5, arc: 0.6, damage: 28 }),
+  drill: melee({ name: 'Drill', type: 'Drill', blurb: 'Hold to bore in. Hits harder than a saw, but short, narrow, and it overheats.', price: 300, kind: 'held', range: 2.6, arc: 0.35, damage: 44, cooldown: 3, runTime: 3 }),
+  dagger: melee({ name: 'Dagger', type: 'Spike', blurb: 'Always out, no key needed. Just drive into them.', price: 150, kind: 'held', range: 2.3, arc: 0.7, damage: 24, passive: true }),
+  rollingpin: melee({ name: 'Rolling Pin', type: 'Roller', blurb: 'A spinning drum that bogs down whatever it touches.', price: 350, kind: 'held', range: 2.5, arc: 0.85, damage: 26, slow: 0.5 }),
+  hammer: melee({ name: 'Sledgehammer', type: 'Hammer', blurb: 'Slow swing, huge hit on the top armour. Stuns the target.', price: 400, kind: 'strike', range: 3.0, arc: 0.8, damage: 48, cooldown: 3, windup: 0.35, stun: 0.6, knockback: 16 }),
+  axe: melee({ name: 'Power Axe', type: 'Axe', blurb: 'A quick overhead chop you can keep repeating.', price: 450, kind: 'strike', range: 2.7, arc: 0.6, damage: 24, cooldown: 0.9, windup: 0.16, knockback: 7 }),
+  ram: melee({ name: 'Spike Ram', type: 'Ram', blurb: 'More than doubles ram damage. Press to lunge.', price: 350, kind: 'ram', cooldown: 2, knockback: 26 }),
+  claw: melee({ name: 'Claw', type: 'Grappler', blurb: 'Grab a robot and carry it, into a saw or off a ledge.', price: 650, kind: 'claw', range: 3.3, arc: 0.55, damage: 18, cooldown: 7, windup: 2.5 }),
+  magnet: melee({ name: 'Magnet', type: 'Magnet', blurb: 'Hold to drag robots toward you from far away.', price: 600, kind: 'magnet', range: 15, arc: 0.7, damage: 34, knockback: 40 }),
+  vertdisc: melee({ name: 'Vertical Disc', type: 'Vertical spinner', blurb: 'Hold to spin up, then land one brutal hit that throws them in the air.', price: 700, kind: 'spinner', range: 3.1, arc: 0.35, damage: 54, cooldown: 2.5, windup: 1.6, stun: 0.2, knockback: 15, launch: 0.45 }),
+  vertbar: melee({ name: 'Vertical Bar', type: 'Vertical spinner', blurb: 'The biggest single hit in the game. Takes the longest to wind up.', price: 850, kind: 'spinner', range: 3.3, arc: 0.3, damage: 68, cooldown: 3.5, windup: 2.2, stun: 0.3, knockback: 18, launch: 0.55 }),
+  horizbar: melee({ name: 'Horizontal Bar', type: 'Horizontal spinner', blurb: 'A wide sweep that swats robots across the roof.', price: 800, kind: 'spinner', range: 3.4, arc: 0.75, damage: 52, cooldown: 2.5, windup: 1.6, knockback: 20 }),
+  undercutter: melee({ name: 'Undercutter', type: 'Horizontal spinner', blurb: 'A low blade that goes for the wheels, leaving them crawling.', price: 550, kind: 'spinner', range: 2.9, arc: 0.8, damage: 32, cooldown: 1.5, windup: 0.9, knockback: 14, slow: 1.5 }),
+  drum: melee({ name: 'Drum', type: 'Drum', blurb: 'Spins up fast and bites often, popping robots off the ground.', price: 450, kind: 'spinner', range: 2.6, arc: 0.55, damage: 24, cooldown: 0.8, windup: 0.5, knockback: 8, launch: 0.3 }),
+  eggbeater: melee({ name: 'Eggbeater', type: 'Eggbeater', blurb: 'A lighter, toothier drum. More hit, less spin.', price: 500, kind: 'spinner', range: 2.8, arc: 0.45, damage: 34, cooldown: 1.2, windup: 0.7, knockback: 10, launch: 0.35 }),
+  shell: melee({ name: 'Ring Spinner', type: 'Full body spinner', blurb: 'Hits from every side, but it is slow to wind up and slows you down.', price: 1000, kind: 'spinner', range: 2.7, arc: Math.PI, damage: 62, cooldown: 3, windup: 2, knockback: 22, drive: 0.85 }),
+  hammersaw: melee({ name: 'Hammer Saw', type: 'Hammer saw', blurb: 'Slams a spinning blade down, then keeps cutting while you hold.', price: 750, kind: 'strike', range: 3.0, arc: 0.5, damage: 24, cooldown: 3.5, windup: 0.3, stun: 0.4, knockback: 5, saw: 22 }),
+  flipper: melee({ name: 'Pneumatic Flipper', type: 'Flipper', blurb: 'Hurls robots through the air. Little damage, but deadly near an edge. Uses battery.', price: 800, kind: 'strike', range: 2.8, arc: 0.55, damage: 8, cooldown: 4, windup: 0.05, stun: 0.3, knockback: 15, launch: 0.55, battery: 0.14 }),
+  crusher: melee({ name: 'Hydraulic Crusher', type: 'Crusher', blurb: 'Bites down and holds on. Enormous damage if you can catch them.', price: 900, kind: 'claw', range: 2.9, arc: 0.45, damage: 58, cooldown: 7, windup: 1.6 }),
+  forks: melee({ name: 'Lifting Forks', type: 'Lifter', blurb: 'Scoop a robot up and drive it wherever you like. Almost no damage.', price: 400, kind: 'claw', range: 3.1, arc: 0.6, damage: 6, cooldown: 4, windup: 3.5 }),
 };
 
-export type TurretKind = 'shot' | 'homing' | 'lob' | 'grenade' | 'flame' | 'beam' | 'disc' | 'arc';
+export type TurretKind = 'shot' | 'lob' | 'grenade' | 'flame' | 'beam' | 'disc' | 'arc';
 
 export interface TurretDef {
   name: string;
@@ -184,33 +216,47 @@ export interface TurretDef {
   range: number;
   projectileSpeed: number;
   splash: number;
-  trackRate: number;
-  /** Fraction of a full magazine used per shot, or per second for the flamethrower. */
-  ammo: number;
-  /** How sharply missiles turn, in radians per second. */
-  homing?: number;
-  /** Half-angle of the flame cone. */
+  /** Shots for each life, where a burst counts as one. Melee is meant to be the main event, so these are few. */
+  shots: number;
+  /** How many rounds one press fires, one after another. */
+  burst?: number;
+  /** Fraction of the battery used per shot, or per second for the flamethrower. */
+  battery: number;
+  /** Half-angle of the flame or arc. */
   cone?: number;
   knockback?: number;
   bounces?: number;
 }
 
+// Guns point straight ahead with the robot, as they did in the original. To aim, turn the robot.
 export const TURRETS: Record<TurretId, TurretDef> = {
-  minigun: { name: 'Chaingun', blurb: 'Constant chip damage at range.', price: 0, kind: 'shot', damage: 2, cooldown: 0.16, range: 24, projectileSpeed: 48, splash: 0, trackRate: 3.5, ammo: 0.025 },
-  rockets: { name: 'Missile Pod', blurb: 'Fast, straight missiles with a big splash.', price: 600, kind: 'shot', damage: 25, cooldown: 1.5, range: 30, projectileSpeed: 30, splash: 4.2, trackRate: 2.2, ammo: 0.2 },
-  guided: { name: 'Guided Missile', blurb: 'Slow, but steers itself toward the target.', price: 700, kind: 'homing', damage: 32, cooldown: 1.7, range: 34, projectileSpeed: 20, splash: 3, trackRate: 2.5, ammo: 0.25, homing: 2.2 },
-  seeker: { name: 'Heat Seeker', blurb: 'Tight-turning missile. Hard to shake, slow to reload.', price: 1100, kind: 'homing', damage: 42, cooldown: 2.2, range: 36, projectileSpeed: 25, splash: 3.4, trackRate: 3, ammo: 0.33, homing: 3.8 },
-  mortar: { name: 'Mortar', blurb: 'Lobs shells over cover. Hits hard if they stand still.', price: 750, kind: 'lob', damage: 46, cooldown: 2, range: 30, projectileSpeed: 0, splash: 5.5, trackRate: 2, ammo: 0.3 },
-  grenade: { name: 'Grenade Launcher', blurb: 'Bouncing grenades on a short fuse.', price: 550, kind: 'grenade', damage: 13, cooldown: 1.4, range: 20, projectileSpeed: 18, splash: 3.6, trackRate: 2.8, ammo: 0.15, bounces: 3 },
-  flamethrower: { name: 'Flamethrower', blurb: 'Hold for a short-range cone that sets robots burning.', price: 650, kind: 'flame', damage: 24, cooldown: 0, range: 9, projectileSpeed: 0, splash: 0, trackRate: 3.2, ammo: 0.3, cone: 0.4 },
-  laser: { name: 'Laser Cannon', blurb: 'Instant long-range beam. Blocked by cover.', price: 1000, kind: 'beam', damage: 25, cooldown: 1.4, range: 36, projectileSpeed: 0, splash: 0, trackRate: 3, ammo: 0.2 },
-  discs: { name: 'Razor Discs', blurb: 'Ricochet off walls. Can come back and hit you.', price: 500, kind: 'disc', damage: 17, cooldown: 0.9, range: 34, projectileSpeed: 28, splash: 0, trackRate: 3, ammo: 0.12, bounces: 3 },
-  spear: { name: 'Spear Gun', blurb: 'One heavy bolt that shoves the target back.', price: 550, kind: 'shot', damage: 19, cooldown: 1.7, range: 32, projectileSpeed: 46, splash: 0, trackRate: 2.8, ammo: 0.2, knockback: 20 },
-  arc: { name: 'Arc Coil', blurb: 'Never misses, and jumps to a second target.', price: 800, kind: 'arc', damage: 9, cooldown: 0.8, range: 15, projectileSpeed: 0, splash: 0, trackRate: 4.5, ammo: 0.1 },
+  minigun: { name: 'Chaingun', blurb: 'Each press fires a burst of 10 light rounds.', price: 0, kind: 'shot', damage: 2.5, cooldown: 2.5, range: 24, projectileSpeed: 48, splash: 0, shots: 6, battery: 0.08, burst: 10 },
+  rockets: { name: 'Missile Pod', blurb: 'Fast, straight missiles with a big splash.', price: 600, kind: 'shot', damage: 25, cooldown: 3, range: 30, projectileSpeed: 30, splash: 4.2, shots: 4, battery: 0.14 },
+  heavyrocket: { name: 'Heavy Rocket', blurb: 'Slow to fly, and hard to dodge the blast.', price: 700, kind: 'shot', damage: 32, cooldown: 4, range: 34, projectileSpeed: 20, splash: 5, shots: 3, battery: 0.18 },
+  bunkerbuster: { name: 'Bunker Buster', blurb: 'A huge warhead. You only get two.', price: 1100, kind: 'shot', damage: 46, cooldown: 7, range: 36, projectileSpeed: 25, splash: 4.4, shots: 2, battery: 0.28 },
+  mortar: { name: 'Mortar', blurb: 'Lobs a shell a fixed distance ahead, over any cover.', price: 750, kind: 'lob', damage: 46, cooldown: 4, range: 26, projectileSpeed: 0, splash: 5.5, shots: 3, battery: 0.2 },
+  grenade: { name: 'Grenade Launcher', blurb: 'Bouncing grenades on a short fuse.', price: 550, kind: 'grenade', damage: 13, cooldown: 2.5, range: 20, projectileSpeed: 18, splash: 3.6, shots: 6, battery: 0.1 },
+  flamethrower: { name: 'Flamethrower', blurb: 'Hold for a short-range cone that sets robots burning. Thirsty.', price: 650, kind: 'flame', damage: 24, cooldown: 0, range: 9, projectileSpeed: 0, splash: 0, shots: 0, battery: 0.22, cone: 0.4 },
+  laser: { name: 'Laser Cannon', blurb: 'Instant long-range beam. Blocked by cover.', price: 1000, kind: 'beam', damage: 25, cooldown: 3.5, range: 36, projectileSpeed: 0, splash: 0, shots: 4, battery: 0.2 },
+  discs: { name: 'Razor Discs', blurb: 'Ricochet off walls. Can come back and hit you.', price: 500, kind: 'disc', damage: 17, cooldown: 2, range: 34, projectileSpeed: 28, splash: 0, shots: 6, battery: 0.1, bounces: 3 },
+  spear: { name: 'Spear Gun', blurb: 'One heavy bolt that shoves the target back.', price: 550, kind: 'shot', damage: 19, cooldown: 3, range: 32, projectileSpeed: 46, splash: 0, shots: 4, battery: 0.12, knockback: 20 },
+  arc: { name: 'Arc Coil', blurb: 'Zaps whatever is close in front, jumping to a second robot.', price: 800, kind: 'arc', damage: 9, cooldown: 1.5, range: 15, projectileSpeed: 0, splash: 0, shots: 8, battery: 0.1, cone: 0.25 },
 };
 
-/** Magazine refilled per second. Ammo runs from 0 to 1. */
-export const AMMO_REGEN = 0.08;
+/** Battery refilled per second, from 0 to 1. */
+export const BATTERY_REGEN = 0.03;
+/** Holding the boost key uses this much battery per second. */
+export const BOOST_DRAIN = 0.1;
+export const BOOST_SPEED = 1.45;
+export const BOOST_ACCEL = 1.4;
+/** Seconds between rounds in a burst. */
+export const BURST_GAP = 0.05;
+/** A spinner below this speed glances off without doing anything. */
+export const SPINNER_MIN_SPEED = 0.2;
+/** How much speed a spinner keeps after a hit. */
+export const SPINNER_KEPT_SPEED = 0.2;
+/** How hard a hit throws the spinner's own robot back, as a share of what the target takes. */
+export const SPINNER_RECOIL = 0.35;
 
 export interface DefenseDef {
   name: string;
@@ -239,7 +285,7 @@ export const DEFENSES: Record<DefenseId, DefenseDef> = {
   blades: defense({ name: 'Side Blades', blurb: 'Spin up blades that cut anything alongside you.', price: 500, cooldown: 8, duration: 3, damage: 24, radius: 1.6 }),
   cutter: defense({ name: 'Cutter', blurb: 'One sweeping cut all around you that throws robots back.', price: 500, cooldown: 6, damage: 28, radius: 5 }),
   teleport: defense({ name: 'Teleport', blurb: 'Jump a long way forward in an instant.', price: 800, cooldown: 8, radius: 14 }),
-  flash: defense({ name: 'Flash Bomb', blurb: 'Blinds nearby robots, throwing off their aim.', price: 450, cooldown: 10, duration: 2.5, radius: 11 }),
+  flash: defense({ name: 'Flash Bomb', blurb: 'Whites out the view of nearby pilots.', price: 450, cooldown: 10, duration: 2.5, radius: 11 }),
   regen: defense({ name: 'Armor Regenerator', blurb: 'Rebuilds armor over five seconds.', price: 700, cooldown: 12, duration: 5, damage: 11 }),
   cloak: defense({ name: 'Cloaking Device', blurb: 'Vanish for a few seconds. Firing breaks it.', price: 800, cooldown: 14, duration: 5 }),
   emp: defense({ name: 'EMP', blurb: 'Stuns every robot around you.', price: 900, cooldown: 14, duration: 1.5, radius: 9 }),
@@ -255,7 +301,7 @@ export interface PowerupDef {
 }
 
 /** In key order: 1 to 4 match the original's powerups, then 5 and 6. */
-export const POWERUP_ORDER: PowerupId[] = ['rage', 'megashield', 'cloaking', 'xray', 'repair', 'turbo'];
+export const POWERUP_ORDER: PowerupId[] = ['rage', 'megashield', 'cloaking', 'xray', 'repair', 'battery'];
 
 export const POWERUPS: Record<PowerupId, PowerupDef> = {
   rage: { name: 'Rage', blurb: '+75% damage for 6 s.', price: 120 },
@@ -263,13 +309,11 @@ export const POWERUPS: Record<PowerupId, PowerupDef> = {
   cloaking: { name: 'Cloaking', blurb: 'Invisible for 6 s, or until you fire.', price: 110 },
   xray: { name: 'X-Ray', blurb: 'See every robot through walls and cloaks for 10 s.', price: 70 },
   repair: { name: 'Repair Kit', blurb: 'Restores 40% of max HP.', price: 80 },
-  turbo: { name: 'Turbo', blurb: '+60% top speed for 4 s.', price: 60 },
+  battery: { name: 'Battery Pack', blurb: 'Refills your battery at once.', price: 60 },
 };
 
 export const POWERUP_CAP = 3;
 export const REPAIR_FRACTION = 0.4;
-export const TURBO_TIME = 4;
-export const TURBO_MULT = 1.6;
 export const RAGE_TIME = 6;
 export const RAGE_MULT = 1.75;
 export const MEGA_TIME = 5;
@@ -327,16 +371,42 @@ export const MATCH = {
   ramMinSpeed: 5,
   ramCapSpeed: 22,
   ramDamage: 1.1,
-  spikeRamMult: 1.4,
+  spikeRamMult: 2.4,
   ramCooldown: 0.5,
   shieldAbsorb: 0.75,
 };
 
 // --- Cosmetics. All free, and all validated by the server before other players see them. ---
 
-export const PAINT_COLORS = [
-  0xff8a2a, 0xe0503a, 0xf2c037, 0x9be03a, 0x4fd18b, 0x35d0e6,
-  0x3a7fe0, 0xa066e0, 0xf25fd0, 0xf4f1e8, 0x8a9096, 0x33363b,
+function hslColor(h: number, sat: number, light: number): number {
+  const channel = (n: number) => {
+    const k = (n + h / 30) % 12;
+    return Math.round(255 * (light - sat * Math.min(light, 1 - light) * Math.max(-1, Math.min(k - 3, 9 - k, 1))));
+  };
+  return (channel(0) << 16) | (channel(8) << 8) | channel(4);
+}
+
+/** Text in a robot's color has to stay readable, so dark paint is lightened for names. */
+export function legibleColor(color: number): number {
+  const r = (color >> 16) & 255;
+  const g = (color >> 8) & 255;
+  const b = color & 255;
+  const brightness = (0.3 * r + 0.59 * g + 0.11 * b) / 255;
+  if (brightness >= 0.45) return color;
+  const mix = 0.65;
+  const lift = (c: number) => Math.round(c + (255 - c) * mix);
+  return (lift(r) << 16) | (lift(g) << 8) | lift(b);
+}
+
+const PALETTE_COLUMNS = 20;
+
+/** A grid like the original paintshop's: everyday colours and greys first, then every hue from light to dark. */
+export const PAINT_COLORS: number[] = [
+  0xff8a2a, 0xe0503a, 0xf2c037, 0x9be03a, 0x4fd18b, 0x35d0e6, 0x3a7fe0, 0xa066e0, 0xf25fd0, 0x7a4a2c,
+  0xc9a27a, 0xffffff, 0xf4f1e8, 0xd8d8d8, 0xaaaaaa, 0x8a9096, 0x555555, 0x33363b, 0x1c1c1c, 0x000000,
+  ...[0.84, 0.68, 0.5, 0.34, 0.2].flatMap((light) =>
+    Array.from({ length: PALETTE_COLUMNS }, (_, i) => hslColor((i / PALETTE_COLUMNS) * 360, 0.85, light)),
+  ),
 ];
 
 export type PatternId = 'solid' | 'stripes' | 'hazard' | 'flames' | 'camo' | 'checker' | 'bolt' | 'rust';
@@ -355,9 +425,10 @@ export const TOPPERS: Record<TopperId, string> = {
 export interface Paint {
   primary: number;
   secondary: number;
-  eye: number;
   pattern: PatternId;
   topper: TopperId;
+  /** What's been painted in the paintshop. See game/skin.ts. */
+  skin?: string;
 }
 
-export const DEFAULT_PAINT: Paint = { primary: 0xff8a2a, secondary: 0x33363b, eye: 0x35d0e6, pattern: 'solid', topper: 'none' };
+export const DEFAULT_PAINT: Paint = { primary: 0xff8a2a, secondary: 0x33363b, pattern: 'solid', topper: 'none' };

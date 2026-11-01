@@ -81,7 +81,7 @@ export function newSave(): Save {
       melee: 'chainsaw',
       turret: 'minigun',
       defense: 'shield',
-      powerups: { rage: 0, megashield: 0, cloaking: 0, xray: 0, repair: 1, turbo: 1 },
+      powerups: { rage: 0, megashield: 0, cloaking: 0, xray: 0, repair: 1, battery: 1 },
       upgrades: { armor: 0, engine: 0, weapons: 0 },
       paint: { ...DEFAULT_PAINT },
     },
@@ -199,7 +199,6 @@ function rivalPaint(color: number, rng: () => number): Paint {
   return {
     primary: color,
     secondary: pick(PAINT_COLORS, rng),
-    eye: pick(PAINT_COLORS, rng),
     pattern: pick(Object.keys(PATTERNS) as PatternId[], rng),
     topper: pick(Object.keys(TOPPERS) as TopperId[], rng),
   };
@@ -227,7 +226,7 @@ export function makeRivals(
       melee: pick(affordable(MELEE), rng),
       turret: pick(affordable(TURRETS), rng),
       defense: pick(affordable(DEFENSES), rng),
-      powerups: { rage: level >= 2 ? 1 : 0, megashield: level >= 3 ? 1 : 0, cloaking: 0, xray: 0, repair: 1, turbo: 1 },
+      powerups: { rage: level >= 2 ? 1 : 0, megashield: level >= 3 ? 1 : 0, cloaking: 0, xray: 0, repair: 1, battery: 1 },
       upgrades: { armor: level, engine: level, weapons: level },
       paint: rivalPaint(rival.color, rng),
     };

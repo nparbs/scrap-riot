@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { DEFAULT_PAINT, type ChassisId, type DefenseId, type MeleeId, type Paint, type PatternId, type TopperId, type TowerId, type TurretId, type WheelsId } from '../sim/data';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { decodeSkin, ERASED, SKIN_PANELS, SKIN_SIZE, type PanelId } from '../game/skin';
+import { DEFAULT_PAINT, PAINT_COLORS, type ChassisId, type DefenseId, type MeleeId, type Paint, type PatternId, type TopperId, type TowerId, type TurretId, type WheelsId } from '../sim/data';
 
 export interface RobotBuild {
   chassis: ChassisId;
@@ -20,7 +22,7 @@ export interface RobotModel {
   meleePivot: THREE.Group;
   /** Spins while the front weapon is active. */
   spinner: THREE.Object3D | null;
-  spinAxis: 'x' | 'z';
+  spinAxis: 'x' | 'y' | 'z';
   blades: THREE.Group | null;
   wheels: THREE.Mesh[];
   shield: THREE.Mesh;
@@ -40,8 +42,7 @@ const copper = new THREE.MeshStandardMaterial({ color: 0xc27a3f, metalness: 0.85
 const hot = new THREE.MeshStandardMaterial({ color: 0xff7a2a, emissive: 0x662200 });
 const glowBlue = new THREE.MeshStandardMaterial({ color: 0x8fdcff, emissive: 0x2a9fe8, emissiveIntensity: 1.5 });
 const glowRed = new THREE.MeshStandardMaterial({ color: 0xff5a4a, emissive: 0xd01a10, emissiveIntensity: 1.5 });
-const eyeWhite = new THREE.MeshBasicMaterial({ color: 0xf2f2e8 });
-const shared = new Set<THREE.Material>([steel, dark, blade, copper, hot, glowBlue, glowRed, eyeWhite]);
+const shared = new Set<THREE.Material>([steel, dark, blade, copper, hot, glowBlue, glowRed]);
 
 function box(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -75,9 +76,10 @@ function css(color: number): string {
 }
 
 /** Paints a hull texture. The patterns are all drawn here, so no image files are needed. */
-function patternTexture(pattern: PatternId, primary: number, secondary: number): THREE.CanvasTexture | null {
-  if (pattern === 'solid') return null;
-  const size = 128;
+function hullTexture(pattern: PatternId, primary: number, secondary: number, skin: string | undefined): THREE.CanvasTexture | null {
+  const pixels = skin ? decodeSkin(skin) : null;
+  if (pattern === 'solid' && !pixels) return null;
+  const size = SKIN_SIZE;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const g = canvas.getContext('2d')!;
@@ -147,9 +149,48 @@ function patternTexture(pattern: PatternId, primary: number, secondary: number):
       g.globalAlpha = 1;
       break;
   }
+  if (pixels) paintSkin(g, pixels);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
+}
+
+/** Lays the player's painting over whatever is underneath. */
+function paintSkin(g: CanvasRenderingContext2D, pixels: Uint8Array): void {
+  const image = g.getImageData(0, 0, SKIN_SIZE, SKIN_SIZE);
+  pixels.forEach((value, i) => {
+    if (value === ERASED) return;
+    const color = PAINT_COLORS[value - 1];
+    image.data[i * 4] = (color >> 16) & 255;
+    image.data[i * 4 + 1] = (color >> 8) & 255;
+    image.data[i * 4 + 2] = color & 255;
+  });
+  g.putImageData(image, 0, 0);
+}
+
+/** Points each face of the hull at its panel on the flat template. The underside isn't painted. */
+function mapHullToSkin(geometry: THREE.BufferGeometry): void {
+  geometry.computeBoundingBox();
+  const { min, max } = geometry.boundingBox!;
+  const position = geometry.getAttribute('position');
+  const uv = geometry.getAttribute('uv') as THREE.BufferAttribute;
+  // BoxGeometry has four corners per face, in the order +x, -x, +y, -y, +z, -z.
+  const faces: (PanelId | null)[] = ['right', 'left', 'top', null, 'front', 'back'];
+  for (let i = 0; i < position.count; i++) {
+    const nx = (position.getX(i) - min.x) / (max.x - min.x);
+    const ny = (position.getY(i) - min.y) / (max.y - min.y);
+    const nz = (position.getZ(i) - min.z) / (max.z - min.z);
+    const panel = faces[Math.floor(i / 4)];
+    if (!panel) {
+      uv.setXY(i, 0, 0);
+      continue;
+    }
+    // Unfolded around the deck, so each face's top edge meets the top panel.
+    const across = { top: nx, right: 1 - ny, left: ny, front: nx, back: nx }[panel];
+    const down = { top: nz, right: nz, left: nz, front: 1 - ny, back: ny }[panel];
+    const { x0, y0, x1, y1 } = SKIN_PANELS[panel];
+    uv.setXY(i, (x0 + across * (x1 - x0)) / SKIN_SIZE, 1 - (y0 + down * (y1 - y0)) / SKIN_SIZE);
+  }
 }
 
 interface HullSpec {
@@ -159,124 +200,148 @@ interface HullSpec {
   trackWidth: number;
   wheelRadius: number;
   wheelCount: number;
+  /** Height of the nose as a share of the full height. Low makes a sharper wedge. */
+  nose: number;
+  /** Width of the nose as a share of the full width. */
+  taper: number;
 }
 
 const HULLS: Record<ChassisId, HullSpec> = {
-  scout: { width: 1.3, length: 2.1, height: 0.45, trackWidth: 0.34, wheelRadius: 0.32, wheelCount: 3 },
-  ghost: { width: 1.35, length: 2.3, height: 0.55, trackWidth: 0.36, wheelRadius: 0.34, wheelCount: 3 },
-  brawler: { width: 1.6, length: 2.4, height: 0.7, trackWidth: 0.42, wheelRadius: 0.38, wheelCount: 4 },
-  rhino: { width: 1.85, length: 2.7, height: 0.85, trackWidth: 0.5, wheelRadius: 0.42, wheelCount: 4 },
-  juggernaut: { width: 2.0, length: 2.9, height: 1.0, trackWidth: 0.55, wheelRadius: 0.44, wheelCount: 5 },
+  scout: { width: 1.5, length: 2.3, height: 0.42, trackWidth: 0.3, wheelRadius: 0.3, wheelCount: 3, nose: 0.15, taper: 0.72 },
+  ghost: { width: 1.55, length: 2.5, height: 0.5, trackWidth: 0.32, wheelRadius: 0.32, wheelCount: 3, nose: 0.2, taper: 0.62 },
+  brawler: { width: 1.75, length: 2.5, height: 0.62, trackWidth: 0.38, wheelRadius: 0.36, wheelCount: 4, nose: 0.32, taper: 0.88 },
+  rhino: { width: 1.95, length: 2.75, height: 0.74, trackWidth: 0.42, wheelRadius: 0.4, wheelCount: 4, nose: 0.22, taper: 0.8 },
+  juggernaut: { width: 2.15, length: 2.95, height: 0.9, trackWidth: 0.46, wheelRadius: 0.42, wheelCount: 5, nose: 0.5, taper: 0.94 },
 };
 
-const TOWER_SCALE: Record<TowerId, number> = { small: 0.8, medium: 1, large: 1.25 };
+const TOWER_SCALE: Record<TowerId, number> = { small: 0.82, medium: 1, large: 1.25 };
 /** Tyre size relative to the hull, and how many down each side. */
 const WHEEL_LOOK: Record<Exclude<WheelsId, 'tracks'>, { radius: number; count: number }> = {
   small4: { radius: 1, count: 2 },
-  large4: { radius: 1.45, count: 2 },
-  six: { radius: 1.15, count: 3 },
+  large4: { radius: 1.3, count: 2 },
+  six: { radius: 1.05, count: 3 },
 };
 
 function addTyre(root: THREE.Group, wheels: THREE.Mesh[], radius: number, width: number, x: number, z: number): void {
-  const tyre = cylinder(radius, width, dark, 12);
+  const tyre = cylinder(radius, width, dark, 14);
   tyre.rotation.z = Math.PI / 2;
   tyre.position.set(x, radius, z);
-  const hub = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.5, radius * 0.5, width + 0.04, 6), steel);
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.48, radius * 0.48, width + 0.05, 6), steel);
   tyre.add(hub);
   root.add(tyre);
   wheels.push(tyre);
 }
 
+/**
+ * The armoured body: a box pulled into a wedge. The paint template is mapped before the box is
+ * bent, so painted panels stay put on the sloped faces.
+ */
+function wedgeHull(s: HullSpec, paint: THREE.Material, baseY: number): THREE.Mesh {
+  const hull = box(s.width, s.height, s.length, paint, 0, baseY + s.height / 2, 0);
+  mapHullToSkin(hull.geometry);
+  const position = hull.geometry.getAttribute('position');
+  for (let i = 0; i < position.count; i++) {
+    if (position.getZ(i) <= 0) continue;
+    position.setX(i, position.getX(i) * s.taper);
+    if (position.getY(i) > 0) position.setY(i, -s.height / 2 + s.height * s.nose);
+  }
+  hull.geometry.computeVertexNormals();
+  return hull;
+}
+
+/** A line of bolts along the armour. They merge into one draw, so detail here costs almost nothing. */
+function boltRow(root: THREE.Group, points: [number, number, number][]): void {
+  const bolts = points.map(([x, y, z]) => {
+    const bolt = new THREE.CylinderGeometry(0.045, 0.045, 0.04, 6);
+    bolt.translate(x, y, z);
+    return bolt;
+  });
+  root.add(new THREE.Mesh(mergeGeometries(bolts), steel));
+  for (const bolt of bolts) bolt.dispose();
+}
+
 function buildHull(root: THREE.Group, id: ChassisId, paint: THREE.Material, trim: THREE.Material, wheels: THREE.Mesh[], look: WheelsId): number {
   const s = HULLS[id];
-  const baseY = s.wheelRadius + 0.1;
+  const baseY = s.wheelRadius * 0.7;
+  const deck = baseY + s.height;
 
+  // A steel floor pan, with the wheels set at its sides.
+  root.add(box(s.width + 0.06, 0.1, s.length - 0.1, dark, 0, baseY + 0.02, 0));
   for (const side of [-1, 1]) {
-    const x = side * (s.width / 2 + s.trackWidth / 2);
+    const x = side * (s.width / 2 + s.trackWidth / 2 - 0.02);
     if (look !== 'tracks') {
       const { radius, count } = WHEEL_LOOK[look];
       const tyre = s.wheelRadius * radius;
       for (let i = 0; i < count; i++) {
-        addTyre(root, wheels, tyre, s.trackWidth + 0.08, x, (i / (count - 1) - 0.5) * (s.length - tyre * 0.9));
+        addTyre(root, wheels, tyre, s.trackWidth, x, (i / (count - 1) - 0.5) * (s.length - tyre * 1.5));
       }
-      continue;
-    }
-    root.add(box(s.trackWidth, s.wheelRadius * 1.5, s.length, dark, x, s.wheelRadius, 0));
-    for (let i = 0; i < s.wheelCount; i++) {
-      const wheel = cylinder(s.wheelRadius * 0.72, s.trackWidth + 0.06, steel, 8);
-      wheel.rotation.z = Math.PI / 2;
-      const t = s.wheelCount === 1 ? 0 : i / (s.wheelCount - 1) - 0.5;
-      wheel.position.set(x, s.wheelRadius, t * (s.length - s.wheelRadius * 1.6));
-      root.add(wheel);
-      wheels.push(wheel);
+    } else {
+      root.add(box(s.trackWidth, s.wheelRadius * 1.5, s.length * 0.95, dark, x, s.wheelRadius, 0));
+      for (let i = 0; i < s.wheelCount; i++) {
+        const wheel = cylinder(s.wheelRadius * 0.72, s.trackWidth + 0.06, steel, 8);
+        wheel.rotation.z = Math.PI / 2;
+        const t = s.wheelCount === 1 ? 0 : i / (s.wheelCount - 1) - 0.5;
+        wheel.position.set(x, s.wheelRadius, t * (s.length - s.wheelRadius * 1.8));
+        root.add(wheel);
+        wheels.push(wheel);
+      }
     }
   }
 
-  // Every robot glares at whatever it's about to run over.
+  root.add(wedgeHull(s, paint, baseY));
+
+  // A low steel wedge along the floor gets under the other robot, as the real ones do.
+  const scoop = box(s.width * s.taper + 0.1, 0.05, 0.62, steel, 0, 0.17, s.length / 2 + 0.2);
+  scoop.rotation.x = 0.42;
+  root.add(scoop);
+
+  // Rear bumper and armour rails along the top edges.
+  root.add(box(s.width * 0.9, s.height * 0.5, 0.12, trim, 0, baseY + s.height * 0.42, -s.length / 2 - 0.02));
   for (const side of [-1, 1]) {
-    const white = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), eyeWhite);
-    white.scale.set(1, 0.72, 0.5);
-    white.rotation.z = side * 0.4;
-    white.position.set(side * s.width * 0.24, baseY + s.height * 0.76, s.length / 2);
-    root.add(white);
-    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), dark);
-    pupil.position.set(side * s.width * 0.21, baseY + s.height * 0.74, s.length / 2 + 0.09);
-    root.add(pupil);
+    root.add(box(0.1, 0.08, s.length * 0.52, trim, side * (s.width / 2 - 0.08), deck + 0.03, -s.length * 0.22));
   }
-
-  root.add(box(s.width, s.height, s.length, paint, 0, baseY + s.height / 2, 0));
+  boltRow(root, [-1, 1].flatMap((side) => [0.1, 0.35, 0.6, 0.85].map((t): [number, number, number] => [side * (s.width / 2 - 0.26), deck + 0.015, -s.length / 2 + t * s.length * 0.5])));
 
   if (id === 'scout') {
-    // A sloped wedge nose and a tail fin.
-    const wedge = box(s.width * 0.92, 0.14, s.length * 0.55, trim, 0, baseY + s.height + 0.02, s.length * 0.26);
-    wedge.rotation.x = 0.28;
-    root.add(wedge);
-    root.add(box(0.08, 0.5, 0.55, trim, 0, baseY + s.height + 0.25, -s.length * 0.42));
+    // Built for speed, with a tail fin.
+    root.add(box(0.08, 0.5, 0.55, trim, 0, deck + 0.25, -s.length * 0.4));
   } else if (id === 'ghost') {
-    // Low, swept side skirts.
+    // Long, swept side skirts.
     for (const side of [-1, 1]) {
-      const skirt = box(0.12, s.height * 0.8, s.length * 0.9, trim, side * (s.width / 2 + 0.02), baseY + s.height * 0.45, 0);
+      const skirt = box(0.08, s.height * 0.5, s.length * 0.8, trim, side * (s.width / 2 + s.trackWidth + 0.04), baseY + s.height * 0.25, 0);
       skirt.rotation.z = side * 0.3;
       root.add(skirt);
     }
-    root.add(box(s.width * 0.6, 0.08, s.length * 0.5, trim, 0, baseY + s.height + 0.04, -0.1));
   } else if (id === 'brawler') {
-    root.add(box(s.width + 0.08, 0.14, 0.34, trim, 0, baseY + s.height * 0.5, s.length / 2));
-    root.add(box(s.width * 0.7, 0.1, s.length * 0.6, trim, 0, baseY + s.height + 0.05, -0.1));
+    // A roll hoop, for when a fight gets rough.
+    const hoop = new THREE.Mesh(new THREE.TorusGeometry(s.width * 0.34, 0.05, 6, 14, Math.PI), steel);
+    hoop.position.set(0, deck, -s.length * 0.38);
+    hoop.castShadow = true;
+    root.add(hoop);
   } else if (id === 'rhino') {
-    // A big nose plate with one horn on it.
-    const nose = box(s.width * 0.96, s.height * 0.9, 0.5, trim, 0, baseY + s.height * 0.5, s.length / 2 - 0.05);
-    nose.rotation.x = -0.35;
-    root.add(nose);
-    const horn = cone(0.2, 0.75, blade, 6);
-    horn.rotation.x = Math.PI / 2 - 0.3;
-    horn.position.set(0, baseY + s.height * 0.85, s.length / 2 + 0.25);
+    // A big horn on the nose, set low to get under things.
+    const horn = cone(0.2, 0.85, blade, 6);
+    horn.rotation.x = Math.PI / 2 - 0.15;
+    horn.position.set(0, baseY + s.height * 0.3, s.length / 2 + 0.3);
     root.add(horn);
-    root.add(box(s.width * 0.75, 0.14, s.length * 0.55, trim, 0, baseY + s.height + 0.07, -0.2));
   } else {
-    // Bolted-on slabs of extra armor.
+    // Bolted-on slabs of extra armour and a pair of exhausts.
     for (const side of [-1, 1]) {
-      root.add(box(0.2, s.height * 0.9, s.length * 0.82, trim, side * (s.width / 2 + 0.02), baseY + s.height * 0.55, 0));
-    }
-    root.add(box(s.width * 1.05, s.height * 0.75, 0.4, trim, 0, baseY + s.height * 0.5, s.length / 2));
-    root.add(box(s.width * 0.8, 0.18, s.length * 0.7, trim, 0, baseY + s.height + 0.09, -0.1));
-    for (const side of [-1, 1]) {
-      const pipe = cylinder(0.1, 0.8, dark, 8);
-      pipe.position.set(side * s.width * 0.3, baseY + s.height + 0.4, -s.length * 0.4);
+      root.add(box(0.16, s.height * 0.75, s.length * 0.6, trim, side * (s.width / 2 + 0.01), baseY + s.height * 0.5, -s.length * 0.12));
+      const pipe = cylinder(0.09, 0.7, dark, 8);
+      pipe.position.set(side * s.width * 0.3, deck + 0.35, -s.length * 0.42);
       root.add(pipe);
     }
   }
-  return baseY + s.height;
+  return deck;
 }
 
-function buildTurret(pivot: THREE.Group, id: TurretId, head: THREE.Material, eye: THREE.Material): void {
-  // The domed head with one glowing eye gives every robot its face.
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), head);
-  dome.castShadow = true;
-  pivot.add(dome);
-  const eyeMesh = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), eye);
-  eyeMesh.position.set(0, 0.26, 0.42);
-  pivot.add(eyeMesh);
+/** The tower is a low armoured hexagon, with the gun fixed to it pointing straight ahead. */
+function buildTurret(pivot: THREE.Group, id: TurretId, head: THREE.Material): void {
+  const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.5, 0.26, 6), head);
+  tower.position.y = 0.13;
+  tower.castShadow = true;
+  pivot.add(tower);
 
   switch (id) {
     case 'minigun':
@@ -291,12 +356,12 @@ function buildTurret(pivot: THREE.Group, id: TurretId, head: THREE.Material, eye
         for (const y of [0.15, 0.36]) pivot.add(barrel(0.08, 0.1, hot, x, y, 0.92));
       }
       break;
-    case 'guided':
+    case 'heavyrocket':
       pivot.add(box(0.5, 0.42, 1.1, dark, 0, 0.26, 0.5));
       pivot.add(barrel(0.15, 0.1, glowRed, 0, 0.26, 1.07));
       pivot.add(box(0.06, 0.4, 0.3, steel, 0, 0.62, 0.1));
       break;
-    case 'seeker':
+    case 'bunkerbuster':
       for (const x of [-0.3, 0.3]) {
         pivot.add(barrel(0.15, 1.2, dark, x, 0.24, 0.5));
         const tip = cone(0.15, 0.3, glowRed);
@@ -360,8 +425,161 @@ function buildTurret(pivot: THREE.Group, id: TurretId, head: THREE.Material, eye
   }
 }
 
-function buildMelee(pivot: THREE.Group, id: MeleeId): { spinner: THREE.Object3D | null; axis: 'x' | 'z' } {
+/** A disc standing upright, with teeth, centered on its own group. Spins around x. */
+function verticalDisc(radius: number, thickness: number, teeth: number, toothSize: number): THREE.Group {
+  const disc = new THREE.Group();
+  const plate = cylinder(radius, thickness, blade, 22);
+  plate.rotation.z = Math.PI / 2;
+  disc.add(plate);
+  const hub = cylinder(radius * 0.28, thickness + 0.1, dark, 8);
+  hub.rotation.z = Math.PI / 2;
+  disc.add(hub);
+  for (let i = 0; i < teeth; i++) {
+    const a = (i / teeth) * Math.PI * 2;
+    const tooth = box(thickness + 0.03, toothSize, toothSize * 0.7, steel, 0, Math.cos(a) * (radius + toothSize * 0.25), Math.sin(a) * (radius + toothSize * 0.25));
+    tooth.rotation.x = -a;
+    disc.add(tooth);
+  }
+  return disc;
+}
+
+/** The two upright arms that carry a spinning weapon out in front of the robot. */
+function weaponArms(pivot: THREE.Group, spread: number, length: number, y = 0): void {
+  for (const side of [-1, 1]) pivot.add(box(0.14, 0.22, length, dark, side * spread, y, length / 2 - 0.05));
+}
+
+function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec): { spinner: THREE.Object3D | null; axis: 'x' | 'y' | 'z' } {
   switch (id) {
+    case 'vertdisc': {
+      weaponArms(pivot, 0.2, 0.95);
+      const disc = verticalDisc(0.72, 0.14, 2, 0.32);
+      disc.position.set(0, 0.28, 0.95);
+      pivot.add(disc);
+      return { spinner: disc, axis: 'x' };
+    }
+    case 'vertbar': {
+      weaponArms(pivot, 0.22, 1);
+      const bar = new THREE.Group();
+      bar.position.set(0, 0.3, 1);
+      bar.add(box(0.2, 1.95, 0.3, blade));
+      for (const end of [-1, 1]) bar.add(box(0.26, 0.26, 0.42, steel, 0, end * 0.92, end * 0.06));
+      const hub = cylinder(0.22, 0.34, dark, 8);
+      hub.rotation.z = Math.PI / 2;
+      bar.add(hub);
+      pivot.add(bar);
+      return { spinner: bar, axis: 'x' };
+    }
+    case 'horizbar': {
+      pivot.add(box(0.5, 0.18, 0.75, dark, 0, 0.12, 0.3));
+      const bar = new THREE.Group();
+      bar.position.set(0, 0.28, 0.72);
+      bar.add(box(3, 0.12, 0.34, blade));
+      for (const end of [-1, 1]) bar.add(box(0.5, 0.16, 0.42, steel, end * 1.3, 0, end * 0.03));
+      bar.add(cylinder(0.26, 0.24, dark, 8));
+      pivot.add(bar);
+      return { spinner: bar, axis: 'y' };
+    }
+    case 'undercutter': {
+      pivot.add(box(0.5, 0.14, 0.6, dark, 0, -0.08, 0.28));
+      const saw = new THREE.Group();
+      saw.position.set(0, -0.18, 0.8);
+      saw.add(cylinder(0.85, 0.06, blade, 22));
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const tooth = box(0.26, 0.08, 0.16, steel, Math.cos(a) * 0.92, 0, Math.sin(a) * 0.92);
+        tooth.rotation.y = -a;
+        saw.add(tooth);
+      }
+      pivot.add(saw);
+      return { spinner: saw, axis: 'y' };
+    }
+    case 'drum': {
+      weaponArms(pivot, spec.width * 0.42, 0.72, -0.05);
+      const drum = new THREE.Group();
+      drum.position.set(0, 0.02, 0.68);
+      const barrelBody = cylinder(0.38, spec.width * 0.74, steel, 12);
+      barrelBody.rotation.z = Math.PI / 2;
+      drum.add(barrelBody);
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2;
+        const ridge = box(spec.width * 0.74, 0.16, 0.14, blade, 0, Math.cos(a) * 0.42, Math.sin(a) * 0.42);
+        ridge.rotation.x = -a;
+        drum.add(ridge);
+      }
+      pivot.add(drum);
+      return { spinner: drum, axis: 'x' };
+    }
+    case 'eggbeater': {
+      weaponArms(pivot, spec.width * 0.36, 0.78, 0);
+      const beater = new THREE.Group();
+      beater.position.set(0, 0.04, 0.76);
+      const axle = cylinder(0.08, spec.width * 0.66, dark, 8);
+      axle.rotation.z = Math.PI / 2;
+      beater.add(axle);
+      for (const turn of [0, Math.PI / 2]) {
+        const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.07, 6, 14), blade);
+        hoop.scale.set(spec.width * 0.66, 1, 1);
+        hoop.rotation.set(turn, Math.PI / 2, 0);
+        hoop.castShadow = true;
+        beater.add(hoop);
+      }
+      pivot.add(beater);
+      return { spinner: beater, axis: 'x' };
+    }
+    case 'shell': {
+      // A heavy ring around the whole robot, centered on the hull rather than the nose.
+      const ring = new THREE.Group();
+      ring.position.set(0, 0, -spec.length / 2);
+      const radius = Math.hypot(spec.width / 2 + spec.trackWidth, spec.length / 2) + 0.14;
+      const hoop = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.13, 6, 28), steel);
+      hoop.rotation.x = Math.PI / 2;
+      hoop.castShadow = true;
+      ring.add(hoop);
+      for (const end of [-1, 1]) {
+        ring.add(box(0.4, 0.28, 0.32, blade, end * (radius + 0.08), 0, 0));
+        ring.add(box(0.3, 0.1, radius * 2, dark, end * 0.0, 0, 0));
+      }
+      pivot.add(ring);
+      return { spinner: ring, axis: 'y' };
+    }
+    case 'hammersaw': {
+      pivot.add(box(0.16, 0.16, 1.5, steel, 0, 0, 0.75));
+      pivot.add(box(0.3, 0.3, 0.3, dark, 0, 0, 0.12));
+      const saw = verticalDisc(0.6, 0.06, 10, 0.16);
+      saw.position.set(0, -0.08, 1.5);
+      pivot.add(saw);
+      return { spinner: saw, axis: 'x' };
+    }
+    case 'flipper': {
+      const plate = box(spec.width * 0.82, 0.07, 1.25, steel, 0, -0.14, 0.62);
+      plate.rotation.x = 0.1;
+      pivot.add(plate);
+      pivot.add(box(spec.width * 0.82, 0.12, 0.14, dark, 0, -0.08, 0.02));
+      for (const side of [-1, 1]) pivot.add(box(0.1, 0.22, 0.9, dark, side * spec.width * 0.34, -0.03, 0.5));
+      return { spinner: null, axis: 'x' };
+    }
+    case 'crusher': {
+      pivot.add(box(0.46, 0.34, 0.5, dark, 0, 0.02, 0.2));
+      // A beak on a heavy arm, closing down onto a low fork.
+      const arm = box(0.28, 0.2, 1.25, steel, 0, 0.42, 0.72);
+      arm.rotation.x = -0.28;
+      pivot.add(arm);
+      const beak = cone(0.2, 0.6, blade, 5);
+      beak.rotation.x = Math.PI;
+      beak.position.set(0, 0.42, 1.4);
+      pivot.add(beak);
+      for (const side of [-1, 1]) pivot.add(box(0.14, 0.08, 1.1, steel, side * 0.26, -0.2, 0.9));
+      return { spinner: null, axis: 'x' };
+    }
+    case 'forks': {
+      pivot.add(box(spec.width * 0.7, 0.3, 0.14, dark, 0, -0.04, 0.05));
+      for (const side of [-1, 1]) {
+        const tine = box(0.2, 0.06, 1.35, steel, side * spec.width * 0.25, -0.2, 0.72);
+        tine.rotation.x = 0.04;
+        pivot.add(tine);
+      }
+      return { spinner: null, axis: 'x' };
+    }
     case 'chainsaw': {
       pivot.add(box(0.26, 0.26, 0.5, dark, 0, 0, 0.2));
       const disc = new THREE.Group();
@@ -554,7 +772,7 @@ function buildDefenseGear(root: THREE.Group, id: DefenseId, deckY: number, spec:
   return null;
 }
 
-function buildTopper(root: THREE.Group, id: TopperId, y: number, trim: THREE.Material, eye: THREE.Material, spec: HullSpec): void {
+function buildTopper(root: THREE.Group, id: TopperId, y: number, trim: THREE.Material, spec: HullSpec): void {
   const back = -spec.length / 2 + 0.3;
   switch (id) {
     case 'none':
@@ -563,7 +781,7 @@ function buildTopper(root: THREE.Group, id: TopperId, y: number, trim: THREE.Mat
       const rod = cylinder(0.025, 1.2, steel, 5);
       rod.position.set(-0.45, y + 0.6, back);
       root.add(rod);
-      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), eye);
+      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), glowRed);
       tip.position.set(-0.45, y + 1.22, back);
       root.add(tip);
       break;
@@ -615,7 +833,7 @@ function buildTopper(root: THREE.Group, id: TopperId, y: number, trim: THREE.Mat
 export function buildRobot(build: RobotBuild): RobotModel {
   const root = new THREE.Group();
   const paint = build.paint ?? { ...DEFAULT_PAINT, primary: build.color };
-  const texture = patternTexture(paint.pattern, paint.primary, paint.secondary);
+  const texture = hullTexture(paint.pattern, paint.primary, paint.secondary, paint.skin);
   const hullMaterial = new THREE.MeshStandardMaterial({
     color: texture ? 0xffffff : paint.primary,
     map: texture,
@@ -625,25 +843,25 @@ export function buildRobot(build: RobotBuild): RobotModel {
   });
   const headMaterial = new THREE.MeshStandardMaterial({ color: paint.primary, metalness: 0.35, roughness: 0.5, flatShading: true });
   const trim = new THREE.MeshStandardMaterial({ color: paint.secondary, metalness: 0.5, roughness: 0.5, flatShading: true });
-  const eye = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: paint.eye, emissiveIntensity: 2.5 });
   const wheels: THREE.Mesh[] = [];
   const deckY = buildHull(root, build.chassis, hullMaterial, trim, wheels, build.wheels ?? 'large4');
   const spec = HULLS[build.chassis];
 
   const turretPivot = new THREE.Group();
-  turretPivot.position.y = deckY + 0.05;
+  // Set back on the deck, leaving the nose clear for the main weapon.
+  turretPivot.position.set(0, deckY, -spec.length * 0.14);
   turretPivot.scale.setScalar(TOWER_SCALE[build.tower ?? 'medium']);
-  buildTurret(turretPivot, build.turret, headMaterial, eye);
+  buildTurret(turretPivot, build.turret, headMaterial);
   root.add(turretPivot);
 
   const meleePivot = new THREE.Group();
   meleePivot.position.set(0, deckY - spec.height * 0.45, build.rearMelee ? -spec.length / 2 : spec.length / 2);
   if (build.rearMelee) meleePivot.rotation.y = Math.PI;
-  const { spinner, axis } = buildMelee(meleePivot, build.melee);
+  const { spinner, axis } = buildMelee(meleePivot, build.melee, spec);
   root.add(meleePivot);
 
   const blades = buildDefenseGear(root, build.defense, deckY, spec);
-  buildTopper(root, paint.topper, deckY, trim, eye, spec);
+  buildTopper(root, paint.topper, deckY, trim, spec);
 
   const shield = new THREE.Mesh(
     new THREE.SphereGeometry(spec.length * 0.95, 20, 14),

@@ -1,16 +1,18 @@
 import { ACHIEVEMENTS, CAREER, isUnlocked, type AchievementStats, type CareerProgress, type Fight, type Medal } from '../game/career';
 import { canSell, CATALOG, partFits, sellPrice, upgradeCost, type Save, type Slot } from '../game/progress';
 import { ACTIONS, activeLevel, keyLabel, LEVELS, QUALITY, type Action, type Bindings, type Quality, type Settings } from '../game/settings';
-import { NAME_MAX, type HistoryEntry, type LeaderboardEntry, type Profile } from '../net/protocol';
+import { DEFAULT_NAME, NAME_MAX, sanitizeName, type HistoryEntry, type LeaderboardEntry, type Profile } from '../net/protocol';
+import { logoUrl } from '../render/logo';
 import { ARENA_ORDER, ARENAS, type ArenaId } from '../sim/arena';
 import {
   ARMOUR,
   buildStats,
+  MELEE,
+  TURRETS,
   DEFAULT_PAINT,
   DUEL_MIN_PAID_TIME,
   installedParts,
   MODES,
-  PAINT_COLORS,
   PATTERNS,
   POWERUPS,
   POWERUP_CAP,
@@ -20,45 +22,91 @@ import {
   TOPPERS,
   UPGRADES,
   weaponSpace,
+  type MeleeId,
   type ModeId,
   type Paint,
+  type TurretId,
   type PowerupId,
   type UpgradeId,
 } from '../sim/data';
 import type { Standing } from '../sim/match';
 import { escapeText, UPGRADE_ORDER } from './hud';
 
+const INTRO_MS = 3000;
+const NAME_MIN = 2;
+
 const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3', 'power4', 'power5', 'power6'];
 
-function cogPath(teeth: number, outer: number, inner: number): string {
-  const points: string[] = [];
-  for (let i = 0; i < teeth; i++) {
-    const step = (Math.PI * 2) / teeth;
-    for (const [fraction, r] of [[0, inner], [0.2, outer], [0.5, outer], [0.7, inner]] as const) {
-      const a = (i + fraction) * step;
-      points.push(`${(60 + Math.cos(a) * r).toFixed(1)} ${(60 + Math.sin(a) * r).toFixed(1)}`);
-    }
-  }
-  return `M${points.join(' L')} Z`;
-}
-
-const COG_PATH = cogPath(12, 58, 46);
-
 function logoHtml(): string {
-  return `<div class="logo"><svg viewBox="0 0 120 120" aria-hidden="true"><path class="logo-cog" d="${COG_PATH}"/></svg><span>SCRAP</span><span>RIOT</span></div>`;
+  return `<img class="logo" src="${logoUrl()}" alt="Scrap Riot" />`;
 }
+
 function controlsTable(keys: Bindings): string {
   const key = (action: Action) => `<kbd>${keyLabel(keys[action])}</kbd>`;
   return `
   <table class="controls">
     <tr><td>${key('forward')}${key('back')}${key('left')}${key('right')}</td><td>Drive</td></tr>
     <tr><td>${key('melee')}</td><td>Main weapon</td></tr>
-    <tr><td>${key('turret')}</td><td>Turret (aims itself)</td></tr>
+    <tr><td>${key('boost')}</td><td>Speed boost (uses battery)</td></tr>
+    <tr><td>${key('turret')}</td><td>Gun (fires straight ahead)</td></tr>
     <tr><td>${key('defense')}</td><td>Defense</td></tr>
     <tr><td>${key('power1')}${key('power2')}${key('power3')}${key('power4')}${key('power5')}${key('power6')}</td><td>Powerups</td></tr>
     <tr><td>${key('rear')}</td><td>Look behind</td></tr>
     <tr><td><kbd>M</kbd> / <kbd>Esc</kbd></td><td>Mute / Pause</td></tr>
   </table>`;
+}
+
+/** A few seconds of logo when the game opens. Any click or key skips it. */
+export function introScreen(onDone: () => void): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'screen screen-intro';
+  el.innerHTML = `
+    <div class="intro-band intro-band-top"></div>
+    <div class="intro-band intro-band-bottom"></div>
+    <div class="intro-stage">
+      <img class="intro-logo" src="${logoUrl()}" alt="Scrap Riot" />
+      <p class="intro-line">Build it. Bolt it. Break it.</p>
+    </div>`;
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    window.clearTimeout(timer);
+    window.removeEventListener('keydown', finish);
+    onDone();
+  };
+  const timer = window.setTimeout(finish, INTRO_MS);
+  window.addEventListener('keydown', finish);
+  el.addEventListener('pointerdown', finish);
+  return el;
+}
+
+/** Asked once, before anything else, until sign-in can take care of it. */
+export function nameScreen(onSubmit: (name: string) => void): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'screen screen-lobby';
+  el.innerHTML = `
+    <form class="menu-card name-card">
+      ${logoHtml()}
+      <h2>Who's driving?</h2>
+      <p class="tagline">Pick a name, pilot. Other players will see it, so don't use your real name.</p>
+      <input data-pilot-name maxlength="${NAME_MAX}" autocomplete="off" spellcheck="false" placeholder="Your pilot name" aria-label="Pilot name" />
+      <p class="name-error" role="alert"></p>
+      <button class="btn btn-primary" type="submit">Let's go</button>
+    </form>`;
+  const input = el.querySelector<HTMLInputElement>('[data-pilot-name]')!;
+  const error = el.querySelector<HTMLElement>('.name-error')!;
+  el.querySelector('form')!.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = sanitizeName(input.value);
+    if (input.value.trim().length < NAME_MIN || name === DEFAULT_NAME) {
+      error.textContent = `Please enter a name of at least ${NAME_MIN} characters, other than "${DEFAULT_NAME}".`;
+      input.focus();
+      return;
+    }
+    onSubmit(name);
+  });
+  return el;
 }
 
 export function menuScreen(onStart: () => void, onSettings: () => void, keys: Bindings): HTMLElement {
@@ -77,7 +125,7 @@ export function menuScreen(onStart: () => void, onSettings: () => void, keys: Bi
   return el;
 }
 
-export function pauseScreen(online: boolean, onResume: () => void, onQuit: () => void, keys: Bindings): HTMLElement {
+export function pauseScreen(online: boolean, onResume: () => void, onQuit: () => void, keys: Bindings, quitLabel = online ? 'Leave match' : 'Forfeit match'): HTMLElement {
   const el = document.createElement('div');
   el.className = 'screen screen-pause';
   el.innerHTML = `
@@ -85,7 +133,7 @@ export function pauseScreen(online: boolean, onResume: () => void, onQuit: () =>
       <h2>${online ? 'Menu' : 'Paused'}</h2>
       ${online ? '<p class="tagline">The match keeps running. Leaving a duel counts as a loss.</p>' : ''}
       <button class="btn btn-primary" data-resume>Resume</button>
-      <button class="btn" data-quit>${online ? 'Leave match' : 'Forfeit match'}</button>
+      <button class="btn" data-quit>${quitLabel}</button>
       ${controlsTable(keys)}
     </div>`;
   el.querySelector('[data-resume]')!.addEventListener('click', onResume);
@@ -98,7 +146,8 @@ export function lobbyScreen(onCancel: () => void, hasAccount: boolean): { el: HT
   el.className = 'screen screen-lobby';
   el.innerHTML = `
     <div class="menu-card">
-      <h2>Lobby</h2>
+      ${logoHtml()}
+      <h2>Play Online</h2>
       <p class="lobby-status" data-status>Connecting to the server&hellip;</p>
       <p class="tagline" data-where></p>
       <p class="tagline">${hasAccount ? 'A duel starts as soon as another pilot joins. Win to earn money and rating.' : 'A duel starts as soon as another pilot joins. Online, everyone fights with equal stats.'}</p>
@@ -125,6 +174,7 @@ export interface GarageActions {
   onUpgrade: (id: UpgradeId) => void;
   onFight: () => void;
   onOnline: () => void;
+  onTraining: () => void;
   onName: (name: string) => void;
   onSettings: () => void;
   onTab: (tab: GarageTab) => void;
@@ -133,6 +183,7 @@ export interface GarageActions {
   onZoom: (step: number) => void;
   onQuit: () => void;
   onPaint: (change: Partial<Paint>) => void;
+  onPaintUse: (part: 'primary' | 'secondary') => void;
   onPractice: (change: { arena?: ArenaId; mode?: ModeId }) => void;
   onSignOut: () => void;
   onDelete: () => void;
@@ -140,7 +191,7 @@ export interface GarageActions {
   onRear: (rear: boolean) => void;
 }
 
-export type GarageTab = 'workshop' | 'paintshop' | 'buy' | 'sell' | 'training' | 'garage' | 'help';
+export type GarageTab = 'workshop' | 'paintshop' | 'buy' | 'sell' | 'bots' | 'garage' | 'help';
 export type SideTab = 'preview' | 'stats' | 'highscore';
 export type BuyCategory = Slot | 'powerups' | 'upgrades';
 
@@ -148,11 +199,11 @@ const TOP_TABS: [GarageTab, string][] = [['workshop', 'Workshop'], ['paintshop',
 const SIDE_TABS: [SideTab, string][] = [['preview', 'Preview'], ['stats', 'Stats'], ['highscore', 'Highscore']];
 const SLOT_LABELS: Record<Slot, string> = {
   chassis: 'Chassis', tower: 'Tower', wheels: 'Wheels', engine: 'Engine', power: 'Power source',
-  melee: 'Main weapon', turret: 'Turret', defense: 'Defense',
+  melee: 'Main weapon', turret: 'Gun', defense: 'Defense',
 };
 const SLOTS = Object.keys(SLOT_LABELS) as Slot[];
 const BUY_CATEGORIES: [BuyCategory, string][] = [...SLOTS.map((slot): [BuyCategory, string] => [slot, SLOT_LABELS[slot]]), ['powerups', 'Powerups'], ['upgrades', 'Upgrades']];
-const STAT_MAX = { speed: 24, hp: 400 };
+const STAT_MAX = { speed: 24, hp: 440 };
 
 export interface GarageOptions {
   onlineAvailable: boolean;
@@ -259,11 +310,22 @@ function partName(slot: Slot, id: string): string {
   return (CATALOG[slot] as Record<string, { name: string }>)[id].name;
 }
 
-/** Weapons take room according to their price. The chassis provides room rather than using it. */
-function partSpaceLabel(slot: Slot, id: string): string {
+/** What the shop says about a part. Weapons take room according to their price, and the chassis provides it. */
+function partDetails(slot: Slot, id: string): string {
   const def = (CATALOG[slot] as Record<string, { price: number; space?: number }>)[id];
   if (slot === 'chassis') return `Room for ${def.space}`;
-  return `Takes ${slot === 'melee' || slot === 'turret' || slot === 'defense' ? weaponSpace(def.price) : def.space} room`;
+  const room = `Takes ${slot === 'melee' || slot === 'turret' || slot === 'defense' ? weaponSpace(def.price) : def.space} room`;
+  if (slot === 'melee') {
+    const weapon = MELEE[id as MeleeId];
+    return `${weapon.type} · ${weapon.cooldown >= 1 ? `${weapon.cooldown}s cooldown · ` : ''}${room}`;
+  }
+  if (slot === 'turret') {
+    const shots = TURRETS[id as TurretId].shots;
+    const gun = TURRETS[id as TurretId];
+    const count = shots > 0 ? `${shots} ${gun.burst ? 'bursts' : 'shots'} per life` : 'Battery only';
+    return `${count} · ${gun.cooldown >= 1 ? `${gun.cooldown}s cooldown · ` : ''}${room}`;
+  }
+  return room;
 }
 
 function bar(label: string, fraction: number, over = false): string {
@@ -322,7 +384,7 @@ function workshopPanel(save: Save, options: GarageOptions): string {
       ${row('power', parts.power)}
       <h4>Weapons</h4>
       ${weapon('melee', placement)}
-      ${weapon('turret', '<b>Top</b>')}
+      ${weapon('turret', '<b>Fixed forward</b>')}
       ${weapon('defense', '<b>Top</b>')}
     </div>`;
 }
@@ -335,7 +397,7 @@ function statsPanel(save: Save): string {
     ['Acceleration', stats.accel.toFixed(1)],
     ['Turning', stats.turn.toFixed(2)],
     ['Weight', `${stats.mass.toFixed(2)} t`],
-    ['Turret swing', `${Math.round(stats.track * 100)}%`],
+    ['Room for parts', String(spaceCapacity(save.loadout))],
     ['Battery recharge', `${Math.round(stats.regen * 100)}%`],
     ['Wins', `${save.wins} of ${save.matches}`],
   ];
@@ -380,7 +442,7 @@ function buyPanel(save: Save, options: GarageOptions): string {
         const on = equipped === id;
         const label = on ? 'Fitted' : has ? 'Fit' : `$${item.price}`;
         const broke = !has && save.money < item.price;
-        return `<button class="card${on ? ' card-on' : ''}${broke ? ' card-broke' : ''}" data-slot="${slot}" data-id="${id}"><strong>${item.name}</strong><span>${item.blurb}</span><small>${partSpaceLabel(slot, id)}</small><em>${label}</em></button>`;
+        return `<button class="card${on ? ' card-on' : ''}${broke ? ' card-broke' : ''}" data-slot="${slot}" data-id="${id}"><strong>${item.name}</strong><span>${item.blurb}</span><small>${partDetails(slot, id)}</small><em>${label}</em></button>`;
       })
       .join('');
   }
@@ -400,25 +462,27 @@ function sellPanel(save: Save): string {
 
 function paintPanel(save: Save): string {
   const paint = save.loadout.paint ?? DEFAULT_PAINT;
-  const swatches = (part: 'primary' | 'secondary' | 'eye') =>
-    PAINT_COLORS.map(
-      (color) =>
-        `<button class="swatch${paint[part] === color ? ' swatch-on' : ''}" style="background:#${color.toString(16).padStart(6, '0')}" data-paint="${part}" data-value="${color}" aria-label="${part} color"></button>`,
-    ).join('');
+  const chip = (part: 'primary' | 'secondary', label: string) => `
+    <div class="paint-color"><i style="background:#${paint[part].toString(16).padStart(6, '0')}"></i><span>${label}</span>
+      <button class="plate-btn" data-paint-use="${part}">Use selected color</button></div>`;
   const choice = (part: 'pattern' | 'topper', table: Record<string, string>) =>
     Object.entries(table)
       .map(([id, label]) => `<button class="mini-btn${paint[part] === id ? ' mini-on' : ''}" data-paint="${part}" data-value="${id}">${label}</button>`)
       .join('');
   return `
-    <section><h3>Main color</h3><div class="swatches">${swatches('primary')}</div></section>
-    <section><h3>Trim color</h3><div class="swatches">${swatches('secondary')}</div></section>
-    <section><h3>Eye color</h3><div class="swatches">${swatches('eye')}</div></section>
-    <section><h3>Pattern</h3><div class="choices">${choice('pattern', PATTERNS)}</div></section>
-    <section><h3>Topper</h3><div class="choices">${choice('topper', TOPPERS)}</div></section>
-    <p class="settings-hint">Paint is free, and other players see it online.</p>`;
+    <div data-painter-bar></div>
+    <div class="paint-lower">
+      <div data-painter-board></div>
+      <div class="paint-options">
+        <section><h3>Colors</h3>${chip('primary', 'Body and tower')}${chip('secondary', 'Trim')}</section>
+        <section><h3>Pattern</h3><div class="choices">${choice('pattern', PATTERNS)}</div></section>
+        <section><h3>Topper</h3><div class="choices">${choice('topper', TOPPERS)}</div></section>
+        <p class="settings-hint">Paint is free, and your opponent sees it. Your painting goes over the pattern.</p>
+      </div>
+    </div>`;
 }
 
-function trainingPanel(save: Save, options: GarageOptions): string {
+function botsPanel(save: Save, options: GarageOptions): string {
   const maps = ARENA_ORDER.map((id) => {
     const def = ARENAS[id];
     const on = save.practice.arena === id;
@@ -430,7 +494,8 @@ function trainingPanel(save: Save, options: GarageOptions): string {
       return `<button class="card${on ? ' card-on' : ''}" data-mode="${id}"><strong>${MODES[id].name}</strong><span>${MODES[id].blurb}</span><em>${on ? 'Selected' : 'Select'}</em></button>`;
     })
     .join('');
-  return `<button class="btn btn-primary" data-fight>Start training</button>
+  return `<section><h3>Offline vs Bots</h3><p class="settings-hint">Fight computer-controlled robots, with no other players involved.</p></section>
+    <button class="btn btn-primary" data-fight>Start the fight</button>
     <section><h3>Mode</h3><div class="cards">${modes}</div></section>
     <section><h3>Map</h3><div class="cards">${maps}</div></section>
     ${careerPanel(options.career, options.account === null)}`;
@@ -445,7 +510,8 @@ function garagePanel(save: Save, options: GarageOptions): string {
 
 function helpPanel(keys: Bindings): string {
   return `<section><h3>How to play</h3>
-      <p class="settings-hint">Build a robot in the Workshop, then fight another pilot on the roof. A duel ends when one robot is wrecked or knocked over the edge. If time runs out, the most armour left wins. Every part takes up room, so a bigger chassis fits more.</p></section>
+      <p class="settings-hint">Build a robot in the Workshop, then fight another pilot on the roof. A duel ends when one robot is wrecked or knocked over the edge. If time runs out, the most armour left wins. Every part takes up room, so a bigger chassis fits more.</p>
+      <p class="settings-hint">Your main weapon does the real damage. Spinners have to reach speed before they bite, so hold the key on the way in. Strong weapons have a cooldown, shown in red on the panel at the bottom. Guns only fire straight ahead and have few shots per life. Your battery runs your gun and your speed boost, so spend it carefully.</p></section>
     <section><h3>Controls</h3>${controlsTable(keys)}</section>
     <button class="btn" data-settings>Settings</button>`;
 }
@@ -462,8 +528,8 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
         return buyPanel(save, options);
       case 'sell':
         return sellPanel(save);
-      case 'training':
-        return trainingPanel(save, options);
+      case 'bots':
+        return botsPanel(save, options);
       case 'garage':
         return garagePanel(save, options);
       case 'help':
@@ -497,8 +563,9 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
         ${side()}
         <div class="zoom-row">${options.side === 'preview' ? '<button class="step-btn" data-zoom="0.15" aria-label="Zoom out">−</button><span>Zoom</span><button class="step-btn" data-zoom="-0.15" aria-label="Zoom in">+</button>' : ''}</div>
         <div class="nav-btns">
-          ${navButton('Lobby', options.onlineAvailable ? 'data-online' : 'disabled title="No game server is connected"')}
-          ${navButton('Training', 'data-tab="training"')}
+          ${navButton('Play Online', options.onlineAvailable ? 'data-online' : 'disabled title="No game server is connected"')}
+          ${navButton('Offline vs Bots', 'data-tab="bots"')}
+          ${navButton('Training', 'data-training')}
           ${navButton('Garage', 'data-tab="garage"')}
           ${navButton('Help', 'data-tab="help"')}
           ${navButton('Quit', 'data-quit')}
@@ -516,7 +583,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
   el.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest<HTMLElement>('button');
     if (!target) return;
-    const { slot, id, power, upgrade, tab, side: sideTab, buy, shelf, armour, zoom, sellSlot, sellId, paint: part, value, arena, mode, fightId } = target.dataset;
+    const { slot, id, power, upgrade, tab, side: sideTab, buy, shelf, armour, zoom, sellSlot, sellId, paint: part, paintUse, value, arena, mode, fightId } = target.dataset;
     if (tab) actions.onTab(tab as GarageTab);
     else if (sideTab) actions.onSide(sideTab as SideTab);
     else if (buy) actions.onBuyCategory(buy as BuyCategory);
@@ -525,7 +592,8 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     else if (zoom) actions.onZoom(Number(zoom));
     else if (sellSlot && sellId) actions.onSell(sellSlot as Slot, sellId);
     else if (fightId) actions.onCareer(CAREER.find((f) => f.id === fightId)!);
-    else if (part && value) actions.onPaint({ [part]: part === 'pattern' || part === 'topper' ? value : Number(value) } as Partial<Paint>);
+    else if (paintUse) actions.onPaintUse(paintUse as 'primary' | 'secondary');
+    else if (part && value) actions.onPaint({ [part]: value } as Partial<Paint>);
     else if (arena) actions.onPractice({ arena: arena as ArenaId });
     else if (mode) actions.onPractice({ mode: mode as ModeId });
     else if (slot && id) actions.onEquip(slot as Slot, id);
@@ -533,6 +601,7 @@ export function garageScreen(save: Save, actions: GarageActions, options: Garage
     else if (upgrade) actions.onUpgrade(upgrade as UpgradeId);
     else if ('fight' in target.dataset) actions.onFight();
     else if ('online' in target.dataset) actions.onOnline();
+    else if ('training' in target.dataset) actions.onTraining();
     else if ('quit' in target.dataset) actions.onQuit();
     else if ('settings' in target.dataset) actions.onSettings();
     else if ('signout' in target.dataset) actions.onSignOut();
@@ -569,6 +638,7 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
 export interface SettingsActions {
   onQuality: (quality: Quality) => void;
   onFps: () => void;
+  onMusic: () => void;
   onBind: (action: Action) => void;
   onReset: () => void;
   onBack: () => void;
@@ -596,11 +666,14 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
       ${autoHint}
       <div class="settings-row"><span>Show frame rate</span>
         <button class="mini-btn${settings.showFps ? ' mini-on' : ''}" data-fps>${settings.showFps ? 'On' : 'Off'}</button></div>
+      <h3>Sound</h3>
+      <div class="settings-row"><span>Music</span>
+        <button class="mini-btn${settings.music ? ' mini-on' : ''}" data-music>${settings.music ? 'On' : 'Off'}</button></div>
       <h3>Keyboard</h3>
       ${bindings}
       <p class="settings-hint">Esc cancels a rebind. Using a key that's taken swaps the two actions. Esc and M stay reserved for pause and mute, and Ctrl for browser shortcuts.</p>
       <h3>Gamepad</h3>
-      <p class="settings-hint">Right and left triggers drive, the left stick steers. A: main weapon, RB: turret, B: defense, D-pad: first four powerups, LB: Repair Kit, X: Turbo, Y: look behind, Start: menu.</p>
+      <p class="settings-hint">Right and left triggers drive, the left stick steers. A: main weapon, RB: gun, B: defense, X: speed boost, D-pad: first four powerups, LB: Repair Kit, Y: look behind, Start: menu.</p>
       <button class="btn" data-reset>Reset keys</button>
       <button class="btn btn-primary" data-back>Done</button>
     </div>`;
@@ -611,6 +684,7 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
     if (quality) actions.onQuality(quality as Quality);
     else if (bind) actions.onBind(bind as Action);
     else if ('fps' in target.dataset) actions.onFps();
+    else if ('music' in target.dataset) actions.onMusic();
     else if ('reset' in target.dataset) actions.onReset();
     else if ('back' in target.dataset) actions.onBack();
   });

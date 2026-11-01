@@ -216,10 +216,11 @@ export class Room {
     const input = this.match!.bots[player.botId].input;
     input.throttle = Math.max(-1, Math.min(1, next.throttle));
     input.steer = Math.max(-1, Math.min(1, next.steer));
-    const { melee, turret, defense } = unpackFlags(next.flags);
+    const { melee, turret, defense, boost } = unpackFlags(next.flags);
     input.melee = melee;
     input.turret = turret;
     input.defense = defense;
+    input.boost = boost;
     const id = POWERUP_ORDER[next.powerup];
     if (id) input.powerup = id;
   }

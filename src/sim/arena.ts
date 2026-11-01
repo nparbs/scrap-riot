@@ -92,6 +92,8 @@ export interface ArenaDef {
   repairSpots: Point[];
   /** Scoring zone for King of the Hill. */
   hill: Circle;
+  /** Where the game's logo is painted on the floor. */
+  logo: Circle;
   theme: ArenaTheme;
 }
 
@@ -152,6 +154,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     ],
     repairSpots: [{ x: -3, z: -13 }, { x: 20, z: 3 }, { x: -22, z: -3 }, { x: -6, z: 12 }],
     hill: { x: -3, z: -13, r: 7 },
+    logo: { x: 8, z: -14, r: 7 },
     theme: { floor: 0xa2a28c, wall: 0x45433a, sky: 0x1c1a2c, fogNear: 90, fogFar: 420, light: 0xc4c8ff, sunIntensity: 1.1, backdrop: 'night' },
   },
   pit: {
@@ -173,6 +176,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     spawns: ring(26),
     repairSpots: cross(16),
     hill: { x: 0, z: 0, r: 7 },
+    logo: { x: 0, z: 0, r: 8 },
     theme: { floor: 0xffffff, wall: 0x4a4e52, sky: 0x101216, fogNear: 55, fogFar: 130, light: 0xfff0d8, sunIntensity: 2.4, backdrop: 'stands' },
   },
   rooftop: {
@@ -190,6 +194,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     spawns: ring(20),
     repairSpots: [{ x: 16, z: 0 }, { x: -16, z: 0 }, { x: 0, z: 16 }, { x: 0, z: -16 }],
     hill: { x: 15, z: 15, r: 6 },
+    logo: { x: -14, z: 14, r: 5 },
     theme: { floor: 0xb9c0cc, wall: 0x5d6470, sky: 0x24344f, fogNear: 70, fogFar: 240, light: 0xffd9b0, sunIntensity: 2.6, backdrop: 'city' },
   },
   furnace: {
@@ -215,6 +220,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     ],
     repairSpots: [{ x: 0, z: 14 }, { x: 0, z: -14 }, { x: 22, z: 0 }, { x: -22, z: 0 }],
     hill: { x: 0, z: 0, r: 8 },
+    logo: { x: 0, z: 22, r: 4 },
     theme: { floor: 0xc8a48e, wall: 0x3f2b24, sky: 0x1c0d08, fogNear: 45, fogFar: 110, light: 0xffb27a, sunIntensity: 1.8, backdrop: 'foundry' },
   },
   canyon: {
@@ -235,6 +241,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     ],
     repairSpots: [{ x: 0, z: 12 }, { x: 0, z: -12 }, { x: 24, z: 0 }, { x: -24, z: 0 }],
     hill: { x: 0, z: 18, r: 6 },
+    logo: { x: 0, z: -19, r: 5 },
     theme: { floor: 0xe0a877, wall: 0x7a4a2c, sky: 0xd98b57, fogNear: 70, fogFar: 220, light: 0xffe2b8, sunIntensity: 2.8, backdrop: 'canyon' },
   },
   foundry: {
@@ -260,6 +267,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     spawns: ring(24),
     repairSpots: [{ x: 16, z: -14 }, { x: -16, z: 14 }, { x: 0, z: 18 }, { x: 0, z: -18 }],
     hill: { x: 0, z: 10, r: 6 },
+    logo: { x: -14, z: 7, r: 5 },
     theme: { floor: 0xa9b4c0, wall: 0x2f3640, sky: 0x0d1118, fogNear: 45, fogFar: 110, light: 0xc8dcff, sunIntensity: 2, backdrop: 'foundry' },
   },
   glacier: {
@@ -280,6 +288,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     ],
     repairSpots: cross(19).slice(1),
     hill: { x: 0, z: 0, r: 7 },
+    logo: { x: 0, z: 0, r: 7 },
     theme: { floor: 0xcfe6ff, wall: 0x6f8aa8, sky: 0x9fc2e0, fogNear: 60, fogFar: 200, light: 0xeaf5ff, sunIntensity: 2.4, backdrop: 'ice' },
   },
 };

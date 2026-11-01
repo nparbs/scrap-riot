@@ -52,7 +52,7 @@ export const CAREER: Fight[] = [
   { id: 'c11', title: 'Three Lanes', blurb: 'Hold the mesa with chasms on both sides.', arena: 'canyon', mode: 'koth', rivals: 5, level: 3, reward: 600 },
   {
     id: 'c12', title: 'The Last Machine', blurb: 'Final boss. Nothing has ever scratched it.', arena: 'foundry', mode: 'ffa', rivals: 3, level: 4, reward: 1500, killTarget: 6,
-    boss: { name: 'The Last Machine', chassis: 'juggernaut', melee: 'magnet', turret: 'seeker', defense: 'emp', color: 0x33363b, hpMult: 4, size: 1.6 },
+    boss: { name: 'The Last Machine', chassis: 'juggernaut', melee: 'magnet', turret: 'bunkerbuster', defense: 'emp', color: 0x33363b, hpMult: 4, size: 1.6 },
   },
 ];
 
@@ -116,8 +116,8 @@ export function fightSetups(fight: Fight, seed: number): BotSetup[] {
         melee,
         turret,
         defense,
-        powerups: { rage: 1, megashield: 1, cloaking: 0, xray: 0, repair: 1, turbo: 1 },
-        paint: { primary: color, secondary: 0x33363b, eye: 0xe0503a, pattern: 'hazard', topper: 'crown' },
+        powerups: { rage: 1, megashield: 1, cloaking: 0, xray: 0, repair: 1, battery: 1 },
+        paint: { primary: color, secondary: 0x33363b, pattern: 'hazard', topper: 'crown' },
       },
     },
     ...rivals.slice(1),

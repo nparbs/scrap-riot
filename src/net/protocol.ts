@@ -21,8 +21,9 @@ import {
 } from '../sim/data';
 import type { BotSetup, GameEvent, Loadout } from '../sim/match';
 import type { Save } from '../game/progress';
+import { decodeSkin } from '../game/skin';
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 export const NAME_MAX = 16;
 export const DEFAULT_NAME = 'Pilot';
 /** Clients send input at this rate; each message covers INPUT_STEPS sim steps. */
@@ -36,6 +37,7 @@ export const QUICK_CHAT = ['Good luck!', 'Nice hit!', 'Come here!', 'Oops!', 'Go
 const FLAG_MELEE = 1;
 const FLAG_TURRET = 2;
 const FLAG_DEFENSE = 4;
+const FLAG_BOOST = 8;
 
 export type ClientMessage =
   | { t: 'join'; v: number; name: string; loadout: Loadout; session?: string }
@@ -89,12 +91,12 @@ export type ServerMessage =
   | { t: 'error'; code: ErrorCode }
   | { t: 'pong'; c: number };
 
-export function packFlags(melee: boolean, turret: boolean, defense: boolean): number {
-  return (melee ? FLAG_MELEE : 0) | (turret ? FLAG_TURRET : 0) | (defense ? FLAG_DEFENSE : 0);
+export function packFlags(melee: boolean, turret: boolean, defense: boolean, boost: boolean): number {
+  return (melee ? FLAG_MELEE : 0) | (turret ? FLAG_TURRET : 0) | (defense ? FLAG_DEFENSE : 0) | (boost ? FLAG_BOOST : 0);
 }
 
-export function unpackFlags(flags: number): { melee: boolean; turret: boolean; defense: boolean } {
-  return { melee: !!(flags & FLAG_MELEE), turret: !!(flags & FLAG_TURRET), defense: !!(flags & FLAG_DEFENSE) };
+export function unpackFlags(flags: number): { melee: boolean; turret: boolean; defense: boolean; boost: boolean } {
+  return { melee: !!(flags & FLAG_MELEE), turret: !!(flags & FLAG_TURRET), defense: !!(flags & FLAG_DEFENSE), boost: !!(flags & FLAG_BOOST) };
 }
 
 export function powerupIndex(id: PowerupId | null): number {
@@ -122,9 +124,10 @@ export function sanitizePaint(raw: unknown): Paint {
   return {
     primary: pickColor(r.primary, DEFAULT_PAINT.primary),
     secondary: pickColor(r.secondary, DEFAULT_PAINT.secondary),
-    eye: pickColor(r.eye, DEFAULT_PAINT.eye),
     pattern: pickKey(PATTERNS, r.pattern, DEFAULT_PAINT.pattern),
     topper: pickKey(TOPPERS, r.topper, DEFAULT_PAINT.topper),
+    // Anything that isn't a real paint job is dropped, leaving the robot unpainted.
+    ...(typeof r.skin === 'string' && r.skin !== '' && decodeSkin(r.skin) ? { skin: r.skin } : {}),
   };
 }
 
@@ -140,7 +143,7 @@ export function onlineLoadout(raw: unknown): Loadout {
     melee: pickKey(MELEE, r.melee, 'chainsaw'),
     turret: pickKey(TURRETS, r.turret, 'minigun'),
     defense: pickKey(DEFENSES, r.defense, 'shield'),
-    powerups: { rage: 1, megashield: 1, cloaking: 1, xray: 1, repair: 1, turbo: 1 },
+    powerups: { rage: 1, megashield: 1, cloaking: 1, xray: 1, repair: 1, battery: 1 },
     upgrades: { armor: 0, engine: 0, weapons: 0 },
     paint: sanitizePaint(r.paint),
     rearMelee: r.rearMelee === true,

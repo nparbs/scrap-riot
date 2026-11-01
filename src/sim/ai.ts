@@ -1,9 +1,12 @@
-import { closestOnBlock, sawPos, shockerActive } from './arena';
+import { closestOnBlock, rayBlock, sawPos, shockerActive, type Block } from './arena';
 import { DEFENSES, MELEE, TURRETS } from './data';
 import { bearing, wrapAngle, type Bot, type Match } from './match';
 
 const THINK_INTERVAL = 0.2;
 const RETARGET_INTERVAL = 1.5;
+/** How wide a berth to give big obstacles when driving round them. */
+const ROUTE_MARGIN = 1.5;
+const ROUTE_REACHED = 2;
 
 /** Drives one bot by writing to its input, exactly as the keyboard does for the player. */
 export class BotBrain {
@@ -47,22 +50,20 @@ export class BotBrain {
     const hurt = bot.hp / bot.maxHp < 0.35;
     const repair = hurt ? this.nearestPickup('repair') : null;
     const scrap = this.nearestPickup('scrap');
-    if (repair) {
+    if (bot.clawTarget >= 0 && !match.arena.walled) {
+      // Holding a robot on a map with edges, so take it to the nearest one.
+      const { half } = match.arena;
+      if (Math.abs(bot.x) > Math.abs(bot.z)) this.setGoal(Math.sign(bot.x) * half, bot.z);
+      else this.setGoal(bot.x, Math.sign(bot.z) * half);
+    } else if (repair) {
       this.setGoal(repair.x, repair.z);
     } else if (match.mode === 'koth' && !hurt) {
       this.setGoal(match.arena.hill.x, match.arena.hill.z);
     } else if (scrap && Math.hypot(scrap.x - bot.x, scrap.z - bot.z) < 10) {
       this.setGoal(scrap.x, scrap.z);
     } else if (this.target) {
-      const standoff = this.preferredRange();
-      const dist = Math.hypot(this.target.x - bot.x, this.target.z - bot.z);
-      if (standoff > 0 && dist < standoff + 4) {
-        // Ranged builds circle at a distance instead of closing in.
-        const around = bearing(this.target.x, this.target.z, bot.x, bot.z) + 0.8 * this.strafeSign;
-        this.setGoal(this.target.x + Math.sin(around) * standoff, this.target.z + Math.cos(around) * standoff);
-      } else {
-        this.setGoal(this.target.x, this.target.z);
-      }
+      // Every build closes in, because the real damage is up close.
+      this.setGoal(this.target.x, this.target.z);
     } else {
       this.setGoal(0, 0);
     }
@@ -75,28 +76,50 @@ export class BotBrain {
   private setGoal(x: number, z: number): void {
     const { half, walled } = this.match.arena;
     const limit = walled ? half : half - 4;
-    this.goalX = Math.max(-limit, Math.min(limit, x));
-    this.goalZ = Math.max(-limit, Math.min(limit, z));
+    const goalX = Math.max(-limit, Math.min(limit, x));
+    const goalZ = Math.max(-limit, Math.min(limit, z));
+    const corner = this.cornerAround(goalX, goalZ, limit);
+    this.goalX = corner ? corner.x : goalX;
+    this.goalZ = corner ? corner.z : goalZ;
   }
 
-  private preferredRange(): number {
-    switch (this.bot.loadout.turret) {
-      case 'rockets':
-      case 'guided':
-      case 'seeker':
-        return 13;
-      case 'mortar':
-      case 'laser':
-        return 16;
-      case 'arc':
-      case 'flamethrower':
-        return 7;
-      case 'discs':
-      case 'spear':
-        return 11;
-      default:
-        return 0;
+  /** The way round the first big obstacle in the way, or null if the path is clear. */
+  private cornerAround(goalX: number, goalZ: number, limit: number): { x: number; z: number } | null {
+    const { bot, match } = this;
+    const dist = Math.hypot(goalX - bot.x, goalZ - bot.z);
+    if (dist < 1e-3) return null;
+    const dirX = (goalX - bot.x) / dist;
+    const dirZ = (goalZ - bot.z) / dist;
+    const clearance = bot.radius + ROUTE_MARGIN;
+    let nearest: Block | null = null;
+    let nearestT = dist;
+    for (const block of match.arena.blocks) {
+      const padded = { ...block, w: block.w + clearance * 2 - ROUTE_MARGIN, d: block.d + clearance * 2 - ROUTE_MARGIN };
+      const t = rayBlock(padded, bot.x, bot.z, dirX, dirZ);
+      if (t !== null && t < nearestT) {
+        nearest = block;
+        nearestT = t;
+      }
     }
+    if (!nearest) return null;
+    let best: { x: number; z: number } | null = null;
+    let bestCost = Infinity;
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const x = nearest.x + sx * (nearest.w / 2 + clearance);
+        const z = nearest.z + sz * (nearest.d / 2 + clearance);
+        // Skip corners off the map, and the one the robot has effectively reached.
+        if (Math.abs(x) > limit || Math.abs(z) > limit) continue;
+        const toCorner = Math.hypot(x - bot.x, z - bot.z);
+        if (toCorner < ROUTE_REACHED) continue;
+        const cost = toCorner + Math.hypot(goalX - x, goalZ - z);
+        if (cost < bestCost) {
+          bestCost = cost;
+          best = { x, z };
+        }
+      }
+    }
+    return best;
   }
 
   private pickTarget(): Bot | null {
@@ -217,6 +240,7 @@ export class BotBrain {
     bot.input.defense = false;
     if (!target || !target.alive) {
       bot.input.turret = false;
+      bot.input.boost = false;
       return;
     }
 
@@ -230,6 +254,10 @@ export class BotBrain {
       case 'magnet':
         bot.input.melee = dist < melee.range && dist > 3 && angle < melee.arc;
         break;
+      case 'spinner':
+        // Spin up on the way in, so the weapon is at speed when it arrives.
+        bot.input.melee = dist < 16;
+        break;
       default:
         bot.input.melee = dist - target.radius < melee.range && angle < melee.arc;
     }
@@ -238,8 +266,10 @@ export class BotBrain {
     this.burstT -= dt;
     if (this.burstT < -0.4) this.burstT = 0.3 + this.skill * 1.5;
     const turret = TURRETS[bot.loadout.turret];
-    const aimed = bot.turretTarget >= 0 && bot.turretError < 0.2;
-    bot.input.turret = aimed && this.burstT > 0 && dist < turret.range && bot.blindT <= 0;
+    // Guns only point forward, so the robot itself has to be lined up. Close in is worth a shot.
+    const lineUp = Math.atan2(target.radius, Math.max(dist, 1)) * 0.9;
+    bot.input.turret = angle < lineUp && this.burstT > 0 && dist < Math.min(turret.range, 22) && bot.blindT <= 0;
+    bot.input.boost = dist > 12 && angle < 0.3 && bot.ammo > 0.4;
 
     bot.input.defense = this.wantsDefense(target, dist, angle);
   }
@@ -295,6 +325,6 @@ export class BotBrain {
     else if (dist < 9 && health > 0.4 && p.rage > 0) bot.input.powerup = 'rage';
     else if (health < 0.3 && p.cloaking > 0) bot.input.powerup = 'cloaking';
     else if (!target && p.xray > 0) bot.input.powerup = 'xray';
-    else if (dist > 22 && p.turbo > 0) bot.input.powerup = 'turbo';
+    else if (bot.ammo < 0.15 && p.battery > 0) bot.input.powerup = 'battery';
   }
 }
