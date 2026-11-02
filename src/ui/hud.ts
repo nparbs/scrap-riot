@@ -461,6 +461,7 @@ export class Hud {
 
     const tags: string[] = [];
     if (player.batteryFlat) tags.push('BATTERY FLAT');
+    if (player.poppedT > 0) tags.push(player.loadout.wheels === 'tracks' ? 'TRACK THROWN' : 'TIRES POPPED');
     if (player.alive && isMovingTarget(player)) tags.push('MOVING TARGET');
     if (player.boostT > 0) tags.push('BOOST');
     if (player.airT > 0) tags.push('AIRBORNE');
@@ -593,10 +594,10 @@ export class Hud {
       const names = TRAP_NAMES[this.match.arena.id];
       q(touchButtons.strike, 'span').textContent = on ? names.strike : 'Weapon';
       q(touchButtons.slick, 'span').textContent = on ? names.slick : 'Boost';
-      q(touchButtons.pull, 'span').textContent = on ? names.pull : 'Defense';
+      q(touchButtons.pull, 'span').textContent = on ? names.pull : 'Secondary';
       touchButtons.strike.setAttribute('aria-label', on ? names.strike : 'Main weapon');
       touchButtons.slick.setAttribute('aria-label', on ? names.slick : 'Speed boost');
-      touchButtons.pull.setAttribute('aria-label', on ? names.pull : 'Defense');
+      touchButtons.pull.setAttribute('aria-label', on ? names.pull : 'Secondary weapon');
       if (!on) this.fillTouchButton(touchButtons.slick, 0);
     }
     if (!on) return;

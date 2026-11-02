@@ -92,6 +92,8 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] Bots trained over simulated fights, with tactics for each weapon and defense
 - [ ] Bot tactics for crowds, as training only helped in duels
 - [x] Five chassis classes, each with its own weapons and bonus
+- [x] Plain bumpers and plows in place of spikes, so the main weapon stands out
+- [x] Defenses renamed secondary weapons, Side Blades and Cutter removed, and a Spike Strip in place of the Nail Spreader
 - [x] The Whippet rebuilds its armor out of combat, in place of the Armor Regenerator
 - [x] Chassis rebuilt with their own proportions, suspension, noses, towers and weapon mounts
 - [ ] Human playtest of points, weight, armor and battery

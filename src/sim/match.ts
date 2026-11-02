@@ -83,7 +83,10 @@ import {
   SPIN_HOLD_DRAW,
   SPINNER_KEPT_SPEED,
   SPINNER_MIN_SPEED,
+  SPIKE_STRIP_DEPTH,
   SPINNER_RECOIL,
+  TIRE_POP_GUARD,
+  TIRE_POP_TIME,
   STUN_GUARD,
   UPGRADES,
   XRAY_TIME,
@@ -239,7 +242,9 @@ export interface Bot {
   blindT: number;
   cloakT: number;
   xrayT: number;
-  bladesT: number;
+  /** Seconds left with popped tires, unable to drive, and until another strip can pop them. */
+  poppedT: number;
+  popGuardT: number;
   kamikazeT: number;
   lastHitT: number;
   lastAttacker: number;
@@ -268,7 +273,7 @@ export interface Mine {
   radius: number;
 }
 
-export type PatchKind = 'oil' | 'glue' | 'nails';
+export type PatchKind = 'oil' | 'glue' | 'spikes';
 
 export interface OilPatch {
   id: number;
@@ -279,6 +284,8 @@ export interface OilPatch {
   r: number;
   life: number;
   damage: number;
+  /** Which way its owner was facing, for a strip that lies across that. */
+  angle: number;
 }
 
 export interface Drone {
@@ -312,7 +319,8 @@ export type GameEvent =
   | { type: 'powerup'; bot: number; kind: PowerupId }
   | { type: 'defense'; bot: number; kind: DefenseId }
   | { type: 'teleport'; x1: number; z1: number; x2: number; z2: number }
-  | { type: 'pulse'; x: number; z: number; radius: number; color: number };
+  | { type: 'pulse'; x: number; z: number; radius: number; color: number }
+  | { type: 'pop'; x: number; z: number; bot: number };
 
 export interface BotSetup {
   name: string;
@@ -477,7 +485,7 @@ export class Match {
       shieldT: 0, megaT: 0, boostT: 0, rageT: 0, stunT: 0, stunGuardT: 0,
       invulnT: MATCH.spawnInvuln,
       ramCd: 0, pistonCd: 0, flashT: 0, burnT: 0, burnSource: -1, slowT: 0, blindT: 0,
-      cloakT: 0, xrayT: 0, bladesT: 0, kamikazeT: 0,
+      cloakT: 0, xrayT: 0, poppedT: 0, popGuardT: 0, kamikazeT: 0,
       lastHitT: -99, lastAttacker: -1, oiled: false, glued: false, hillScore: 0,
       powerups: carriedPowerups(setup.loadout),
       kills: 0, assists: 0, deaths: 0, damageDealt: 0, earned: 0,
@@ -639,7 +647,8 @@ export class Match {
     bot.blindT = down(bot.blindT);
     bot.cloakT = down(bot.cloakT);
     bot.xrayT = down(bot.xrayT);
-    bot.bladesT = down(bot.bladesT);
+    bot.poppedT = down(bot.poppedT);
+    bot.popGuardT = down(bot.popGuardT);
     bot.meleeSwing += dt;
     if (bot.input.boost && !bot.batteryFlat) {
       if (bot.ammo > 0 && bot.stunT <= 0 && bot.airT <= 0) {
@@ -703,7 +712,8 @@ export class Match {
       return;
     }
     const input = bot.input;
-    const stunned = bot.stunT > 0;
+    // Popped tires stop it driving, the same as a stun, but it can still use its weapons.
+    const stunned = bot.stunT > 0 || bot.poppedT > 0;
     const throttle = stunned ? 0 : Math.max(-1, Math.min(1, input.throttle));
     const steer = stunned ? 0 : Math.max(-1, Math.min(1, input.steer));
 
@@ -1040,13 +1050,6 @@ export class Match {
       }
       return;
     }
-    if (bot.bladesT > 0) {
-      for (const other of this.enemies(bot)) {
-        const gap = Math.hypot(other.x - bot.x, other.z - bot.z) - other.radius - bot.radius;
-        if (gap < def.radius) this.damage(other, def.damage * this.damageOutput(bot) * dt, bot.id);
-      }
-    }
-
     const pressed = bot.input.defense && !bot.defenseHeld;
     bot.defenseHeld = bot.input.defense;
     if (def.passive || !bot.input.defense || bot.defenseCd > 0 || bot.stunT > 0) return;
@@ -1061,7 +1064,7 @@ export class Match {
     const dropX = bot.x + Math.sin(dropAngle) * (bot.radius + 1);
     const dropZ = bot.z + Math.cos(dropAngle) * (bot.radius + 1);
     const pushPatch = (kind: PatchKind) =>
-      this.oil.push({ id: this.nextId++, owner: bot.id, kind, x: dropX, z: dropZ, r: def.radius, life: def.duration, damage: def.damage });
+      this.oil.push({ id: this.nextId++, owner: bot.id, kind, x: dropX, z: dropZ, r: def.radius, life: def.duration, damage: def.damage, angle: dropAngle });
 
     switch (id) {
       case 'shield':
@@ -1082,22 +1085,8 @@ export class Match {
       case 'glue':
         pushPatch('glue');
         break;
-      case 'nails':
-        pushPatch('nails');
-        break;
-      case 'blades':
-        bot.bladesT = def.duration;
-        break;
-      case 'cutter':
-        for (const other of this.enemies(bot)) {
-          const dist = Math.hypot(other.x - bot.x, other.z - bot.z);
-          if (dist - other.radius > def.radius) continue;
-          this.damage(other, def.damage * this.damageOutput(bot), bot.id);
-          const n = dist || 1;
-          other.vx += (((other.x - bot.x) / n) * 16) / other.mass;
-          other.vz += (((other.z - bot.z) / n) * 16) / other.mass;
-        }
-        this.events.push({ type: 'pulse', x: bot.x, z: bot.z, radius: def.radius, color: 0xdfe5ea });
+      case 'spikes':
+        pushPatch('spikes');
         break;
       case 'teleport':
         if (!this.teleport(bot, def.radius)) return;
@@ -1295,7 +1284,7 @@ export class Match {
     bot.invulnT = MATCH.spawnInvuln;
     bot.lastAttacker = -1;
     bot.stunT = bot.stunGuardT = bot.boostT = bot.rageT = bot.shieldT = bot.megaT = bot.airT = bot.flipT = bot.meleeCharge = 0;
-    bot.slowT = bot.blindT = bot.cloakT = bot.bladesT = 0;
+    bot.slowT = bot.blindT = bot.cloakT = bot.poppedT = bot.popGuardT = 0;
     bot.lastFightT = this.time;
     bot.rebuilding = false;
     bot.ammo = 1;
@@ -1454,7 +1443,7 @@ export class Match {
     }
     if (input.boost && bot.slickCd <= 0) {
       bot.slickCd = TRAP.slick.cooldown;
-      this.oil.push({ id: this.nextId++, owner: bot.id, kind: TRAP_NAMES[this.arena.id].patch, x: bot.trapX, z: bot.trapZ, r: TRAP.slick.radius, life: TRAP.slick.life, damage: 0 });
+      this.oil.push({ id: this.nextId++, owner: bot.id, kind: TRAP_NAMES[this.arena.id].patch, x: bot.trapX, z: bot.trapZ, r: TRAP.slick.radius, life: TRAP.slick.life, damage: 0, angle: 0 });
     }
     if (input.defense && bot.pullCd <= 0) {
       bot.pullCd = TRAP.pull.cooldown;
@@ -1588,10 +1577,28 @@ export class Match {
         bot.vz += (dz / dist) * GRINDER_PUSH * dt;
       }
 
-      for (const patch of this.oil) {
-        if (patch.kind !== 'nails' || patch.owner === bot.id) continue;
-        if (Math.hypot(bot.x - patch.x, bot.z - patch.z) < patch.r) this.damage(bot, patch.damage * dt, patch.owner);
-      }
+      this.rollOverSpikes(bot);
+    }
+  }
+
+  /** The first robot over a strip uses it up. Spawn protection and a recent pop save it, and it passes over one in the air. */
+  private rollOverSpikes(bot: Bot): void {
+    if (bot.airT > 0 || bot.popGuardT > 0 || bot.invulnT > 0) return;
+    for (let i = this.oil.length - 1; i >= 0; i--) {
+      const strip = this.oil[i];
+      if (strip.kind !== 'spikes' || strip.owner === bot.id) continue;
+      const dx = bot.x - strip.x;
+      const dz = bot.z - strip.z;
+      // It lies across the way its owner was facing.
+      const across = dx * Math.cos(strip.angle) - dz * Math.sin(strip.angle);
+      const along = dx * Math.sin(strip.angle) + dz * Math.cos(strip.angle);
+      if (Math.abs(across) > strip.r + bot.radius * 0.5 || Math.abs(along) > SPIKE_STRIP_DEPTH + bot.radius * 0.6) continue;
+      this.oil.splice(i, 1);
+      bot.poppedT = TIRE_POP_TIME;
+      bot.popGuardT = TIRE_POP_TIME + TIRE_POP_GUARD;
+      this.damage(bot, strip.damage, strip.owner);
+      this.events.push({ type: 'pop', x: bot.x, z: bot.z, bot: bot.id });
+      return;
     }
   }
 
@@ -1643,7 +1650,7 @@ export class Match {
     for (let i = this.oil.length - 1; i >= 0; i--) {
       const patch = this.oil[i];
       patch.life -= dt;
-      const plowed = patch.kind === 'nails' && this.bots.some((b) => b.id !== patch.owner && this.plowHits(b, patch.x, patch.z, patch.r * 0.6));
+      const plowed = patch.kind === 'spikes' && this.bots.some((b) => b.id !== patch.owner && this.plowHits(b, patch.x, patch.z, patch.r * 0.6));
       if (patch.life <= 0 || plowed) this.oil.splice(i, 1);
     }
   }

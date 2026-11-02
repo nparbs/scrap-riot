@@ -17,7 +17,7 @@ export const ACTIONS: { id: Action; label: string }[] = [
   { id: 'left', label: 'Turn left' },
   { id: 'right', label: 'Turn right' },
   { id: 'melee', label: 'Main weapon' },
-  { id: 'defense', label: 'Defense' },
+  { id: 'defense', label: 'Secondary weapon' },
   { id: 'boost', label: 'Speed boost' },
   { id: 'power1', label: 'Powerup 1' },
   { id: 'power2', label: 'Powerup 2' },

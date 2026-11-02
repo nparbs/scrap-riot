@@ -70,7 +70,7 @@ function controlsTable(keys: Bindings): string {
   <table class="controls">
     <tr><td><kbd>Stick</kbd></td><td>Drive</td></tr>
     <tr><td><kbd>Weapon</kbd></td><td>Main weapon</td></tr>
-    <tr><td><kbd>Defense</kbd></td><td>Defense</td></tr>
+    <tr><td><kbd>Secondary</kbd></td><td>Secondary weapon</td></tr>
     <tr><td><kbd>Boost</kbd></td><td>Speed boost (uses battery)</td></tr>
     <tr><td><kbd>Rear</kbd></td><td>Look behind</td></tr>
     <tr><td>Above the buttons</td><td>Tap one of your powerups to use it</td></tr>
@@ -81,7 +81,7 @@ function controlsTable(keys: Bindings): string {
   <table class="controls">
     <tr><td>${key('forward')}${key('back')}${key('left')}${key('right')}</td><td>Drive</td></tr>
     <tr><td>${key('melee')}<kbd>Left click</kbd></td><td>Main weapon</td></tr>
-    <tr><td>${key('defense')}<kbd>Right click</kbd></td><td>Defense</td></tr>
+    <tr><td>${key('defense')}<kbd>Right click</kbd></td><td>Secondary weapon</td></tr>
     <tr><td>${key('boost')}</td><td>Speed boost (uses battery)</td></tr>
     <tr><td>${key('power1')}${key('power2')}${key('power3')}</td><td>Your three powerups</td></tr>
     <tr><td>${key('rear')}</td><td>Look behind</td></tr>
@@ -260,7 +260,7 @@ const TOP_TABS: [GarageTab, string][] = [['workshop', 'Workshop'], ['paintshop',
 const SIDE_TABS: [SideTab, string][] = [['stats', 'Specs'], ['highscore', 'Highscore'], ['players', 'Players']];
 const SLOT_LABELS: Record<Slot, string> = {
   chassis: 'Chassis', wheels: 'Wheels', engine: 'Engine', power: 'Power source',
-  melee: 'Main weapon', defense: 'Defense',
+  melee: 'Main weapon', defense: 'Secondary weapon',
 };
 const SLOTS = Object.keys(SLOT_LABELS) as Slot[];
 /** The shop's sections down the side, in the order you'd think about a robot. */
@@ -706,7 +706,7 @@ function helpPanel(keys: Bindings): string {
       'Weapons and boost run off the battery, and the harder a weapon hits, the more each hit takes.',
       'Tick up to three powerups in the Workshop to take into a match. The rest stay in your garage.',
       'Robots only turn while rolling, so a stopped robot has to drive forward or back to change direction.',
-      'Your defense goes on the opposite side from your main weapon, so moving the weapon to the back moves the defense to the front.',
+      'Your secondary weapon goes on the opposite side from your main weapon, so moving the main weapon to the back moves the secondary to the front.',
       `Your main weapon is how you win. Spinners have to reach speed before they bite, so hold the ${touch ? 'button' : 'key'} on the way in.`,
       'There are no guns. Everything is up close, the way real combat robots fight.',
       'Your battery runs your speed boost and any powered weapon, such as the Flamethrower, Tesla Coil and Flipper.',
@@ -950,7 +950,7 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
       ${bindings}
       <p class="settings-hint">Esc cancels a rebind. Using a key that's taken swaps the two actions. Esc and M stay reserved for pause and mute, and Ctrl for browser shortcuts. Left click always fires the main weapon and right click the defense.</p>
       <h3>Gamepad</h3>
-      <p class="settings-hint">Right and left triggers drive, the left stick steers. A or RB: main weapon, B: defense, X: speed boost, D-pad up, right and down: your three powerups, Y: look behind, Start: menu.</p>
+      <p class="settings-hint">Right and left triggers drive, the left stick steers. A or RB: main weapon, B: secondary weapon, X: speed boost, D-pad up, right and down: your three powerups, Y: look behind, Start: menu.</p>
       <button class="btn" data-reset>Reset keys</button>`}
       <button class="btn btn-primary" data-back>Done</button>
     </div>`;

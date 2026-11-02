@@ -467,10 +467,10 @@ export class BotBrain {
     // The weapon runs off the same battery, so only a good charge is worth spending on getting there.
     bot.input.boost = this.backT <= 0 && (this.pushing ? angle < 0.4 && bot.ammo > 0.1 : dist > tactics.boostDist && angle < 0.3 && bot.ammo > tactics.boostAmmo);
 
-    bot.input.defense = bot.ammo >= this.habit.reserve && this.wantsDefense(target, dist, angle);
+    bot.input.defense = bot.ammo >= this.habit.reserve && this.wantsDefense(dist, angle);
   }
 
-  private wantsDefense(target: Bot, dist: number, angle: number): boolean {
+  private wantsDefense(dist: number, angle: number): boolean {
     const { bot, match } = this;
     const health = condition(bot);
     const recentlyHit = match.time - bot.lastHitT < 0.5;
@@ -481,11 +481,8 @@ export class BotBrain {
       case 'mines':
       case 'oil':
       case 'glue':
-      case 'nails':
+      case 'spikes':
         return dist < range && angle > 2.2;
-      case 'blades':
-      case 'cutter':
-        return dist - target.radius - bot.radius < range;
       case 'teleport':
         return (health < wornTo && recentlyHit) || (dist > range && angle < 0.2);
       case 'flash':

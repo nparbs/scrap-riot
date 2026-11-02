@@ -19,6 +19,8 @@ export interface RobotModel {
   tower: THREE.Group;
   /** Everything fixed that the wheels, shell and weapon bolt to. */
   frame: THREE.Group;
+  /** The bumper or plow, unless the secondary weapon is at that end. */
+  nose: THREE.Group | null;
   /** What the main weapon stands on, unless it's on the tower. */
   weaponMount: THREE.Group | null;
   /** Runs a chainsaw's teeth around its bar. */
@@ -35,7 +37,6 @@ export interface RobotModel {
   /** Spins while the front weapon is active. */
   spinner: THREE.Object3D | null;
   spinAxis: 'x' | 'y' | 'z';
-  blades: THREE.Group | null;
   wheels: THREE.Mesh[];
   shield: THREE.Mesh;
   hullMaterial: THREE.MeshStandardMaterial;
@@ -614,110 +615,66 @@ function addTrackMounts(frame: THREE.Group, s: HullSpec, side: number): void {
   }
 }
 
-/** A hinge along the front of the frame for a wedge to swing on, with the brackets that hold it. */
-function addNoseHinge(frame: THREE.Group, s: HullSpec, width: number, y: number): void {
-  const z = s.length / 2 + 0.02;
-  frame.add(axle(0.045, width, dark, y, z));
-  for (const x of [-0.42, 0.42]) frame.add(box(0.1, 0.1, 0.16, steel, x * width, y + 0.02, z - 0.07));
-}
-
-/** A plate hanging off the nose hinge down to the floor, drawn flat with +y running forward. */
-function hingedPlate(s: HullSpec, y: number, run: number, points: Pt[], mat: THREE.Material, extras: THREE.Mesh[] = []): THREE.Group {
-  const group = new THREE.Group();
-  group.position.set(0, y, s.length / 2 + 0.02);
-  group.rotation.x = Math.atan2(y - 0.035, run);
-  group.add(topOn(points, 0.05, mat, 0.012), ...extras);
-  return group;
-}
-
-/** The front of each class: how it meets the other robot. */
-function addNose(frame: THREE.Group, id: ChassisId, s: HullSpec, baseY: number): void {
-  const y = baseY + 0.03;
+/** The front of each class: a plain bumper or a plow, kept low. The main weapon is the star. */
+function buildNose(id: ChassisId, s: HullSpec, baseY: number): THREE.Group {
+  const nose = new THREE.Group();
   const half = frameHalf(s, s.length / 2);
+  const z = s.length / 2;
+  // Struts stand outside a weapon mount's cheeks, and the bar stands clear in front of them.
+  const stay = half * 0.76;
   switch (id) {
     case 'scout': {
-      // Twin wedgelets, thin as blades, that get under anything.
-      addNoseHinge(frame, s, half * 2, y);
-      const run = 0.5;
-      const len = Math.hypot(run, y - 0.035);
-      for (const side of [-1, 1]) {
-        const x = side * half * 0.62;
-        frame.add(hingedPlate(s, y, run, [[x - 0.17, 0], [x + 0.17, 0], [x + side * 0.05, len], [x - side * 0.05, len]], blade));
-      }
+      // A light tube, like a racing car's nerf bar.
+      const y = baseY + 0.03;
+      const bar = z + 0.24;
+      nose.add(tube([[-half, y, z - 0.02], [-half * 0.96, y, bar - 0.02], [0, y, bar + 0.02], [half * 0.96, y, bar - 0.02], [half, y, z - 0.02]], 0.026, steel, false, 24));
       break;
     }
     case 'ghost': {
-      // One long arrowhead, the same shape as the shell.
-      addNoseHinge(frame, s, half * 2, y);
-      const run = 0.72;
-      const len = Math.hypot(run, y - 0.035);
-      frame.add(hingedPlate(s, y, run, [[-half, 0], [half, 0], [half * 0.32, len * 0.72], [0, len], [-half * 0.32, len * 0.72]], steel, [topOn([[-0.05, 0.02], [0.05, 0.02], [0.02, len * 0.94], [-0.02, len * 0.94]], 0.075, dark, 0)]));
+      // A shallow V of tube, the shape of the shell.
+      const y = baseY + 0.03;
+      nose.add(tube([[-half, y, z - 0.02], [-half * 0.5, y, z + 0.2], [0, y, z + 0.3], [half * 0.5, y, z + 0.2], [half, y, z - 0.02]], 0.03, dark, false, 24));
       break;
     }
     case 'brawler': {
-      // A wide, plain scoop with a hardened edge and ribs, and a bull bar to protect the wheels.
-      const width = half * 2 + 0.06;
-      addNoseHinge(frame, s, width, y);
-      const run = 0.5;
-      const len = Math.hypot(run, y - 0.035);
-      const ribs = [-0.62, 0, 0.62].map((u) => box(0.08, 0.035, len * 0.8, dark, u * width * 0.5, -0.03, len * 0.42));
-      frame.add(hingedPlate(s, y, run, [[-width / 2, 0], [width / 2, 0], [width / 2, len * 0.7], [width / 2 - 0.12, len], [-width / 2 + 0.12, len], [-width / 2, len * 0.7]], steel, [
-        topOn([[-width / 2 + 0.13, len * 0.84], [width / 2 - 0.13, len * 0.84], [width / 2 - 0.13, len], [-width / 2 + 0.13, len]], 0.055, blade, 0.008),
-        ...ribs,
-      ]));
+      // A plain steel bar on two posts, with rubber at the ends.
+      const y = baseY + 0.02;
       for (const side of [-1, 1]) {
-        const outer = side * (s.width / 2 + s.outboard + s.trackWidth * 0.5);
-        frame.add(tube([[side * half, baseY + 0.1, s.length / 2 - 0.3], [outer * 0.98, baseY + 0.12, s.length / 2 + 0.05], [outer * 0.6, baseY + 0.12, s.length / 2 + 0.2], [0, baseY + 0.12, s.length / 2 + 0.24]], 0.03, dark, false, 16));
+        nose.add(box(0.09, 0.09, 0.28, dark, side * stay, y, z + 0.08));
+        nose.add(box(0.1, 0.13, 0.13, dark, side * (half + 0.12), y, z + 0.25));
       }
+      nose.add(box(half * 2 + 0.16, 0.1, 0.1, steel, 0, y, z + 0.25));
       break;
     }
     case 'rhino': {
-      // A dozer blade in a shallow V, with the horn on its point.
-      const outer = s.width / 2 + s.outboard + s.trackWidth * 0.8;
-      for (const side of [-1, 1]) frame.add(rod([side * half * 0.7, baseY + 0.08, s.length / 2 - 0.2], [side * outer * 0.6, 0.2, s.length / 2 + 0.16], 0.05, dark, 10));
-      const top = baseY + 0.16;
+      // A low dozer blade in a shallow V, angled back at the ends to clear the wheels.
+      const reach = s.width / 2 + s.outboard;
+      const top = baseY + 0.02;
       for (const side of [-1, 1]) {
-        // Each half of the V is its own sloped plate.
-        const half2 = new THREE.Group();
-        half2.position.set(side * outer * 0.5, (top + 0.03) / 2, s.length / 2 + 0.33);
-        half2.rotation.y = side * 0.42;
-        half2.rotation.x = -0.45;
-        half2.add(box(outer * 1.12, top, 0.06, steel));
-        half2.add(box(outer * 1.12, 0.06, 0.08, blade, 0, -top / 2, 0.015));
-        frame.add(half2);
+        const plate = new THREE.Group();
+        plate.position.set((side * reach) / 2, top / 2 + 0.02, z + 0.3);
+        plate.rotation.y = side * 0.32;
+        plate.rotation.x = -0.4;
+        plate.add(box(reach * 1.08, top, 0.06, steel));
+        plate.add(box(reach * 1.08, 0.05, 0.08, blade, 0, -top / 2, 0.015));
+        nose.add(plate);
+        nose.add(rod([side * stay, baseY + 0.04, z - 0.1], [side * reach * 0.55, top * 0.6, z + 0.26], 0.04, dark, 10));
       }
-      const horn = cone(0.17, 0.9, blade, 6);
-      horn.rotation.x = Math.PI / 2 - 0.12;
-      horn.position.set(0, baseY + 0.02, s.length / 2 + 0.92);
-      frame.add(horn);
-      frame.add(placed(cylinder(0.2, 0.34, dark), 0, baseY - 0.02, s.length / 2 + 0.52));
-      frame.children[frame.children.length - 1].rotation.x = Math.PI / 2 - 0.12;
       break;
     }
     case 'juggernaut': {
-      // A slab of a bumper on two girders, with teeth along it and a ramp below.
-      const width = s.width + 0.5;
-      for (const side of [-1, 1]) frame.add(box(0.2, 0.2, 0.5, dark, side * width * 0.32, baseY + 0.12, s.length / 2 + 0.1));
-      frame.add(box(width, 0.34, 0.16, steel, 0, baseY + 0.13, s.length / 2 + 0.34));
-      frame.add(box(width + 0.04, 0.06, 0.2, dark, 0, baseY + 0.31, s.length / 2 + 0.34));
-      for (let i = 0; i < 5; i++) {
-        const tooth = cone(0.1, 0.3, blade, 4);
-        tooth.rotation.x = Math.PI / 2;
-        tooth.position.set(((i - 2) / 2) * width * 0.42, baseY + 0.13, s.length / 2 + 0.56);
-        frame.add(tooth);
-      }
-      const run = 0.52;
-      const low = baseY - 0.04;
-      const len = Math.hypot(run, low - 0.035);
-      const ramp = hingedPlate(s, low, run, [[-width / 2, 0], [width / 2, 0], [width / 2 - 0.1, len], [-width / 2 + 0.1, len]], steel);
-      ramp.position.z += 0.34;
-      frame.add(ramp);
+      // A slab of a bumper on two short girders.
+      const y = baseY + 0.02;
+      for (const side of [-1, 1]) nose.add(box(0.18, 0.16, 0.34, dark, side * stay, y, z + 0.1));
+      nose.add(box(half * 2 + 0.16, 0.18, 0.14, steel, 0, y, z + 0.32));
+      nose.add(box(half * 2 + 0.2, 0.04, 0.16, dark, 0, y + 0.1, z + 0.32));
       break;
     }
   }
+  return bake(nose);
 }
 
-function buildHull(root: THREE.Group, id: ChassisId, body: BodyId, paint: THREE.Material, trim: THREE.Material, wheels: THREE.Mesh[], treads: ((travel: number) => void)[], look: WheelsId): { deckY: number; frame: THREE.Group } {
+function buildHull(root: THREE.Group, id: ChassisId, body: BodyId, paint: THREE.Material, trim: THREE.Material, wheels: THREE.Mesh[], treads: ((travel: number) => void)[], look: WheelsId, ends: { nose: boolean; tail: boolean }): { deckY: number; frame: THREE.Group; nose: THREE.Group | null } {
   const s = HULLS[id];
   const baseY = s.wheelRadius * 0.7;
   const frame = new THREE.Group();
@@ -745,12 +702,15 @@ function buildHull(root: THREE.Group, id: ChassisId, body: BodyId, paint: THREE.
   }
 
   root.add(hullBody(s, body, paint, baseY));
-  addNose(frame, id, s, baseY);
+  const nose = ends.nose ? buildNose(id, s, baseY) : null;
+  if (nose) root.add(nose);
 
-  // A bumper across the tail, on two short posts.
-  const tail = frameHalf(s, back);
-  for (const side of [-1, 1]) frame.add(box(0.12, 0.14, 0.24, dark, side * tail * 0.6, baseY + 0.1, back - 0.06));
-  frame.add(box(tail * 1.7, 0.08, 0.08, steel, 0, baseY + 0.13, back - 0.17));
+  // A bumper across the tail, on two short posts, unless something else lives there.
+  if (ends.tail) {
+    const tail = frameHalf(s, back);
+    for (const side of [-1, 1]) frame.add(box(0.12, 0.14, 0.24, dark, side * tail * 0.6, baseY + 0.1, back - 0.06));
+    frame.add(box(tail * 1.7, 0.08, 0.08, steel, 0, baseY + 0.13, back - 0.17));
+  }
 
   // Armour low on the tail and flanks, which is what falls off as the robot takes damage. It lies along the taper.
   for (const side of [-1, 1]) {
@@ -779,7 +739,7 @@ function buildHull(root: THREE.Group, id: ChassisId, body: BodyId, paint: THREE.
 
   const baked = bake(frame);
   root.add(baked);
-  return { deckY: baseY + s.height, frame: baked };
+  return { deckY: baseY + s.height, frame: baked, nose };
 }
 
 /** Where the tower sits, so it rests on the hull whatever the shape below it. */
@@ -971,7 +931,11 @@ function facetedTower(pivot: THREE.Group, bottom: number, top: number, height: n
 }
 
 /** Each class's tower: a sensor pod, a stealth fairing, a hex turret, a cast dome and a fortress. They all stop short of where a gun bolts on. */
-function buildTower(pivot: THREE.Group, head: THREE.Material, chassis: ChassisId): void {
+function buildTower(pivot: THREE.Group, head: THREE.Material, chassis: ChassisId, gun: boolean): void {
+  // A gun bolts on where the hatch would be.
+  const addHatchIfFree: typeof addHatch = (...args) => {
+    if (!gun) addHatch(...args);
+  };
   switch (chassis) {
     case 'scout': {
       // A slim fairing like a racing car's, with a dark canopy over its front half and one small fin.
@@ -1015,7 +979,7 @@ function buildTower(pivot: THREE.Group, head: THREE.Material, chassis: ChassisId
       // A hex turret with a bolted hatch, a vision block and grab rails.
       pivot.add(placed(cylinder(0.53, 0.05, dark), 0, 0.015, 0));
       facetedTower(pivot, 0.5, 0.38, 0.25, 6, head, 0.145);
-      addHatch(pivot, 0.2, 0.28);
+      addHatchIfFree(pivot, 0.2, 0.28);
       addBolts(pivot, 0.33, 0.275, 6);
       pivot.add(box(0.26, 0.09, 0.08, dark, 0, 0.17, 0.41));
       pivot.add(box(0.2, 0.024, 0.02, glowBlue, 0, 0.18, 0.455));
@@ -1041,7 +1005,7 @@ function buildTower(pivot: THREE.Group, head: THREE.Material, chassis: ChassisId
         const curve: Vec[] = [[x * 0.5, 0.35, -0.16], [x * 0.8, 0.28, -0.32], [x, 0.14, -0.46]];
         pivot.add(tube(curve, 0.02, dark, false, 8));
       }
-      addHatch(pivot, 0.17, 0.355, -0.04);
+      addHatchIfFree(pivot, 0.17, 0.355, -0.04);
       addMast(pivot, -0.3, -0.2, 0.28, 0.36);
       break;
     }
@@ -1050,7 +1014,7 @@ function buildTower(pivot: THREE.Group, head: THREE.Material, chassis: ChassisId
       pivot.add(placed(cylinder(0.62, 0.08, dark), 0, 0.025, 0));
       addBolts(pivot, 0.575, 0.07, 12);
       facetedTower(pivot, 0.52, 0.41, 0.26, 8, head, 0.17);
-      addHatch(pivot, 0.2, 0.31);
+      addHatchIfFree(pivot, 0.2, 0.31);
       addBolts(pivot, 0.35, 0.305, 8);
       for (const side of [-1, 1]) {
         const cheek = box(0.08, 0.2, 0.5, steel, side * 0.5, 0.16, 0);
@@ -1166,6 +1130,33 @@ const WEAPON_DROP: Partial<Record<MeleeId, number>> = { vertdisc: 0.76, vertbar:
 const WEAPON_ARMS: Partial<Record<MeleeId, number>> = { rollingpin: 0.76, vertdisc: 0.2, vertbar: 0.22 };
 /** How far apart the cheeks of a weapon's mount stand. */
 const MOUNT_HALF: Partial<Record<MeleeId, number>> = { hammer: 0.21, axe: 0.19, hammersaw: 0.2, chainsaw: 0.19, dagger: 0.17, magnet: 0.14, flipper: 0.3, claw: 0.3, crusher: 0.25, tesla: 0.22, ram: 0.3 };
+
+/** Secondary weapons that go on the end of the robot rather than the tower. */
+const GEAR_AT_THE_END = new Set<DefenseId>(['mines', 'oil', 'glue', 'spikes', 'steelram', 'plow', 'emp', 'minibot', 'remote', 'kamikaze']);
+
+/** The lowest any part of a weapon goes, below its pivot, this close in to the nose. A spinner is checked all the way round. */
+function lowestOverNose(pivot: THREE.Group, reach: number, spinner: THREE.Object3D | null, axis: 'x' | 'y' | 'z'): number {
+  const inverse = new THREE.Matrix4();
+  const point = new THREE.Vector3();
+  let lowest = 0;
+  const turns = spinner ? 8 : 1;
+  for (let turn = 0; turn < turns; turn++) {
+    if (spinner) spinner.rotation[axis] = (turn / turns) * Math.PI * 2;
+    pivot.updateWorldMatrix(true, true);
+    inverse.copy(pivot.matrixWorld).invert();
+    pivot.traverse((node) => {
+      if (!(node instanceof THREE.Mesh) || node instanceof THREE.InstancedMesh || !node.visible) return;
+      const position = node.geometry.getAttribute('position');
+      const toPivot = new THREE.Matrix4().multiplyMatrices(inverse, node.matrixWorld);
+      for (let i = 0; i < position.count; i++) {
+        point.fromBufferAttribute(position, i).applyMatrix4(toPivot);
+        if (point.z < reach && point.y < lowest) lowest = point.y;
+      }
+    });
+  }
+  if (spinner) spinner.rotation[axis] = 0;
+  return lowest;
+}
 
 /** What a main weapon stands on: two cheek plates bolted to the frame, a pin through them and gussets behind. Fixed, while the weapon moves. */
 function buildWeaponMount(s: HullSpec, id: MeleeId, pivotY: number, facing: number): THREE.Group {
@@ -1668,16 +1659,16 @@ const TOWER_SPOT = { x: -0.38, y: 0.2, z: 0.05 };
  * Whatever a defense shows on the robot. Anything big goes on a shelf behind the hull, with `+z` here
  * facing away from the main weapon, because only the tower stands above the deck.
  */
-function buildDefenseGear(root: THREE.Group, tower: THREE.Group, id: DefenseId, deckY: number, spec: HullSpec): THREE.Group | null {
+function buildDefenseGear(root: THREE.Group, tower: THREE.Group, id: DefenseId, deckY: number, spec: HullSpec): void {
   const front = spec.length / 2;
   const y = deckY - spec.height * 0.45;
   const shelfWidth = spec.width * 0.62;
   const shelf = () => {
-    root.add(box(shelfWidth, 0.05, 0.5, dark, 0, y - 0.15, front + 0.22));
-    for (const side of [-1, 1]) root.add(rod([side * shelfWidth * 0.4, y + 0.02, front + 0.01], [side * shelfWidth * 0.4, y - 0.14, front + 0.12], 0.03, steel, 8));
+    root.add(box(shelfWidth, 0.05, 0.5, dark, 0, y - 0.15, front + 0.3));
+    for (const side of [-1, 1]) root.add(rod([side * shelfWidth * 0.4, y + 0.02, front + 0.01], [side * shelfWidth * 0.4, y - 0.14, front + 0.14], 0.03, steel, 8));
   };
   const onShelf = y - 0.125;
-  const middle = front + 0.24;
+  const middle = front + 0.32;
   const { x: tx, y: ty, z: tz } = TOWER_SPOT;
   switch (id) {
     case 'shield': {
@@ -1699,37 +1690,38 @@ function buildDefenseGear(root: THREE.Group, tower: THREE.Group, id: DefenseId, 
       break;
     }
     case 'oil':
-      spreader(root, y, front, shelfWidth, oilBlack, oilTip);
+      spreader(root, y, front + 0.08, shelfWidth, oilBlack, oilTip);
       break;
     case 'glue':
-      spreader(root, y, front, shelfWidth, glueTank, glueTip);
+      spreader(root, y, front + 0.08, shelfWidth, glueTank, glueTip);
       break;
-    case 'nails': {
-      // A funnel of nails with the points sticking out of the top, and a spout to pour them through.
+    case 'spikes': {
+      // The strip itself, wound onto a drum ready to pay out behind, with its spikes showing.
       shelf();
-      const funnel = cone(0.24, 0.3, paintRed);
-      funnel.rotation.x = Math.PI;
-      root.add(placed(funnel, 0, onShelf + 0.17, middle));
-      root.add(ring(0.24, 0.02, steel, 0, onShelf + 0.32, middle));
-      for (const side of [-1, 1]) root.add(rod([side * 0.2, onShelf, middle], [side * 0.2, onShelf + 0.32, middle], 0.018, steel, 8));
-      for (let i = 0; i < 7; i++) {
-        const a = (i / 7) * Math.PI * 2;
-        const r = i === 0 ? 0 : 0.14;
-        const nail = cone(0.022, 0.2, blade, 4);
-        nail.rotation.set(Math.sin(a) * 0.25, 0, -Math.cos(a) * 0.25);
-        root.add(placed(nail, Math.cos(a) * r, onShelf + 0.43, middle + Math.sin(a) * r));
+      const drumY = onShelf + 0.17;
+      root.add(crossBar(0.13, shelfWidth * 0.78, dark, drumY, middle));
+      for (const side of [-1, 1]) root.add(rod([side * shelfWidth * 0.42, onShelf, middle], [side * shelfWidth * 0.42, drumY, middle], 0.024, steel, 8));
+      root.add(crossBar(0.03, shelfWidth * 0.88, steel, drumY, middle));
+      for (let row = 0; row < 5; row++) {
+        const x = ((row - 2) / 2) * shelfWidth * 0.32;
+        for (let i = 0; i < 6; i++) {
+          const a = ((i + row * 0.5) / 6) * Math.PI * 2;
+          const spike = cone(0.026, 0.11, blade, 4);
+          spike.rotation.x = a;
+          spike.position.set(x, drumY + Math.cos(a) * 0.17, middle + Math.sin(a) * 0.17);
+          root.add(spike);
+        }
       }
-      root.add(rod([0, onShelf + 0.04, middle + 0.24], [0, onShelf - 0.14, middle + 0.4], 0.045, paintRed, 10));
-      root.add(rod([0, onShelf + 0.03, middle], [0, onShelf + 0.03, middle + 0.24], 0.04, paintRed, 10));
       break;
     }
     case 'steelram': {
       // A chamfered slab of armour with a raised rib across it.
       const w = (spec.width + 0.4) / 2;
       const ram = frontOn([[-w, -0.24], [-w, 0.22], [-w + 0.2, 0.38], [w - 0.2, 0.38], [w, 0.22], [w, -0.24], [w - 0.2, -0.38], [-w + 0.2, -0.38]], 0.16, steel, 0.03);
-      ram.position.set(0, deckY - spec.height * 0.45, front + 0.12);
+      ram.position.set(0, deckY - spec.height * 0.45, front + 0.16);
       root.add(ram);
-      root.add(box(w * 1.7, 0.1, 0.07, dark, 0, deckY - spec.height * 0.45, front + 0.22));
+      root.add(box(w * 1.7, 0.1, 0.07, dark, 0, deckY - spec.height * 0.45, front + 0.26));
+      for (const side of [-1, 1]) root.add(box(0.12, 0.12, 0.2, dark, side * spec.width * 0.3, deckY - spec.height * 0.45, front));
       break;
     }
     case 'plow': {
@@ -1741,42 +1733,9 @@ function buildDefenseGear(root: THREE.Group, tower: THREE.Group, id: DefenseId, 
       curve.lineTo(0.14, 0.62);
       curve.quadraticCurveTo(0.08, 0.24, 0.34, 0.02);
       const plow = sideOn(curve, spec.width + 0.55, blade, 0.012, 8);
-      plow.position.z = front;
+      plow.position.z = front + 0.08;
       root.add(plow);
       for (const side of [-1, 1]) root.add(rod([side * spec.width * 0.34, spec.wheelRadius, front - 0.1], [side * spec.width * 0.34, 0.4, front + 0.24], 0.05, dark, 10));
-      break;
-    }
-    case 'blades': {
-      // Out past the wheels, each on its own arm from the frame and spinning on a stub axle.
-      const group = new THREE.Group();
-      const sawY = deckY - spec.height * 0.5;
-      group.position.y = sawY;
-      for (const side of [-1, 1]) {
-        const x = side * (spec.width / 2 + spec.outboard + spec.trackWidth + 0.1);
-        const saw = sawOnHub('x', 0.5, 0.04, 10, 0.1, 3);
-        saw.position.x = x;
-        group.add(saw);
-        root.add(rod([side * frameHalf(spec, 0), spec.wheelRadius * 0.7 + 0.15, 0], [x, sawY, 0], 0.03, dark, 8));
-        root.add(rod([side * frameHalf(spec, 0), spec.wheelRadius * 0.7 + 0.15, 0.18], [x, sawY, 0], 0.02, steel, 8));
-        root.add(rod([side * frameHalf(spec, 0), spec.wheelRadius * 0.7 + 0.15, -0.18], [x, sawY, 0], 0.02, steel, 8));
-      }
-      root.add(group);
-      return group;
-    }
-    case 'cutter': {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(Math.hypot(spec.width / 2 + spec.trackWidth, spec.length / 2) + 0.1, 0.06, 8, 32), blade);
-      ring.rotation.x = Math.PI / 2;
-      ring.position.y = deckY - spec.height * 0.5;
-      ring.castShadow = true;
-      root.add(ring);
-      // Four struts out from the frame hold it up.
-      const outer = ring.geometry.parameters.radius as number;
-      for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-        const z = sz * spec.length * 0.32;
-        const x = sx * frameHalf(spec, z);
-        const out = Math.hypot(x, z) || 1;
-        root.add(rod([x, spec.wheelRadius * 0.7 + 0.12, z], [(x / out) * outer, ring.position.y, (z / out) * outer], 0.03, dark, 8));
-      }
       break;
     }
     case 'teleport': {
@@ -1796,10 +1755,10 @@ function buildDefenseGear(root: THREE.Group, tower: THREE.Group, id: DefenseId, 
     case 'cloak': {
       // Dark vanes either side of the tower, each with a violet seam.
       for (const side of [-1, 1]) {
-        const vane = box(0.03, 0.26, 0.42, dark, side * 0.47, 0.18, 0);
+        const vane = box(0.03, 0.26, 0.42, dark, side * (spec.towerBase + 0.08), 0.18, 0);
         vane.rotation.z = side * -0.32;
         tower.add(vane);
-        const seam = box(0.012, 0.035, 0.36, glowViolet, side * 0.495, 0.18, 0);
+        const seam = box(0.012, 0.035, 0.36, glowViolet, side * (spec.towerBase + 0.1), 0.18, 0);
         seam.rotation.z = side * -0.32;
         tower.add(seam);
       }
@@ -1857,7 +1816,6 @@ function buildDefenseGear(root: THREE.Group, tower: THREE.Group, id: DefenseId, 
     default:
       break;
   }
-  return null;
 }
 
 export function buildRobot(build: RobotBuild): RobotModel {
@@ -1875,7 +1833,9 @@ export function buildRobot(build: RobotBuild): RobotModel {
   const trim = new THREE.MeshStandardMaterial({ color: paint.secondary, metalness: 0.5, roughness: 0.5 });
   const wheels: THREE.Mesh[] = [];
   const treads: ((travel: number) => void)[] = [];
-  const { deckY, frame } = buildHull(root, build.chassis, paint.body, hullMaterial, trim, wheels, treads, build.wheels ?? 'large4');
+  // A bumper is left off whichever end has the secondary weapon or the main weapon on it.
+  const gearAtEnd = GEAR_AT_THE_END.has(build.defense);
+  const { deckY, frame, nose } = buildHull(root, build.chassis, paint.body, hullMaterial, trim, wheels, treads, build.wheels ?? 'large4', { nose: !(build.rearMelee && gearAtEnd), tail: !build.rearMelee && !gearAtEnd });
   const spec = HULLS[build.chassis];
 
   const towerPivot = new THREE.Group();
@@ -1884,26 +1844,32 @@ export function buildRobot(build: RobotBuild): RobotModel {
   const towerZ = -spec.length * 0.14;
   towerPivot.position.set(0, towerSeat(spec, paint.body, towerZ, 0.35 * towerScale), towerZ);
   towerPivot.scale.setScalar(towerScale);
-  buildTower(towerPivot, headMaterial, build.chassis);
+  buildTower(towerPivot, headMaterial, build.chassis, !!MELEE[build.melee].onTower);
   root.add(towerPivot);
 
   const meleePivot = new THREE.Group();
   const facing = build.rearMelee ? -1 : 1;
   const mount = MELEE[build.melee].onTower ? TOWER_MOUNTS[build.melee] : undefined;
-  const pivotY = Math.max(deckY - spec.height * 0.45, (WEAPON_DROP[build.melee] ?? 0) + 0.06);
+  let pivotY = Math.max(deckY - spec.height * 0.45, (WEAPON_DROP[build.melee] ?? 0) + 0.06);
   let weaponMount: THREE.Group | null = null;
   if (mount) {
     meleePivot.position.set(0, mount.y, facing * mount.z);
     // A post up from the tower's ring, however low that tower's roof is.
     towerPivot.add(rod([0, 0.04, facing * mount.z], [0, mount.y - 0.06, facing * mount.z], 0.08, dark, 12));
     towerPivot.add(placed(cylinder(0.15, 0.04, steel), 0, mount.y - 0.1, facing * mount.z));
-  } else {
+  }
+  if (build.rearMelee) meleePivot.rotation.y = Math.PI;
+  const { spinner, axis, chain = null, animate = null } = buildMelee(meleePivot, build.melee, spec, classBonus(build.chassis, build.melee).reach);
+  if (!mount) {
+    // Held high enough that nothing it has hanging down sits in the bumper at this end.
+    if (nose && !build.rearMelee) {
+      const bumper = new THREE.Box3().setFromObject(nose);
+      pivotY = Math.max(pivotY, bumper.max.y + 0.04 - lowestOverNose(meleePivot, bumper.max.z - spec.length / 2 + 0.02, spinner, axis));
+    }
     meleePivot.position.set(0, pivotY, (facing * spec.length) / 2);
     weaponMount = buildWeaponMount(spec, build.melee, pivotY, facing);
     root.add(weaponMount);
   }
-  if (build.rearMelee) meleePivot.rotation.y = Math.PI;
-  const { spinner, axis, chain = null, animate = null } = buildMelee(meleePivot, build.melee, spec, classBonus(build.chassis, build.melee).reach);
   (mount ? towerPivot : root).add(meleePivot);
 
   const gear = new THREE.Group();
@@ -1912,7 +1878,7 @@ export function buildRobot(build: RobotBuild): RobotModel {
     gear.rotation.y = Math.PI;
     towerGear.rotation.y = Math.PI;
   }
-  const blades = buildDefenseGear(gear, towerGear, build.defense, deckY, spec);
+  buildDefenseGear(gear, towerGear, build.defense, deckY, spec);
   root.add(gear);
   towerPivot.add(towerGear);
 
@@ -1941,6 +1907,7 @@ export function buildRobot(build: RobotBuild): RobotModel {
     root,
     tower: towerPivot,
     frame,
+    nose,
     weaponMount,
     chain,
     tread: treads.length ? (travel) => treads.forEach((run) => run(travel)) : null,
@@ -1950,7 +1917,6 @@ export function buildRobot(build: RobotBuild): RobotModel {
     animate,
     spinner,
     spinAxis: axis,
-    blades,
     wheels,
     shield,
     hullMaterial,

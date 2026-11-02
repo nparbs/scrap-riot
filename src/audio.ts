@@ -296,6 +296,13 @@ export class Sfx {
     this.tone(0.2 * volume, 1.1, 1100, 110, 'sine');
   }
 
+  /** A bang, and the air rushing out after it. */
+  tirePop(volume: number): void {
+    this.burst(0.5 * volume, 0.05, 1800, 'highpass');
+    this.thud(0.3 * volume, 0.08, 120);
+    this.burst(0.14 * volume, 0.6, 5000, 'highpass', 2000, 0.05);
+  }
+
   /** The gun clicking on an empty magazine or a cooldown. */
   dryFire(): void {
     this.tone(0.1, 0.03, 1200, 700, 'square');

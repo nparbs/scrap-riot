@@ -41,7 +41,7 @@ export function touchControls(state: TouchState, onPause: () => void, onPowerup:
     <div class="touch-stick" aria-label="Drive"><div class="touch-knob"></div></div>
     <div class="touch-buttons">
       <button class="touch-btn touch-melee" tabindex="-1" aria-label="Main weapon"><i class="touch-cd"></i><span>Weapon</span></button>
-      <button class="touch-btn touch-defense" tabindex="-1" aria-label="Defense"><i class="touch-cd"></i><span>Defense</span></button>
+      <button class="touch-btn touch-defense" tabindex="-1" aria-label="Secondary weapon"><i class="touch-cd"></i><span>Secondary</span></button>
       <button class="touch-btn touch-boost" tabindex="-1" aria-label="Speed boost"><i class="touch-cd"></i><span>Boost</span></button>
       <button class="touch-btn touch-rear" tabindex="-1" aria-label="Look behind"><span>Rear</span></button>
       <div class="touch-powers">

@@ -6,7 +6,7 @@ export type MeleeId =
   | 'vertdisc' | 'vertbar' | 'horizbar' | 'undercutter' | 'drum' | 'hammersaw' | 'flipper' | 'crusher' | 'forks'
   | 'flamethrower' | 'tesla' | 'spear';
 export type DefenseId =
-  | 'shield' | 'mines' | 'oil' | 'glue' | 'nails' | 'steelram' | 'plow' | 'blades' | 'cutter'
+  | 'shield' | 'mines' | 'oil' | 'glue' | 'spikes' | 'steelram' | 'plow'
   | 'teleport' | 'flash' | 'cloak' | 'emp' | 'minibot' | 'remote' | 'kamikaze';
 export type WheelsId = 'small4' | 'large4' | 'six' | 'tracks';
 export type EngineId = 'small' | 'medium' | 'large' | 'turbo';
@@ -390,16 +390,20 @@ const defense = (d: Partial<DefenseDef> & Pick<DefenseDef, 'name' | 'blurb' | 'p
   cooldown: 0, duration: 0, damage: 0, radius: 0, ...d,
 });
 
+/** Seconds a robot with popped tires can't drive, and how much longer before another strip can do it again. */
+export const TIRE_POP_TIME = 3;
+export const TIRE_POP_GUARD = 4;
+/** How deep a spike strip is, from its middle to its edge. */
+export const SPIKE_STRIP_DEPTH = 0.35;
+
 export const DEFENSES: Record<DefenseId, DefenseDef> = {
   shield: defense({ name: 'Force Field', blurb: 'Blocks 75% of damage for a moment.', price: 0, points: 6, weight: 4, battery: 0.1, cooldown: 7, duration: 2.5 }),
   mines: defense({ name: 'Land Mines', blurb: 'Drops a proximity mine. Three at a time.', price: 300, points: 8, weight: 8, cooldown: 5, duration: 45, damage: 35, radius: 3.5, mounted: true }),
   oil: defense({ name: 'Oil Spreader', blurb: 'Leaves a slippery patch for whoever is chasing you.', price: 350, points: 7, weight: 7, cooldown: 9, duration: 8, radius: 4.5, mounted: true }),
   glue: defense({ name: 'Glue Spreader', blurb: 'Leaves a sticky patch that slows robots to a crawl.', price: 350, points: 8, weight: 7, cooldown: 8, duration: 8, radius: 4, mounted: true }),
-  nails: defense({ name: 'Nail Spreader', blurb: 'Scatters nails that hurt anything rolling over them.', price: 300, points: 8, weight: 6, cooldown: 8, duration: 9, damage: 8, radius: 3.8, mounted: true }),
+  spikes: defense({ name: 'Spike Strip', blurb: 'Lays a strip of steel spikes across the floor behind you. The first robot to roll over it has its tires popped and stops dead for a moment, though it can still fight.', price: 300, points: 11, weight: 6, cooldown: 12, duration: 12, damage: 8, radius: 3, mounted: true }),
   steelram: defense({ name: 'Steel Ram', blurb: 'A heavy plate. Halves damage from the side it covers, always on.', price: 550, points: 7, weight: 14, damage: 0.5, passive: true, mounted: true }),
-  plow: defense({ name: 'Plow', blurb: 'Clears mines and nails, and takes a fifth off hits from the side it covers. Always on.', price: 250, points: 4, weight: 8, damage: 0.8, passive: true, mounted: true }),
-  blades: defense({ name: 'Side Blades', blurb: 'Spin up blades that cut anything alongside you.', price: 500, points: 9, weight: 10, battery: 0.12, cooldown: 10, duration: 2.5, damage: 13, radius: 1.6 }),
-  cutter: defense({ name: 'Cutter', blurb: 'One sweeping cut all around you that throws robots back.', price: 500, points: 10, weight: 10, battery: 0.12, cooldown: 8, damage: 17, radius: 4.2 }),
+  plow: defense({ name: 'Plow', blurb: 'Clears mines and spike strips, and takes a fifth off hits from the side it covers. Always on.', price: 250, points: 4, weight: 8, damage: 0.8, passive: true, mounted: true }),
   teleport: defense({ name: 'Teleport', blurb: 'Jump a long way forward in an instant.', price: 800, points: 6, weight: 6, battery: 0.2, cooldown: 6, radius: 14 }),
   flash: defense({ name: 'Flash Bomb', blurb: 'Dazzles and slows pilots close by.', price: 450, points: 5, weight: 4, battery: 0.15, cooldown: 11, duration: 1.6, radius: 10 }),
   cloak: defense({ name: 'Cloaking Device', blurb: 'Vanish for a few seconds. Landing a hit breaks it.', price: 800, points: 12, weight: 6, battery: 0.2, cooldown: 14, duration: 5 }),

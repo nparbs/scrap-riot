@@ -21,7 +21,7 @@ npm run dev
 | --- | --- |
 | W A S D | Drive |
 | Space or left click | Main weapon |
-| R or right click | Defense |
+| R or right click | Secondary weapon |
 | Shift (hold) | Speed boost, using battery |
 | 1 to 6 | Rage, Mega Shield, Cloaking, X-Ray, Repair, Battery Pack |
 | E (hold) | Look behind |
@@ -45,7 +45,7 @@ The server is authoritative: it runs the same simulation as the game, and client
 - **A soundtrack and sound effects** synthesized live in the browser, with different sounds for each weapon family and no audio files. Music can be turned off in Settings.
 - **A paintshop** in the style of the original: paint directly on your unfolded robot with a pencil, spray can, shapes, fill and a 120-colour palette, and see it live on the 3D model. Your opponent sees it too.
 - **A workshop** with 5 chassis, each a class with its own look, tower and weapons it's best with, plus wheels, engines, power sources and an armor dial. Every robot gets 100 points to spend, and every part weighs something, so big weapons need a big chassis and heavy robots are slower but hit harder ([how balance works](docs/balance.md)).
-- **37 weapons, and no guns:** 21 main weapons and 16 defenses, drawn from every version of the original and from real combat robots such as spinners, flippers, crushers and flamethrowers ([research notes](docs/original-research.md))
+- **35 weapons, and no guns:** 21 main weapons and 14 secondary weapons, drawn from every version of the original and from real combat robots such as spinners, flippers, crushers and flamethrowers ([research notes](docs/original-research.md))
 - **6 powerups, take 3 into a match:** Rage, Mega Shield, Cloaking, X-Ray, Repair Kit, Battery Pack
 - **3 Career upgrade tracks** of 5 levels each: hull, engine, weapons. They only count in Career fights.
 - **7 maps:** The Skyscraper for duels, plus for Offline vs Bots a pit with a timed trapdoor and saws in the walls, a cross-shaped oil rig with a wrecking ball, a furnace with erupting vents around a molten pool, a canyon with chasms, bridges and jump ramps, a foundry with belts and drop hammers, and a round frozen lake with ice that gives way
