@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { ComicPass } from '../render/comicPass';
 import { buildRobot, disposeRobot, type RobotModel } from '../render/robots';
 import { CHASSIS, DUEL_INTRO, MELEE } from '../sim/data';
 import type { Bot } from '../sim/match';
@@ -61,6 +62,7 @@ export class DuelIntro {
   done = false;
   private time: number;
   private renderer: THREE.WebGLRenderer | null = null;
+  private comicPass: ComicPass | null = null;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 100);
   private readonly models: { model: RobotModel; side: 1 | -1; turn: number }[] = [];
@@ -72,7 +74,7 @@ export class DuelIntro {
   private stageX = STAGE_X;
   private stageY = 0;
 
-  constructor(left: Bot, right: Bot, arenaName: string, startAt: number, pixelRatio: number, private readonly onBeat: (beat: DuelBeat) => void) {
+  constructor(left: Bot, right: Bot, arenaName: string, startAt: number, pixelRatio: number, comic: boolean, private readonly onBeat: (beat: DuelBeat) => void) {
     this.time = startAt;
     this.whooshed = startAt > ENTER_START;
     this.slammed = startAt > SLAM;
@@ -91,6 +93,7 @@ export class DuelIntro {
       <div class="di-skip">${isTouchDevice() ? 'Tap' : 'Click'} to skip</div>`;
     this.root.addEventListener('pointerdown', () => (this.done = true));
     this.buildStage(left, right, pixelRatio);
+    if (comic && this.renderer) this.comicPass = new ComicPass(this.renderer);
     this.resize();
   }
 
@@ -201,12 +204,14 @@ export class DuelIntro {
     const shake = t >= SLAM && t < SLAM + SHAKE_TIME ? (1 - (t - SLAM) / SHAKE_TIME) * SHAKE_SIZE : 0;
     this.camera.position.x = (Math.random() - 0.5) * shake;
     this.camera.position.y = CAMERA_Y + (Math.random() - 0.5) * shake;
-    this.renderer.render(this.scene, this.camera);
+    if (this.comicPass) this.comicPass.render(this.scene, this.camera, true);
+    else this.renderer.render(this.scene, this.camera);
   }
 
   dispose(): void {
     for (const { model } of this.models) disposeRobot(model);
     this.scene.environment?.dispose();
+    this.comicPass?.dispose();
     this.renderer?.dispose();
     this.renderer?.forceContextLoss();
     this.root.remove();

@@ -86,6 +86,8 @@ export interface Settings {
   /** What Auto has settled on for this device. */
   autoLevel: Level;
   showFps: boolean;
+  /** Ink outlines and flat shading, drawn over the normal picture. */
+  comic: boolean;
   tutorialDone: boolean;
   /** Each from 0 to 100. */
   volume: { master: number; music: number; effects: number };
@@ -99,7 +101,7 @@ export interface Settings {
 }
 
 export function defaultSettings(): Settings {
-  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, tutorialDone: false, volume: { ...DEFAULT_VOLUME }, muted: false, musicMuted: false, pilotName: '', fullscreen: true };
+  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, comic: false, tutorialDone: false, volume: { ...DEFAULT_VOLUME }, muted: false, musicMuted: false, pilotName: '', fullscreen: true };
 }
 
 /** A slider dragged all the way down counts as off too, so the music button always tells the truth. */
@@ -139,6 +141,7 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null): Settings
     if (saved.quality === 'auto' || (saved.quality && saved.quality in QUALITY)) settings.quality = saved.quality;
     if (saved.autoLevel && saved.autoLevel in QUALITY) settings.autoLevel = saved.autoLevel;
     settings.showFps = saved.showFps === true;
+    settings.comic = saved.comic === true;
     for (const kind of VOLUME_KINDS) {
       const value = saved.volume?.[kind];
       if (typeof value === 'number' && Number.isFinite(value)) settings.volume[kind] = Math.max(0, Math.min(100, value));

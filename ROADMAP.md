@@ -114,6 +114,7 @@ The current tuning comes from AI-versus-AI data and has not had a human playtest
 - [ ] Human playtest pass on handling, camera and weapon feel
 - [ ] Balance against human play, including the shop's money curve
 - [x] Quality settings and a frame rate counter
+- [x] A comic look setting: ink outlines and flat shading
 - [ ] Measure frame rate on real hardware
 - [x] First-match tutorial prompts
 - [x] Hit feedback: damage direction, wreck debris

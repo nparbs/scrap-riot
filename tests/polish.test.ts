@@ -201,6 +201,16 @@ describe('full screen setting', () => {
   });
 });
 
+describe('comic look setting', () => {
+  it('is off unless it was turned on', () => {
+    const stored = (value: object) => ({ getItem: () => JSON.stringify(value) });
+    expect(defaultSettings().comic).toBe(false);
+    expect(loadSettings(stored({})).comic).toBe(false);
+    expect(loadSettings(stored({ comic: 'yes' })).comic).toBe(false);
+    expect(loadSettings(stored({ comic: true })).comic).toBe(true);
+  });
+});
+
 describe('tutorial', () => {
   const idle: TutorialInput = { throttle: 0, steer: 0, melee: false, defense: false, boost: false };
 
