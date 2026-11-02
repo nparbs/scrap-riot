@@ -9,6 +9,7 @@ import { Keyboard } from './input';
 import { Api, ApiError } from './net/api';
 import { NetClient, type NetFailure } from './net/client';
 import { OFFLINE_PAYOUT_MAX, sanitizeName, TAUNT_IDS, waitingQueue, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineQueue, type OnlineStatus, type Profile } from './net/protocol';
+import { ComicPass } from './render/comicPass';
 import { GarageView } from './render/garageView';
 import type { ArenaId } from './sim/arena';
 import { installLogoIcon } from './render/logo';
@@ -84,6 +85,7 @@ class Game {
   // Antialiasing can't change once the page has started, so it follows the level at load.
   // Without the preference, laptops with two graphics chips can pick the slower one.
   private readonly renderer = new THREE.WebGLRenderer({ antialias: QUALITY[activeLevel(this.settings)].reflections, powerPreference: 'high-performance' });
+  private comic: ComicPass | null = null;
   private autoQuality = new AutoQuality();
   private save: Save = loadSave(this.storage);
   /** The server's copy of this player, when connected. It then replaces the local save. */
@@ -330,6 +332,14 @@ class Game {
           onFps: () => {
             this.settings.showFps = !this.settings.showFps;
             this.fpsEl.hidden = !this.settings.showFps;
+            save();
+            render();
+          },
+          onComic: () => {
+            this.settings.comic = !this.settings.comic;
+            // Its picture takes up graphics memory, so it only stays while it's in use.
+            this.comic?.dispose();
+            this.comic = null;
             save();
             render();
           },
@@ -911,7 +921,7 @@ class Game {
     const rival = match.bots.find((bot) => bot !== player);
     if (!rival) return;
     const ratio = Math.min(window.devicePixelRatio, QUALITY[activeLevel(this.settings)].pixelRatio);
-    this.duelIntro = new DuelIntro(player, rival, match.arena.name, elapsed, ratio, (beat) => this.sfx.versus(beat));
+    this.duelIntro = new DuelIntro(player, rival, match.arena.name, elapsed, ratio, this.settings.comic, (beat) => this.sfx.versus(beat));
     document.body.appendChild(this.duelIntro.root);
   }
 
@@ -1184,14 +1194,23 @@ class Game {
     }
 
     if (this.mode === 'paused' || this.mode === 'results') {
-      this.renderer.render(this.view.arena.scene, this.view.camera);
+      this.draw(this.view.arena.scene, this.view.camera);
       return;
     }
     if (!this.match) return;
     this.view.update(dt, this.accumulator / STEP);
     if (this.mode === 'menu') this.view.orbitCamera(this.clock);
     if (this.mode === 'lobby') this.view.overviewCamera(this.clock);
-    this.renderer.render(this.view.arena.scene, this.view.camera);
+    this.draw(this.view.arena.scene, this.view.camera);
+  }
+
+  private draw(scene: THREE.Scene, camera: THREE.PerspectiveCamera): void {
+    if (!this.settings.comic) {
+      this.renderer.render(scene, camera);
+      return;
+    }
+    this.comic ??= new ComicPass(this.renderer);
+    this.comic.render(scene, camera, QUALITY[activeLevel(this.settings)].reflections);
   }
 
   /** Draws the robot only in the workshop's preview window. The page's panels cover everything else. */
@@ -1206,7 +1225,7 @@ class Game {
     r.setViewport(box.left, bottom, box.width, box.height);
     r.setScissor(box.left, bottom, box.width, box.height);
     r.setScissorTest(true);
-    r.render(this.garage.scene, this.garage.camera);
+    this.draw(this.garage.scene, this.garage.camera);
     r.setScissorTest(false);
     r.setViewport(0, 0, window.innerWidth, window.innerHeight);
   }

@@ -885,6 +885,7 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
 export interface SettingsActions {
   onQuality: (quality: Quality) => void;
   onFps: () => void;
+  onComic: () => void;
   onFullscreen: () => void;
   onVolume: (kind: VolumeKind, value: number) => void;
   onVolumeSet: (kind: VolumeKind) => void;
@@ -934,6 +935,9 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
       <h3>Graphics</h3>
       <div class="settings-row"><span>Quality</span><div class="segmented">${qualities}</div></div>
       ${autoHint}
+      <div class="settings-row"><span>Comic look</span>
+        <button class="mini-btn${settings.comic ? ' mini-on' : ''}" data-comic>${settings.comic ? 'On' : 'Off'}</button></div>
+      <p class="settings-hint">Black ink outlines and flat shading, like a comic book. Takes a little more from your graphics card.</p>
       <div class="settings-row"><span>Show frame rate</span>
         <button class="mini-btn${settings.showFps ? ' mini-on' : ''}" data-fps>${settings.showFps ? 'On' : 'Off'}</button></div>
       <h3>Audio</h3>
@@ -957,6 +961,7 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
     if (quality) actions.onQuality(quality as Quality);
     else if (bind) actions.onBind(bind as Action);
     else if ('fps' in target.dataset) actions.onFps();
+    else if ('comic' in target.dataset) actions.onComic();
     else if ('fullscreen' in target.dataset) actions.onFullscreen();
     else if ('mute' in target.dataset) actions.onMute();
     else if ('reset' in target.dataset) actions.onReset();
