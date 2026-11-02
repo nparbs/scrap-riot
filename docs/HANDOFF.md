@@ -1,6 +1,6 @@
 # Project handoff
 
-Where Scrap Riot stands, for picking the work up in a new session. Last updated 1 November 2026. [ROADMAP.md](../ROADMAP.md) has the full plan, and [README.md](../README.md) describes the game.
+Where Scrap Riot stands, for picking the work up in a new session. Last updated 2 November 2026. [ROADMAP.md](../ROADMAP.md) has the full plan, and [README.md](../README.md) describes the game.
 
 ## Shipping an update
 
@@ -14,8 +14,7 @@ If `git pull --ff-only origin main` fails with "Cannot fast-forward to multiple 
 
 ## Current state
 
-- **Live:** everything through PR #49 is merged and on the page, with the server on protocol 14.
-- **Not live yet:** the plain bumpers, secondary weapon changes and Spike Strip on the `secondary-weapons` branch. It's protocol 15, so the page and server have to go live together.
+- **Live:** everything through PR #51 is merged and on the page, with the server on protocol 15.
 - **Tests:** see `npm test`, which includes the map layout checks.
 - **Not verified yet:** nobody has played the points, weight, armor or battery rules by hand, and no online match has run on them against the real server. The new maps, animations, tracks and window fixes have also only run in a headless browser. Hazard timings and damage are first guesses, tuned against bots only. An account already showing `null/3` hasn't been checked on the real database, only in tests. Nothing since the phone work has run on a real phone. That includes the thumb buttons, the face-off when a phone really rotates or goes full screen, the landscape lock and Add to Home Screen. The join banner and phone counts have only run against a mocked server, not a real queue.
 
