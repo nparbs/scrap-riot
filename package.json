@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "balance": "vite-node scripts/balance.ts",
+    "train-bots": "vite-node scripts/train-bots.ts",
     "server": "vite-node server/index.ts",
     "build:server": "node scripts/build-server.mjs",
     "server:dev": "vite-node scripts/dev-server.ts"

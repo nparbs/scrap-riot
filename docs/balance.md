@@ -22,18 +22,18 @@ The column to read is **win%**. If points are right, every part wins about half 
 
 ## Latest results
 
-24,000 duels and 2,400 brawls, at skill 0.7:
+24,000 duels and 2,400 brawls, at skill 0.7, with the trained bots:
 
 | | Duel win% | Share of brawl wins (12.5% is even) |
 | --- | --- | --- |
-| Chassis | 43% to 55% | Whippet 6.1%, Wraith 8.6%, Bruiser 12.5%, Rhino 15.7%, Anvil 16.3% |
-| Main weapons | 38% (Flipper) to 59% (Crusher) | 6.2% (Flipper) to 23.5% (Flamethrower) |
-| Defenses | 40% (Teleport) to 56% (Side Blades) | not checked closely |
-| Engines | 47% to 54% | |
-| Wheels | 46% to 52% | |
-| Power sources | 44% (Alkaline) to 56% (Lithium) | |
+| Chassis | 42% to 56% | Whippet 6.3%, Wraith 7.7%, Bruiser 12.9%, Rhino 16.0%, Anvil 16.2% |
+| Main weapons | 35% (Spear) to 60% (Crusher, Forks) | 5.2% (Flipper) to 21.3% (Spike Ram) |
+| Defenses | 40% (Kamikaze) to 58% (Cutter) | not checked closely |
+| Engines | 48% to 52% | |
+| Wheels | 46% to 51% | |
+| Power sources | 44% (Alkaline) to 55% (Lithium) | |
 
-Bots swing early and wide by how unskilled they are, so missing shows up. That moves weapons with long reloads the most. The spread for weapons is 28% to 63% at skill 0.4, and 43% to 57% at skill 1.0, where bots don't miss. An average duel lasts 51 seconds.
+Bots swing early and wide by how unskilled they are, so missing shows up. That moves weapons with narrow arcs and long reloads the most, such as the Spear and Flipper. At skill 1.0, where bots don't miss, weapons run 42% to 55%. An average duel lasts 51 seconds.
 
 Battery, on a stock Alkaline with a stock opponent, 16 duels each. Careful means only pressing when lined up, and held means keeping the key down from 14 units away:
 
@@ -54,11 +54,28 @@ What each chassis can bring, with a medium engine and no armor:
 | Rhino | Vertical Bar | 10.7 | 79 |
 | Anvil | Vertical Bar | 10.0 | 84 |
 
+## Training the bots
+
+`npm run train-bots -- [rounds] [games per try] [generations]` evolves how bots use each weapon and defense, and writes the numbers to `src/sim/trained.ts`. It carries on from what's there, and two rounds of 60 games and 12 generations take about 35 minutes. Rerun it after a big change to the weapons.
+
+- **What it can change:** only the numbers in `Tactics` and `Habit` in `src/sim/tactics.ts`, such as how far to flank, when to back off and when to fire a defense. The behaviours themselves are written by hand in `src/sim/ai.ts`, so it can't invent a new one.
+- **How it scores:** three quarters of games are duels, and the rest are 4-robot brawls. A win on time counts for little, so nothing learns to hide. A quarter of rivals fight plainly, so nothing learns tricks that only beat other trained bots. A new set of numbers only stays if it beats the old one on 800 games it hasn't seen.
+- **Difficulty:** `trainedShare` blends from plain fighting at skill 0.45 to all the training at 0.95, so early rivals barely use it.
+
+Results, from about 690,000 games:
+
+- **Duels:** with the same robot on both sides at top skill, trained bots beat plain ones 61% of the time on average. By weapon it runs from 73% (Chainsaw) to 49% (Vertical Bar, Flipper).
+- **Brawls:** no better. In 8-robot brawls, half trained and half plain, trained robots won 50% of them. There are no tactics for crowds yet, such as who to pick on or when to leave a pile-up.
+- **Stalling:** none. 8% of duels run out of time with all bots trained, against 10% with all plain.
+- **Backing off:** rarely learned, at 1% to 7% of a fight for most weapons, because reversing is slow. The Magnet is the exception, at 36%. So training didn't make light robots play hit and run.
+- **What did help:** slowing down to aim up close, swinging slightly ahead of a target that's closing, shoving robots near a drop, and spinning up from further out.
+- **Noise:** some numbers changed without doing anything, so don't read meaning into each one. Flash Bomb's range went to 18.7 when it only reaches 10.
+
 ## Known limits of these numbers
 
-- **Bots don't play like people.** They drive straight at the target, so they never hit and run, which undersells light robots. They also use Teleport, Kamikaze and Flash badly, and they never use launch ramps.
-- **Light robots lose brawls.** Whippets and Wraiths do fine in duels and poorly in crowds. That's partly the bots and partly real, so the first thing to check by hand is whether a person in a Whippet survives a Brawl.
-- **Slow robots don't out-damage quick ones in bot fights.** They hit much harder, but per second over a whole fight it comes out even (r = 0.00), because they connect less often. A person who keeps a heavy robot on target will do better than this.
+- **Bots don't play like people.** They rarely hit and run, even trained, which probably undersells light robots. They never use launch ramps.
+- **Light robots lose.** Whippets win 42% of duels and 6.3% of brawl wins, and training didn't change that. It's partly the bots and partly real, so the first thing to check by hand is whether a person in a Whippet can survive.
+- **Slow robots don't out-damage quick ones in bot fights.** They hit much harder, but per second over a whole fight it comes out even (r = -0.05), because they connect less often. A person who keeps a heavy robot on target will do better than this.
 - **Random robots barely run flat**, at 2% of a fight (5% on Alkaline), because bots hold back until something's in reach. The table above is the better guide to how it will feel to a person.
 - **The stock battery is behind the others**, which is deliberate for a part that costs almost nothing, but it means a new robot is at a real disadvantage until the player buys a better one.
-- **Career was only compared bot against bot, and only with a stock robot.** With rivals' upgrades back to full strength, the last fights are out of reach without buying upgrades, which is their purpose. Old Ironjaw is won about a third of the time, against nearly two thirds before. Nobody has played the ladder with upgrades bought.
+- **Career was only compared bot against bot, and only with a stock robot.** A plain bot at skill 0.7 stood in for a person who doesn't improve. It wins Old Ironjaw about half the time, and the last fights are out of reach without buying upgrades, which is their purpose. Nobody has played the ladder with upgrades bought.

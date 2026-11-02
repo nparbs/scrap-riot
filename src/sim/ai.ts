@@ -1,6 +1,7 @@
-import { closestOnBlock, rayBlock, sawPos, shockerActive, type Block, ballHeight, ballPos, BALL_HIT_HEIGHT, BALL_RADIUS, HAMMER_WARN, hammerClock, solidGround, trapdoorWarning } from './arena';
-import { DEFENSES, MELEE } from './data';
+import { closestOnBlock, overChasm, rayBlock, sawPos, shockerActive, type Block, ballHeight, ballPos, BALL_HIT_HEIGHT, BALL_RADIUS, HAMMER_WARN, hammerClock, solidGround, trapdoorWarning } from './arena';
+import { MELEE } from './data';
 import { bearing, condition, wrapAngle, type Bot, type Match } from './match';
+import { habitFor, tacticsFor, type BrainOverride, type Habit, type Tactics } from './tactics';
 
 const THINK_INTERVAL = 0.2;
 const RETARGET_INTERVAL = 1.5;
@@ -17,6 +18,12 @@ const ROUTE_MARGIN = 1.5;
 const ROUTE_REACHED = 2;
 const CHASER_PENALTY = 7;
 const LEADER_PULL = 1.2;
+/** Once it starts backing off it keeps going this long, or it would twitch at the edge of its range. */
+const BACK_OFF_TIME = 0.4;
+/** How long it gives up on backing off after finding something behind it. */
+const BACK_OFF_BLOCKED = 1.5;
+/** How far past its reach counts as up close, where aiming matters more than speed. */
+const CLOSE_GAP = 3;
 
 /** Drives one bot by writing to its input, exactly as the keyboard does for the player. */
 export class BotBrain {
@@ -28,6 +35,14 @@ export class BotBrain {
   private stuckT = 0;
   private reverseT = 0;
   private strafeSign: number;
+  private readonly tactics: Tactics;
+  private readonly habit: Habit;
+  /** Seconds left of backing away while facing the target, and of not trying it. */
+  private backT = 0;
+  private blockedT = 0;
+  /** Going all out to shove the target over a nearby drop. */
+  private pushing = false;
+  private upClose = false;
   /** Who this robot is after, so the others can spread out rather than all pile on one. */
   get targetId(): number {
     return this.target?.id ?? -1;
@@ -38,13 +53,18 @@ export class BotBrain {
     private readonly bot: Bot,
     /** 0..1. Lower skill means slower decisions and sloppier weapon and powerup use. */
     private readonly skill: number,
+    brain?: BrainOverride,
   ) {
     this.strafeSign = match.rng() < 0.5 ? -1 : 1;
+    this.tactics = brain?.tactics ?? tacticsFor(bot.loadout.melee, skill);
+    this.habit = brain?.habits?.[bot.loadout.defense] ?? habitFor(bot.loadout.defense, skill);
   }
 
   update(dt: number): void {
     this.thinkT -= dt;
     this.retargetT -= dt;
+    this.backT -= dt;
+    this.blockedT -= dt;
     if (this.thinkT <= 0) {
       this.thinkT = THINK_INTERVAL * (1.6 - this.skill);
       this.think();
@@ -63,7 +83,9 @@ export class BotBrain {
       this.target = this.pickTarget();
     }
 
-    const hurt = bot.hp / bot.maxHp < 0.35;
+    this.pushing = false;
+    this.upClose = false;
+    const hurt = bot.hp / bot.maxHp < this.tactics.repairAt;
     const repair = hurt ? this.nearestPickup('repair') : null;
     const scrap = this.nearestPickup('scrap');
     if (bot.clawTarget >= 0 && !match.arena.walled) {
@@ -77,18 +99,58 @@ export class BotBrain {
       this.setGoal(match.arena.hill.x, match.arena.hill.z);
     } else if (scrap && Math.hypot(scrap.x - bot.x, scrap.z - bot.z) < 10) {
       this.setGoal(scrap.x, scrap.z);
-    } else if (this.target && bot.batteryFlat) {
-      // Nothing works until it recharges, so keep away for now.
-      this.setGoal(bot.x * 2 - this.target.x, bot.z * 2 - this.target.z);
     } else if (this.target) {
-      // Every build closes in, because the real damage is up close.
-      this.setGoal(this.target.x, this.target.z);
+      this.closeIn(this.target);
     } else {
       this.setGoal(0, 0);
     }
 
     this.usePowerups();
     if (match.rng() < 0.05) this.strafeSign *= -1;
+  }
+
+  /** Decides how to come at the target: round its side, or backing off while the weapon isn't ready. */
+  private closeIn(target: Bot): void {
+    const { bot, match, tactics } = this;
+    const def = MELEE[bot.loadout.melee];
+    const dist = Math.hypot(target.x - bot.x, target.z - bot.z) || 1;
+    const reach = match.reachTo(bot, target, def.range);
+    this.upClose = dist < reach + CLOSE_GAP;
+    this.pushing = bot.clawTarget < 0 && this.nearDrop(target, dist);
+    if (this.pushing || bot.clawTarget >= 0) {
+      this.backT = 0;
+      this.setGoal(target.x, target.z);
+      return;
+    }
+    const reload = def.cooldown > 0 ? bot.meleeCd / def.cooldown : 0;
+    const outpaces = bot.chassis.speed * bot.speedMult > target.chassis.speed * target.speedMult * tactics.kiteSpeed;
+    // Nothing works on a flat battery, so that's always worth getting away from.
+    const notReady = bot.batteryFlat || (reload > tactics.kiteReload && outpaces);
+    const keepAway = notReady ? reach + tactics.kiteGap : reach * tactics.standoff;
+    if (dist < keepAway && this.blockedT <= 0) this.backT = Math.max(this.backT, BACK_OFF_TIME);
+    if (this.backT > 0) {
+      this.setGoal(bot.x + ((bot.x - target.x) / dist) * 8, bot.z + ((bot.z - target.z) / dist) * 8);
+      return;
+    }
+    const behind = target.heading + (target.loadout.rearMelee ? 0 : Math.PI);
+    const round = tactics.flank * Math.min(dist * 0.5, 6);
+    this.setGoal(target.x + Math.sin(behind) * round, target.z + Math.cos(behind) * round);
+  }
+
+  /** Is the target near enough to a drop on its far side to be shoved in? */
+  private nearDrop(target: Bot, dist: number): boolean {
+    const { bot, tactics } = this;
+    const { arena } = this.match;
+    if (tactics.edgeHunt <= 0 || dist > tactics.edgeHunt + 10) return false;
+    const dx = (target.x - bot.x) / dist;
+    const dz = (target.z - bot.z) / dist;
+    for (let d = 1; d <= tactics.edgeHunt; d++) {
+      const x = target.x + dx * d;
+      const z = target.z + dz * d;
+      if (!arena.walled && !solidGround(arena, x, z)) return true;
+      if (overChasm(arena, x, z) || arena.pits.some((pit) => Math.hypot(pit.x - x, pit.z - z) < pit.r)) return true;
+    }
+    return false;
   }
 
   /** Never drive toward a goal past a ledge, even if the target is hanging over one. */
@@ -309,11 +371,27 @@ export class BotBrain {
     if (this.stuckT > 1) {
       this.stuckT = 0;
       this.reverseT = 0.8;
+      if (this.backT > 0) {
+        this.backT = 0;
+        this.blockedT = BACK_OFF_BLOCKED;
+      }
+    }
+
+    // Backing away keeps the weapon pointed at the target, as long as there's room behind.
+    if (this.backT > 0 && (arena.walled || this.roomTo(-1) > EDGE_CLEARANCE + 1)) {
+      const tail = wrapAngle(Math.atan2(-dirX, -dirZ) - bot.heading);
+      if (Math.abs(tail) < 1.6) {
+        // Steering works the other way round in reverse.
+        bot.input.steer = Math.max(-1, Math.min(1, -tail * 3));
+        bot.input.throttle = -1;
+        return;
+      }
     }
 
     const diff = wrapAngle(Math.atan2(dirX, dirZ) - bot.heading);
     bot.input.steer = Math.max(-1, Math.min(1, diff * 3));
     bot.input.throttle = Math.abs(diff) > 1.4 ? 0.25 : 1;
+    if (this.upClose && Math.abs(diff) > 0.5) bot.input.throttle = Math.min(bot.input.throttle, this.tactics.turnThrottle);
     if (!arena.walled) this.mindTheEdge(diff, caution);
   }
 
@@ -366,62 +444,66 @@ export class BotBrain {
     const dist = Math.hypot(target.x - bot.x, target.z - bot.z);
     const angle = Math.abs(wrapAngle(bearing(bot.x, bot.z, target.x, target.z) - bot.heading));
     const melee = MELEE[bot.loadout.melee];
+    const { tactics } = this;
     switch (melee.kind) {
       case 'ram':
-        bot.input.melee = dist < 10 && angle < 0.25;
+        bot.input.melee = dist < tactics.engage && angle < 0.25;
         break;
       case 'magnet':
-        bot.input.melee = dist < melee.range && angle < melee.arc;
+        bot.input.melee = dist < Math.min(melee.range, tactics.engage) && angle < melee.arc;
         break;
       case 'spinner':
-        // Spin up on the way in, so the weapon is at speed when it arrives. Sooner than this wastes battery.
-        bot.input.melee = dist < 12;
+        // Spin up on the way in, so the weapon is at speed when it arrives, unless the battery's better saved.
+        bot.input.melee = dist < tactics.engage && (bot.ammo > tactics.saveBattery || dist < this.match.reachTo(bot, target, melee.range));
         break;
-      default:
-        // The less skilled swing a bit early and wide, and pay for it in battery.
-        bot.input.melee = this.match.inCone(bot, target, bot.heading, melee.range + (1 - this.skill) * 3, melee.arc + (1 - this.skill) * 0.6);
+      default: {
+        // Judged a moment ahead if they're closing. The less skilled swing a bit early and wide, and pay for it in battery.
+        const closing = ((bot.vx - target.vx) * (target.x - bot.x) + (bot.vz - target.vz) * (target.z - bot.z)) / (dist || 1);
+        const ahead = Math.max(0, closing) * tactics.lead;
+        bot.input.melee = this.match.inCone(bot, target, bot.heading, melee.range + ahead + (1 - this.skill) * 3, melee.arc + (1 - this.skill) * 0.6);
+      }
     }
 
     // The weapon runs off the same battery, so only a good charge is worth spending on getting there.
-    bot.input.boost = dist > 12 && angle < 0.3 && bot.ammo > 0.6;
+    bot.input.boost = this.backT <= 0 && (this.pushing ? angle < 0.4 && bot.ammo > 0.1 : dist > tactics.boostDist && angle < 0.3 && bot.ammo > tactics.boostAmmo);
 
-    bot.input.defense = this.wantsDefense(target, dist, angle);
+    bot.input.defense = bot.ammo >= this.habit.reserve && this.wantsDefense(target, dist, angle);
   }
 
   private wantsDefense(target: Bot, dist: number, angle: number): boolean {
     const { bot, match } = this;
     const health = condition(bot);
     const recentlyHit = match.time - bot.lastHitT < 0.5;
-    const def = DEFENSES[bot.loadout.defense];
+    const { range, health: wornTo } = this.habit;
     switch (bot.loadout.defense) {
       case 'shield':
-        return recentlyHit && health < 0.7;
+        return recentlyHit && health < wornTo && dist < range;
       case 'mines':
       case 'oil':
       case 'glue':
       case 'nails':
-        return dist < 9 && angle > 2.2;
+        return dist < range && angle > 2.2;
       case 'blades':
       case 'cutter':
-        return dist - target.radius - bot.radius < def.radius;
+        return dist - target.radius - bot.radius < range;
       case 'teleport':
-        return (health < 0.4 && recentlyHit) || (dist > 18 && angle < 0.2);
+        return (health < wornTo && recentlyHit) || (dist > range && angle < 0.2);
       case 'flash':
       case 'emp':
-        return dist < def.radius * 0.7;
+        return dist < range;
       case 'regen':
-        return bot.armour < bot.maxArmour * 0.5 || bot.hp < bot.maxHp * 0.7;
+        return bot.armour < bot.maxArmour * (wornTo - 0.1) || bot.hp < bot.maxHp * (wornTo + 0.1);
       case 'cloak':
-        return health < 0.45 && recentlyHit;
+        return health < wornTo && recentlyHit && dist < range;
       case 'minibot':
-        return dist < 24;
+        return dist < range;
       case 'remote': {
         const charge = match.mines.find((m) => m.owner === bot.id && m.kind === 'charge');
-        if (!charge) return dist < 12 && angle > 1.5;
+        if (!charge) return dist < range && angle > 1.5;
         return match.bots.some((o) => o !== bot && o.alive && Math.hypot(o.x - charge.x, o.z - charge.z) < charge.radius * 0.7);
       }
       case 'kamikaze':
-        return health < 0.2 && dist < def.radius * 0.6;
+        return health < wornTo && dist < range;
       case 'steelram':
       case 'plow':
         return false;
@@ -435,11 +517,11 @@ export class BotBrain {
     const health = condition(bot);
     const p = bot.powerups;
     // A kit only mends health, so it waits until the armour has stopped protecting it.
-    if (bot.hp / bot.maxHp < 0.5 && p.repair > 0) bot.input.powerup = 'repair';
+    if (bot.hp / bot.maxHp < this.tactics.kitAt && p.repair > 0) bot.input.powerup = 'repair';
     else if (health < 0.5 && dist < 12 && p.megashield > 0) bot.input.powerup = 'megashield';
     else if (dist < 9 && health > 0.4 && p.rage > 0) bot.input.powerup = 'rage';
     else if (health < 0.3 && p.cloaking > 0) bot.input.powerup = 'cloaking';
     else if (!target && p.xray > 0) bot.input.powerup = 'xray';
-    else if (bot.ammo < 0.15 && p.battery > 0) bot.input.powerup = 'battery';
+    else if (bot.ammo < this.tactics.batteryAt && p.battery > 0) bot.input.powerup = 'battery';
   }
 }
