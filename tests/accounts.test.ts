@@ -225,9 +225,9 @@ describe('garage on the server', () => {
 
   it('cannot spend the same money twice at once', async () => {
     const { token } = await accounts.createGuest();
-    await give(token, MELEE.shell.price);
+    await give(token, MELEE.crusher.price);
     const results = await Promise.all([
-      accounts.garage(token, { type: 'equip', slot: 'melee', id: 'shell' }),
+      accounts.garage(token, { type: 'equip', slot: 'melee', id: 'flipper' }),
       accounts.garage(token, { type: 'equip', slot: 'melee', id: 'vertbar' }),
       accounts.garage(token, { type: 'equip', slot: 'melee', id: 'crusher' }),
     ]);
@@ -449,7 +449,9 @@ describe('over the network', () => {
     expect(mine.name).toBe(state.name);
     expect(mine.loadout.chassis).toBe('brawler');
     expect(mine.loadout.melee).toBe('chainsaw');
-    expect(mine.loadout.upgrades.armor).toBe(2);
+    // Upgrades are for Career, so they stay out of online matches.
+    expect(mine.loadout.upgrades.armor).toBe(0);
+    expect((await accounts.profile(guest.token))!.save.loadout.upgrades.armor).toBe(2);
     expect(mine.loadout.powerups.rage).toBe(0);
   });
 

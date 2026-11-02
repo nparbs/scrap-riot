@@ -3,7 +3,7 @@ import { makeRivals, randomArena, type Save } from '../src/game/progress';
 import { INPUT_STEPS, onlineLoadout, QUICK_CHAT, sanitizeName, SNAPSHOT_STEPS, unpackFlags, type OnlineQueue, type ServerMessage, type StartMessage } from '../src/net/protocol';
 import { encodeSnapshot } from '../src/net/snapshot';
 import type { ArenaId } from '../src/sim/arena';
-import { COUNTDOWN, DUEL_INTRO, FORFEIT_OUTRO, fittedPowerups, MATCH, MODES, POWERUP_ORDER, type ModeId, type UpgradeId } from '../src/sim/data';
+import { COUNTDOWN, DUEL_INTRO, FORFEIT_OUTRO, fittedPowerups, MATCH, MODES, POWERUP_ORDER, withoutUpgrades, type ModeId } from '../src/sim/data';
 import { Match, STEP, type BotSetup, type Loadout } from '../src/sim/match';
 
 import type { MatchResult } from './accounts';
@@ -68,6 +68,8 @@ export const BRAWL_ROOM_OPTIONS: RoomOptions = {
   countdown: COUNTDOWN,
 };
 
+/** Who the bots in empty seats are: a step up from a new player's first rivals, with no upgrades, like everyone online. */
+const ONLINE_BOTS = { wins: 6, loadout: { upgrades: { armor: 0, engine: 0, weapons: 0 } } };
 const HUMAN_COLORS = [0xff8a2a, 0x35d0e6, 0xf25fd0, 0x9be03a, 0xf4f1e8, 0xffd23a, 0xa066e0, 0xe0503a];
 const MAX_BACKLOG = 256 * 1024;
 const MAX_CATCH_UP = 0.25;
@@ -155,7 +157,8 @@ export class Room {
       token: randomUUID(),
       conn,
       name: account ? account.save.name : sanitizeName(rawName),
-      loadout: account ? account.save.loadout : onlineLoadout(rawLoadout),
+      // Upgrades are for Career, so online it's points alone.
+      loadout: account ? withoutUpgrades(account.save.loadout) : onlineLoadout(rawLoadout),
       accountId: account?.accountId,
       botId: -1,
       ack: 0,
@@ -331,10 +334,7 @@ export class Room {
       const paint = player.loadout.paint && { ...player.loadout.paint, primary: color };
       return { name: player.name, color, loadout: { ...player.loadout, paint }, isAI: false };
     });
-    // Bots match the average human, so upgrades don't make a match trivial.
-    const average = (key: UpgradeId) => Math.round(humans.reduce((sum, p) => sum + p.loadout.upgrades[key], 0) / Math.max(1, humans.length));
-    const progress = { wins: 0, loadout: { upgrades: { armor: average('armor'), engine: average('engine'), weapons: average('weapons') } } };
-    const rivals = makeRivals(progress, this.options.fillSeats ? this.options.capacity - humans.length : 0, this.seed).map((rival) => ({
+    const rivals = makeRivals(ONLINE_BOTS, this.options.fillSeats ? this.options.capacity - humans.length : 0, this.seed).map((rival) => ({
       ...rival,
       name: `${rival.name} [bot]`,
     }));

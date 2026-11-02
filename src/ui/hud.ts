@@ -48,6 +48,8 @@ export class Hud {
   readonly root = document.createElement('div');
   private readonly hpFill: HTMLElement;
   private readonly hpText: HTMLElement;
+  private armorFill!: HTMLElement;
+  private rivalArmor!: HTMLElement;
   private readonly timer: HTMLElement;
   private readonly board: HTMLElement;
   private readonly feed: HTMLElement;
@@ -149,7 +151,7 @@ export class Hud {
       <div class="hud-dock">
         <div class="dock-card">
           <div class="dock-field"><label>Name:</label><div class="dock-name" style="color:${hex(player.color)}">${escapeText(player.name)}</div></div>
-          <div class="dock-field"><label>Armour:</label><div class="hp-bar"><div class="hp-fill"></div><span class="hp-text"></span></div></div>
+          <div class="dock-field"><label>Health:</label><div class="hp-bar"><div class="hp-fill"></div><div class="armor-fill" data-armor></div><span class="hp-text"></span></div></div>
           <div class="dock-slots">
             ${this.slot(`${keyLabel(keys.melee)} / LMB`, MELEE[loadout.melee].name, 'melee')}
             ${this.slot(`${keyLabel(keys.defense)} / RMB`, DEFENSES[loadout.defense].name, 'defense')}
@@ -165,7 +167,7 @@ export class Hud {
         </div>
         <div class="dock-card">
           <div class="dock-field"><label>Name:</label><div class="dock-name" data-rival-name></div></div>
-          <div class="dock-field"><label>Armour:</label><div class="hp-bar"><div class="hp-fill" data-rival-fill></div></div></div>
+          <div class="dock-field"><label>Health:</label><div class="hp-bar"><div class="hp-fill" data-rival-fill></div><div class="armor-fill" data-rival-armor></div></div></div>
           <div class="dock-weapon" data-rival-weapon></div>
           <div class="dock-battery"><div class="battery"><i data-rival-battery></i></div><label>Battery:</label></div>
         </div>
@@ -175,6 +177,8 @@ export class Hud {
     const q = (selector: string) => this.root.querySelector<HTMLElement>(selector)!;
     this.hpFill = q('.hp-fill');
     this.hpText = q('.hp-text');
+    this.armorFill = q('[data-armor]');
+    this.rivalArmor = q('[data-rival-armor]');
     this.timer = q('.hud-timer');
     this.ping = q('.hud-ping');
     this.blind = q('.hud-blind');
@@ -428,7 +432,9 @@ export class Hud {
     const health = player.hp / player.maxHp;
     this.hpFill.style.width = `${health * 100}%`;
     this.hpFill.style.background = health > 0.5 ? '#7ddba8' : health > 0.25 ? '#ffa94d' : '#e8483a';
-    this.setText(this.hpText, `${Math.min(Math.ceil(player.hp), Math.round(player.maxHp))} / ${Math.round(player.maxHp)}`);
+    const armor = Math.ceil(player.armour);
+    this.setText(this.hpText, `${armor > 0 ? `${armor} armor · ` : ''}${Math.min(Math.ceil(player.hp), Math.round(player.maxHp))} health`);
+    this.armorFill.style.width = `${player.maxArmour > 0 ? (player.armour / player.maxArmour) * 100 : 0}%`;
 
     const left = Math.ceil(match.timeLeft);
     this.setText(this.timer, `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`);
@@ -447,13 +453,14 @@ export class Hud {
     this.setCooldown('melee', meleeDef.kind === 'spinner' && player.meleeCd <= 0 ? 1 - player.meleeCharge : fraction(player.meleeCd, meleeDef.cooldown));
     this.setCooldown('defense', fraction(player.defenseCd, DEFENSES[loadout.defense].cooldown));
     this.battery.style.height = `${Math.max(0, player.ammo) * 100}%`;
-    this.battery.style.background = player.ammo < BATTERY_LOW ? '#e8483a' : '#8fc1dc';
+    this.battery.style.background = player.batteryFlat || player.ammo < BATTERY_LOW ? '#e8483a' : '#8fc1dc';
     this.updateDeathFade(dt);
     this.updateRival();
     this.blind.style.opacity = String(Math.min(BLIND_MAX, player.blindT * BLIND_MAX * 1.2));
     this.updatePowerups();
 
     const tags: string[] = [];
+    if (player.batteryFlat) tags.push('BATTERY FLAT');
     if (player.boostT > 0) tags.push('BOOST');
     if (player.airT > 0) tags.push('AIRBORNE');
     if (player.rageT > 0) tags.push('RAGE');
@@ -515,6 +522,7 @@ export class Hud {
     const health = rival.hp / rival.maxHp;
     this.rivalFill.style.width = `${health * 100}%`;
     this.rivalFill.style.background = health > 0.5 ? '#7ddba8' : health > 0.25 ? '#ffa94d' : '#e8483a';
+    this.rivalArmor.style.width = `${rival.maxArmour > 0 ? (rival.armour / rival.maxArmour) * 100 : 0}%`;
     this.rivalBattery.style.height = `${Math.max(0, rival.ammo) * 100}%`;
     // Without a map, this is how to find them on the roof.
     const seen = this.duel && rival.alive && player.alive && match.canSee(player, rival);

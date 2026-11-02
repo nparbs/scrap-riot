@@ -29,7 +29,7 @@ npm run dev
 
 These are the default keys. You can rebind them in Settings, which also lists the gamepad layout. Phones and tablets get a thumbstick and buttons on screen instead, and go full screen on the first tap (you can turn this off in Settings). Safari on an iPhone doesn't allow that, so add the game to the Home Screen and open it from there.
 
-A duel is one on one with one life each. It ends when a robot is wrecked or falls off the roof, when a pilot surrenders, or when both agree to a draw. If three minutes run out, the most armour left wins. Damage, kills and scrap pickups earn money, and the winner gets a bonus. Progress is saved in the browser's local storage.
+A duel is one on one with one life each. It ends when a robot is wrecked or falls off the roof, when a pilot surrenders, or when both agree to a draw. If three minutes run out, whoever has the most armor and health left wins. Damage, kills and scrap pickups earn money, and the winner gets a bonus. Progress is saved in the browser's local storage.
 
 ## Online play
 
@@ -44,16 +44,16 @@ The server is authoritative: it runs the same simulation as the game, and client
 - **Three ways to play:** Play Online for 1v1 duels, Offline vs Bots with your choice of map and mode, and Training against a dummy that doesn't fight back.
 - **A soundtrack and sound effects** synthesized live in the browser, with different sounds for each weapon family and no audio files. Music can be turned off in Settings.
 - **A paintshop** in the style of the original: paint directly on your unfolded robot with a pencil, spray can, shapes, fill and a 120-colour palette, and see it live on the 3D model. Your opponent sees it too.
-- **A workshop** in the style of the original: 5 chassis, plus towers, wheels, engines, power sources and an armour dial. Every part takes up room, and the chassis decides how much there is.
-- **40 weapons, and no guns:** 23 main weapons and 17 defenses, drawn from every version of the original and from real combat robots such as spinners, flippers, crushers and flamethrowers ([research notes](docs/original-research.md))
+- **A workshop** with 5 chassis, each with its own size of tower, plus wheels, engines, power sources and an armor dial. Every robot gets 100 points to spend, and every part weighs something, so big weapons need a big chassis and heavy robots are slower but hit harder ([how balance works](docs/balance.md)).
+- **38 weapons, and no guns:** 21 main weapons and 17 defenses, drawn from every version of the original and from real combat robots such as spinners, flippers, crushers and flamethrowers ([research notes](docs/original-research.md))
 - **6 powerups, take 3 into a match:** Rage, Mega Shield, Cloaking, X-Ray, Repair Kit, Battery Pack
-- **3 upgrade tracks** of 5 levels each: armor, engine, weapons
+- **3 Career upgrade tracks** of 5 levels each: hull, engine, weapons. They only count in Career fights.
 - **7 maps:** The Skyscraper for duels, plus for Offline vs Bots a pit with a timed trapdoor and saws in the walls, a cross-shaped oil rig with a wrecking ball, a furnace with erupting vents around a molten pool, a canyon with chasms, bridges and jump ramps, a foundry with belts and drop hammers, and a round frozen lake with ice that gives way
 - **4 modes:** Online Duel and Online Brawl (up to 8 robots in a Free-for-All on a random map, with bots in any empty seats), plus for Offline vs Bots Free-for-All, Last Robot Standing and King of the Hill
 - **Career:** 12 fights with medals and 3 boss robots, plus achievements
 - **Customization:** paint colors, patterns, body shapes and front or rear weapon mounts, all visible to other players
 - **Battle damage:** paint scorches and armor plates fall off as a robot gets hurt
-- **AI rivals** that get tougher as you invest in upgrades
+- **AI rivals** that get tougher as you win
 
 See [ROADMAP.md](ROADMAP.md) for what's next.
 

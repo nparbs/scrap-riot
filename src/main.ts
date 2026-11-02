@@ -13,7 +13,7 @@ import { GarageView } from './render/garageView';
 import type { ArenaId } from './sim/arena';
 import { installLogoIcon } from './render/logo';
 import { MatchView } from './render/matchView';
-import { COUNTDOWN, DEFAULT_PAINT, DUEL_INTRO, fittedPowerups, MELEE, POWERUP_CAP } from './sim/data';
+import { batteryCost, COUNTDOWN, DEFAULT_PAINT, DUEL_INTRO, fittedPowerups, MELEE, POWERUP_CAP, withoutUpgrades } from './sim/data';
 import { emptyInput, Match, STEP, type Bot, type BotSetup, type GameEvent } from './sim/match';
 import { renderGoogleButton } from './ui/google';
 import { Hud } from './ui/hud';
@@ -554,8 +554,8 @@ class Game {
   }
 
   private previewRobot(): void {
-    const { chassis, melee, defense, paint = DEFAULT_PAINT, rearMelee, tower, wheels } = previewLoadout(this.save.loadout, this.partPreview);
-    this.garage.setBuild({ chassis, melee, defense, paint, rearMelee, tower, wheels, color: paint.primary });
+    const { chassis, melee, defense, paint = DEFAULT_PAINT, rearMelee, wheels } = previewLoadout(this.save.loadout, this.partPreview);
+    this.garage.setBuild({ chassis, melee, defense, paint, rearMelee, wheels, color: paint.primary });
   }
 
   /** The drawing tools live on across page refreshes, and are slotted back into the new page. */
@@ -852,7 +852,7 @@ class Game {
     const seed = Math.floor(Math.random() * 1e9);
     const { name, loadout } = this.save;
     const full = { rage: POWERUP_CAP, megashield: POWERUP_CAP, cloaking: POWERUP_CAP, xray: POWERUP_CAP, repair: POWERUP_CAP, battery: POWERUP_CAP };
-    const me: BotSetup = { name, color: (loadout.paint ?? DEFAULT_PAINT).primary, loadout: { ...loadout, powerups: full }, isAI: false };
+    const me: BotSetup = { name, color: (loadout.paint ?? DEFAULT_PAINT).primary, loadout: { ...withoutUpgrades(loadout), powerups: full }, isAI: false };
     const dummy: BotSetup = { name: 'Practice Dummy', color: 0xaaaaaa, loadout: { ...newSave().loadout, paint: { ...DEFAULT_PAINT, primary: 0xaaaaaa } }, isAI: false };
     this.training = true;
     this.careerFight = null;
@@ -898,11 +898,12 @@ class Game {
     this.training = false;
     const seed = Math.floor(Math.random() * 1e9);
     const { name, loadout, practice } = this.save;
-    const me: BotSetup = { name, color: (loadout.paint ?? DEFAULT_PAINT).primary, loadout, isAI: false };
+    // Upgrades are for Career, so they stay in the garage for anything else.
+    const me: BotSetup = { name, color: (loadout.paint ?? DEFAULT_PAINT).primary, loadout: fight ? loadout : withoutUpgrades(loadout), isAI: false };
     this.careerFight = fight;
     this.match = fight
       ? new Match([me, ...fightSetups(fight, seed)], { seed, arena: fight.arena, mode: fight.mode, killTarget: fight.killTarget, countdown: COUNTDOWN })
-      : new Match([me, ...makeRivals(this.save, practice.mode === 'duel' ? 1 : 5, seed)], { seed, arena: practice.arena, mode: practice.mode, countdown: practice.mode === 'duel' ? COUNTDOWN + DUEL_INTRO : COUNTDOWN });
+      : new Match([me, ...makeRivals({ wins: this.save.wins, loadout: withoutUpgrades(loadout) }, practice.mode === 'duel' ? 1 : 5, seed)], { seed, arena: practice.arena, mode: practice.mode, countdown: practice.mode === 'duel' ? COUNTDOWN + DUEL_INTRO : COUNTDOWN });
     this.player = this.match.bots[0];
     this.enterMatch(this.match, this.player);
   }
@@ -1228,7 +1229,8 @@ class Game {
     this.keyboard.peek(this.tutorialInput);
     const wantsToFire = this.tutorialInput.melee;
     const weapon = MELEE[player.loadout.melee];
-    if (wantsToFire && !this.wasFiring && player.alive && ((weapon.battery ?? 0) > player.ammo || (weapon.drain ?? 0) * 0.1 > player.ammo)) this.sfx.dryFire();
+    const heldDown = weapon.kind === 'held' || weapon.kind === 'magnet' || weapon.kind === 'claw' || weapon.kind === 'spinner';
+    if (wantsToFire && !this.wasFiring && player.alive && (player.batteryFlat || (batteryCost(weapon) * (heldDown ? 0.1 : 1)) / player.batteryCap > player.ammo)) this.sfx.dryFire();
     this.wasFiring = wantsToFire;
   }
 

@@ -43,7 +43,11 @@ import {
 } from './arena';
 import { BotBrain } from './ai';
 import {
+  ARMOUR,
   BATTERY_REGEN,
+  BATTERY_PER_POWER,
+  BATTERY_RESTART,
+  batteryCost,
   BOOST_ACCEL,
   BOOST_DRAIN,
   BOOST_SPEED,
@@ -61,6 +65,7 @@ import {
   HILL_CROWD,
   HILL_TARGET,
   HILL_TARGET_CROWD,
+  IDLE_DRAW,
   MATCH,
   MEGA_ABSORB,
   MEGA_TIME,
@@ -72,6 +77,7 @@ import {
   REWARD,
   SPECTATE,
   TRAP,
+  SPIN_HOLD_DRAW,
   SPINNER_KEPT_SPEED,
   SPINNER_MIN_SPEED,
   SPINNER_RECOIL,
@@ -87,7 +93,6 @@ import {
   type Paint,
   type PowerId,
   type PowerupId,
-  type TowerId,
   type UpgradeId,
   type WheelsId,
 } from './data';
@@ -98,6 +103,10 @@ export const STEP = 1 / 60;
 const TURN_FULL_SPEED = 4;
 /** Below ramming speed. */
 const MAGNET_PULL_SPEED = 4.5;
+/** The hull size weapon reach is measured for. A bigger hull puts the same weapon further out. */
+const REACH_RADIUS = CHASSIS.brawler.radius;
+/** How much of a target's width counts toward being inside a weapon's arc, so bigger robots are easier to hit. */
+const TARGET_WIDTH = 0.5;
 
 export interface Loadout {
   chassis: ChassisId;
@@ -110,7 +119,6 @@ export interface Loadout {
   paint?: Paint;
   /** The front weapon faces backward, for fighting while reversing away. */
   rearMelee?: boolean;
-  tower?: TowerId;
   wheels?: WheelsId;
   engine?: EngineId;
   power?: PowerId;
@@ -134,7 +142,7 @@ export interface Bot {
   name: string;
   color: number;
   loadout: Loadout;
-  chassis: ChassisDef;
+  chassis: ChassisDef & { speed: number; accel: number; mass: number };
   isAI: boolean;
   /** Drawn at this scale. Above 1 for bosses. */
   size: number;
@@ -149,10 +157,18 @@ export interface Bot {
   vz: number;
   hp: number;
   maxHp: number;
+  /** Worn away by hits before they reach health. */
+  armour: number;
+  maxArmour: number;
   speedMult: number;
   damageMult: number;
+  /** How much harder its main weapon hits for the weight behind it. */
+  punch: number;
   /** From the power source. */
   batteryRegen: number;
+  batteryCap: number;
+  /** Ran out, and cut out until it has recharged a little. */
+  batteryFlat: boolean;
   radius: number;
   mass: number;
   alive: boolean;
@@ -344,6 +360,11 @@ export function relativeBearing(x: number, z: number, heading: number, toX: numb
   return wrapAngle(bearing(x, z, toX, toZ) - heading);
 }
 
+/** How much of a robot is left, armour and health together, from 0 to 1. */
+export function condition(bot: Bot): number {
+  return (bot.hp + bot.armour) / (bot.maxHp + bot.maxArmour);
+}
+
 export class Match {
   readonly rng: Rng;
   readonly arena: ArenaDef;
@@ -412,9 +433,14 @@ export class Match {
       x: 0, z: 0, prevX: 0, prevZ: 0, heading: 0, prevHeading: 0, vx: 0, vz: 0,
       hp: maxHp,
       maxHp,
+      armour: stats.armour,
+      maxArmour: stats.armour,
       speedMult: 1 + UPGRADES.engine.perLevel * up.engine,
       damageMult: 1 + UPGRADES.weapons.perLevel * up.weapons,
+      punch: stats.punch,
       batteryRegen: stats.regen,
+      batteryCap: stats.capacity,
+      batteryFlat: false,
       radius: chassis.radius * size,
       mass: chassis.mass * size,
       alive: true, out: false, forfeited: false, eliminatedAt: 0, respawnT: 0,
@@ -587,23 +613,28 @@ export class Match {
     bot.xrayT = down(bot.xrayT);
     bot.bladesT = down(bot.bladesT);
     bot.meleeSwing += dt;
-    // No recharging while the key is held, or an empty battery would flicker the boost on and off.
-    if (bot.input.boost) {
+    if (bot.input.boost && !bot.batteryFlat) {
       if (bot.ammo > 0 && bot.stunT <= 0 && bot.airT <= 0) {
-        bot.ammo = Math.max(0, bot.ammo - BOOST_DRAIN * dt);
+        bot.ammo = Math.max(0, bot.ammo - (BOOST_DRAIN * bot.mass * dt) / bot.batteryCap);
         bot.boostT = 0.12;
+        if (bot.ammo <= 0) bot.batteryFlat = true;
       }
     } else {
       bot.ammo = Math.min(1, bot.ammo + BATTERY_REGEN * bot.batteryRegen * dt);
     }
+    if (bot.batteryFlat && bot.ammo >= BATTERY_RESTART) bot.batteryFlat = false;
 
     if (bot.burnT > 0) {
       bot.burnT = down(bot.burnT);
-      this.damage(bot, BURN_DPS * dt, bot.burnSource);
+      this.damage(bot, BURN_DPS * dt, bot.burnSource, 1);
     }
     if (bot.regenT > 0) {
       bot.regenT = down(bot.regenT);
-      bot.hp = Math.min(bot.maxHp, bot.hp + DEFENSES.regen.damage * dt);
+      // Armour first, and anything left over goes to health.
+      const rebuilt = DEFENSES.regen.damage * dt;
+      const toArmour = Math.min(rebuilt, bot.maxArmour - bot.armour);
+      bot.armour += toArmour;
+      bot.hp = Math.min(bot.maxHp, bot.hp + rebuilt - toArmour);
     }
   }
 
@@ -657,7 +688,7 @@ export class Match {
     bot.glued = this.patchUnder(bot, 'glue');
     const c = bot.chassis;
     let top = c.speed * bot.speedMult;
-    const boosting = !stunned && input.boost && bot.ammo > 0;
+    const boosting = !stunned && input.boost && bot.ammo > 0 && !bot.batteryFlat;
     if (boosting) top *= BOOST_SPEED;
     if (bot.oiled) top *= 0.6;
     if (bot.glued) top *= 0.35;
@@ -704,10 +735,30 @@ export class Match {
     return bot.damageMult * (bot.rageT > 0 ? RAGE_MULT : 1);
   }
 
-  private inCone(bot: Bot, other: Bot, angle: number, range: number, arc: number): boolean {
-    const dist = Math.hypot(other.x - bot.x, other.z - bot.z) - other.radius;
-    if (dist > range) return false;
-    return Math.abs(wrapAngle(bearing(bot.x, bot.z, other.x, other.z) - angle)) <= arc;
+  /** The main weapon has the robot's weight behind it. Anything else it has, such as a mine, doesn't. */
+  private hitOutput(bot: Bot): number {
+    return this.damageOutput(bot) * bot.punch;
+  }
+
+  /** Reach is measured for a mid-sized hull, and a weapon sits out at the end of whichever hull carries it. */
+  inCone(bot: Bot, other: Bot, angle: number, range: number, arc: number): boolean {
+    const centres = Math.hypot(other.x - bot.x, other.z - bot.z);
+    if (centres - other.radius > range + bot.radius - REACH_RADIUS) return false;
+    const width = Math.atan2(other.radius, centres) * TARGET_WIDTH;
+    return Math.abs(wrapAngle(bearing(bot.x, bot.z, other.x, other.z) - angle)) <= arc + width;
+  }
+
+  /** Takes battery for the weapon, if there's enough. Trying with next to nothing left makes it cut out. */
+  private spend(bot: Bot, cost: number): boolean {
+    if (cost <= 0) return true;
+    if (bot.batteryFlat) return false;
+    const share = cost / bot.batteryCap;
+    if (bot.ammo < share) {
+      if (bot.ammo < BATTERY_RESTART) bot.batteryFlat = true;
+      return false;
+    }
+    bot.ammo -= share;
+    return true;
   }
 
   /** A second stun soon after the first is much shorter. The guard keeps running through the first stun. */
@@ -745,10 +796,8 @@ export class Match {
           return;
         }
         if (bot.meleeCd > 0) return;
-        if (def.drain) {
-          if (bot.ammo < def.drain * dt) return;
-          bot.ammo -= def.drain * dt;
-        }
+        // Cutting takes full power, and running with nothing to cut only a little.
+        if (!this.spend(bot, batteryCost(def) * dt * (this.enemies(bot).some((other) => this.inCone(bot, other, facing, def.range, def.arc)) ? 1 : IDLE_DRAW))) return;
         if (def.runTime) {
           bot.heldT += dt;
           if (bot.heldT >= def.runTime) {
@@ -760,7 +809,7 @@ export class Match {
         bot.meleeActive = true;
         for (const other of this.enemies(bot)) {
           if (!this.inCone(bot, other, facing, def.range, def.arc)) continue;
-          this.damage(other, def.damage * this.damageOutput(bot) * dt, bot.id);
+          this.damage(other, def.damage * this.hitOutput(bot) * dt, bot.id, def.pierce);
           if (def.slow) other.slowT = Math.max(other.slowT, def.slow);
           if (def.burns) {
             other.burnT = BURN_TIME;
@@ -769,7 +818,7 @@ export class Match {
         }
         return;
       case 'ram':
-        if (pressed && bot.meleeCd <= 0) {
+        if (pressed && bot.meleeCd <= 0 && this.spend(bot, batteryCost(def))) {
           bot.meleeCd = def.cooldown;
           bot.lungeT = 0.35;
           bot.meleeSwing = 0;
@@ -785,7 +834,7 @@ export class Match {
         this.updateSpinner(bot, pressed, dt);
         return;
       case 'magnet':
-        if (!pressed) return;
+        if (!pressed || !this.spend(bot, batteryCost(def) * dt * IDLE_DRAW)) return;
         bot.meleeActive = true;
         {
           // It grabs one robot at a time, the nearest, so it can't farm a whole crowd.
@@ -799,7 +848,7 @@ export class Match {
               other = candidate;
             }
           }
-          if (!other) return;
+          if (!other || !this.spend(bot, batteryCost(def) * dt * (1 - IDLE_DRAW))) return;
           // Dragged no faster than a crawl, or arriving would count as being rammed by it.
           const towardX = (bot.x - other.x) / dist;
           const towardZ = (bot.z - other.z) / dist;
@@ -808,17 +857,17 @@ export class Match {
             other.vx += towardX * pull;
             other.vz += towardZ * pull;
           }
-          if (dist - other.radius - bot.radius < 2) this.damage(other, def.damage * this.damageOutput(bot) * dt, bot.id);
+          if (dist - other.radius - bot.radius < 2) this.damage(other, def.damage * this.hitOutput(bot) * dt, bot.id);
         }
         return;
       case 'strike':
         break;
     }
 
-    if (def.saw && pressed) {
+    if (def.saw && pressed && this.spend(bot, def.saw * BATTERY_PER_POWER * dt * IDLE_DRAW)) {
       bot.meleeActive = true;
       for (const other of this.enemies(bot)) {
-        if (this.inCone(bot, other, facing, def.range, def.arc)) this.damage(other, def.saw * this.damageOutput(bot) * dt, bot.id);
+        if (this.inCone(bot, other, facing, def.range, def.arc) && this.spend(bot, def.saw * BATTERY_PER_POWER * dt * (1 - IDLE_DRAW))) this.damage(other, def.saw * this.hitOutput(bot) * dt, bot.id, def.pierce);
       }
     }
 
@@ -833,7 +882,7 @@ export class Match {
         for (const other of this.enemies(bot)) {
           if (!this.inCone(bot, other, facing, def.range, def.arc)) continue;
           struck.push(other);
-          this.damage(other, def.damage * this.damageOutput(bot), bot.id);
+          this.damage(other, def.damage * this.hitOutput(bot), bot.id, def.pierce);
           this.stun(other, def.stun);
           other.vx += (fx * def.knockback) / other.mass;
           other.vz += (fz * def.knockback) / other.mass;
@@ -845,10 +894,9 @@ export class Match {
             }
           }
         }
-        if (def.chain) this.chainStrike(bot, struck, def.chain, def.damage * this.damageOutput(bot) * 0.5, def.stun);
+        if (def.chain) this.chainStrike(bot, struck, def.chain, def.damage * this.hitOutput(bot) * 0.5, def.stun);
       }
-    } else if (pressed && bot.meleeCd <= 0 && bot.ammo >= (def.battery ?? 0)) {
-      bot.ammo -= def.battery ?? 0;
+    } else if (pressed && bot.meleeCd <= 0 && this.spend(bot, batteryCost(def))) {
       bot.meleeCd = def.cooldown;
       bot.meleeWindup = def.windup;
     }
@@ -867,7 +915,7 @@ export class Match {
     const points = [muzzle, { x: first.x, z: first.z }];
     const next = this.bots.find((o) => o !== bot && o.alive && !struck.includes(o) && Math.hypot(o.x - first.x, o.z - first.z) < reach);
     if (next) {
-      this.damage(next, damage, bot.id);
+      this.damage(next, damage, bot.id, MELEE[bot.loadout.melee].pierce);
       this.stun(next, stun);
       points.push({ x: next.x, z: next.z });
     }
@@ -877,8 +925,10 @@ export class Match {
   /** Holding the key stores energy, and a hit spends most of it, throwing both robots apart. */
   private updateSpinner(bot: Bot, pressed: boolean, dt: number): void {
     const def = MELEE[bot.loadout.melee];
-    // It can't be spun back up until the cooldown from its last hit is over.
-    const spinning = pressed && bot.meleeCd <= 0;
+    // It can't be spun back up until the cooldown from its last hit is over. Most of the battery
+    // goes on the speed going in, and it takes a little more to stay there waiting for a hit.
+    const draw = bot.meleeCharge >= 1 ? batteryCost(def) * SPIN_HOLD_DRAW * dt : (batteryCost(def) * dt) / def.windup;
+    const spinning = pressed && bot.meleeCd <= 0 && this.spend(bot, draw);
     const change = spinning ? dt / def.windup : -dt / (def.windup * 2);
     bot.meleeCharge = Math.max(0, Math.min(1, bot.meleeCharge + change));
     bot.meleeActive = spinning;
@@ -890,7 +940,7 @@ export class Match {
     const dist = Math.hypot(target.x - bot.x, target.z - bot.z) || 1;
     const nx = (target.x - bot.x) / dist;
     const nz = (target.z - bot.z) / dist;
-    this.damage(target, def.damage * speed * this.damageOutput(bot), bot.id);
+    this.damage(target, def.damage * speed * this.hitOutput(bot), bot.id, def.pierce);
     const throwForce = def.knockback * speed;
     target.vx += (nx * throwForce) / target.mass;
     target.vz += (nz * throwForce) / target.mass;
@@ -912,7 +962,8 @@ export class Match {
     const holding = bot.clawTarget >= 0 ? this.bots[bot.clawTarget] : null;
     if (holding) {
       bot.clawT -= dt;
-      if (!pressed || !holding.alive || bot.clawT <= 0) {
+      // Letting go when the battery gives out, the same as when the key comes up.
+      if (!pressed || !holding.alive || bot.clawT <= 0 || !this.spend(bot, batteryCost(def) * dt)) {
         bot.clawTarget = -1;
         bot.meleeCd = def.cooldown;
         return;
@@ -924,7 +975,7 @@ export class Match {
       holding.vx = bot.vx;
       holding.vz = bot.vz;
       holding.stunT = Math.max(holding.stunT, 0.1);
-      this.damage(holding, def.damage * this.damageOutput(bot) * dt, bot.id);
+      this.damage(holding, def.damage * this.hitOutput(bot) * dt, bot.id, def.pierce);
       return;
     }
     if (!pressed || bot.meleeCd > 0) return;
@@ -963,6 +1014,10 @@ export class Match {
     if (def.passive || !bot.input.defense || bot.defenseCd > 0 || bot.stunT > 0) return;
     // Only these two care about a fresh press. The rest fire whenever they're ready.
     if ((id === 'remote' || id === 'kamikaze') && !pressed) return;
+    // Too little for this only means this doesn't happen. It takes the weapon or boost to run it flat.
+    const share = (def.battery ?? 0) / bot.batteryCap;
+    if (share > 0 && (bot.batteryFlat || bot.ammo < share)) return;
+    bot.ammo -= share;
 
     const dropAngle = this.defenseAngle(bot);
     const dropX = bot.x + Math.sin(dropAngle) * (bot.radius + 1);
@@ -1096,7 +1151,8 @@ export class Match {
     return false;
   }
 
-  damage(target: Bot, amount: number, source: number): void {
+  /** `pierce` is the share of the hit that goes straight through armour. */
+  damage(target: Bot, amount: number, source: number, pierce = 0): void {
     if (!target.alive || target.invulnT > 0 || amount <= 0) return;
     const attacker = source >= 0 ? this.bots[source] : undefined;
 
@@ -1112,8 +1168,12 @@ export class Match {
       if (facing < 0.9) taken *= DEFENSES.plow.damage;
     }
     const shielded = taken < amount;
-    const dealt = Math.min(target.hp, taken);
-    target.hp -= dealt;
+    // The armour takes what doesn't pierce it, for as long as there's any left.
+    const soaked = Math.min(target.armour / ARMOUR.wear, taken * (1 - pierce));
+    target.armour = Math.max(0, target.armour - soaked * ARMOUR.wear);
+    const toHealth = Math.min(target.hp, taken - soaked);
+    target.hp -= toHealth;
+    const dealt = soaked + toHealth;
     target.flashT = 0.12;
     target.lastHitT = this.time;
     if (attacker && attacker !== target) {
@@ -1193,11 +1253,13 @@ export class Match {
     this.place(bot, bestSpawn.x, bestSpawn.z);
     bot.alive = true;
     bot.hp = bot.maxHp;
+    bot.armour = bot.maxArmour;
     bot.invulnT = MATCH.spawnInvuln;
     bot.lastAttacker = -1;
     bot.stunT = bot.stunGuardT = bot.boostT = bot.rageT = bot.shieldT = bot.megaT = bot.airT = bot.flipT = bot.meleeCharge = 0;
     bot.slowT = bot.blindT = bot.cloakT = bot.bladesT = bot.regenT = 0;
     bot.ammo = 1;
+    bot.batteryFlat = false;
     bot.heldT = 0;
     this.events.push({ type: 'spawn', bot: bot.id });
   }
@@ -1608,8 +1670,8 @@ export class Match {
     if (a.out !== b.out) return a.out ? 1 : -1;
     if (this.oneLife && a.eliminatedAt !== b.eliminatedAt) return b.eliminatedAt - a.eliminatedAt;
     if (this.mode === 'koth' && a.hillScore !== b.hillScore) return b.hillScore - a.hillScore;
-    // A duel that runs out of time goes to whoever has more armour left.
-    if (this.mode === 'duel' && a.hp / a.maxHp !== b.hp / b.maxHp) return b.hp / b.maxHp - a.hp / a.maxHp;
+    // A duel that runs out of time goes to whoever has more left, out of what they started with.
+    if (this.mode === 'duel' && condition(a) !== condition(b)) return condition(b) - condition(a);
     return b.kills - a.kills || b.assists - a.assists || b.damageDealt - a.damageDealt || a.id - b.id;
   }
 

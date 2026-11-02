@@ -169,7 +169,7 @@ await page.evaluate(async ([width, height]) => {
   window.__view = null;
   window.__thumb = (slot, id) => {
     const garage = g.garage;
-    garage.setBuild({ chassis: 'brawler', melee: slot === 'melee' ? id : 'dagger', defense: slot === 'defense' ? id : 'shield', tower: 'medium', wheels: 'large4', color: 0xff8a2a });
+    garage.setBuild({ chassis: 'brawler', melee: slot === 'melee' ? id : 'dagger', defense: slot === 'defense' ? id : 'shield', wheels: 'large4', color: 0xff8a2a });
     garage.turntable.rotation.y = 0;
     const model = garage.model;
     model.root.updateMatrixWorld(true);

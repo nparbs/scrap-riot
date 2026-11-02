@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, CATALOG, loadSave, makeRivals, newSave, partFits, previewLoadout, STARTING_MONEY, upgradeCost, writeSave, retireGuns } from '../src/game/progress';
-import { ARMOUR, buildStats, CHASSIS, MELEE, POWERUP_CAP, spaceCapacity, spaceUsed, TOWERS } from '../src/sim/data';
+import { ARMOUR, buildProblem, buildStats, CHASSIS, MELEE, pointsUsed, POWERUP_CAP, WHEELS } from '../src/sim/data';
 
 describe('cheat codes', () => {
   it('money adds $5000 every time, in any case', () => {
@@ -32,25 +32,25 @@ describe('cheat codes', () => {
   });
 });
 
-describe('armour making room', () => {
+describe('armour giving way', () => {
   const heavy = () => {
     const save = newSave();
     save.money = 100_000;
-    save.loadout.armour = 150;
-    save.loadout.melee = 'vertbar';
+    save.loadout.armour = 100;
+    save.loadout.melee = 'axe';
     return save;
   };
 
   it('drops only as far as it must when moving to a smaller chassis', () => {
     const save = heavy();
-    expect(spaceUsed(save.loadout)).toBeGreaterThan(CHASSIS.scout.space);
+    expect(buildProblem({ ...save.loadout, chassis: 'scout' })).toBe('weight');
     expect(buyOrEquip(save, 'chassis', 'scout')).toBe(true);
     expect(save.loadout.chassis).toBe('scout');
-    expect(spaceUsed(save.loadout)).toBeLessThanOrEqual(spaceCapacity(save.loadout));
-    expect(spaceUsed({ ...save.loadout, armour: save.loadout.armour! + ARMOUR.step })).toBeGreaterThan(spaceCapacity(save.loadout));
+    expect(buildProblem(save.loadout)).toBeNull();
+    expect(buildProblem({ ...save.loadout, armour: save.loadout.armour! + ARMOUR.step })).not.toBeNull();
   });
 
-  it('leaves armour alone when there is already room', () => {
+  it('leaves armour alone when it already fits', () => {
     const save = newSave();
     save.money = 100_000;
     save.loadout.armour = 100;
@@ -61,26 +61,32 @@ describe('armour making room', () => {
   it('shows the same drop in a preview, without changing the robot', () => {
     const save = heavy();
     const shown = previewLoadout(save.loadout, { slot: 'chassis', id: 'scout' });
-    expect(shown.armour).toBeLessThan(150);
-    expect(save.loadout.armour).toBe(150);
+    expect(shown.armour).toBeLessThan(100);
+    expect(save.loadout.armour).toBe(100);
     expect(save.loadout.chassis).toBe('brawler');
   });
 
-  it('still says no room, and keeps the armour, when even the minimum is too much', () => {
+  it('still says no, and keeps the armour, when even none is too much', () => {
     const save = heavy();
     save.loadout.engine = 'turbo';
-    save.loadout.defense = 'emp';
+    save.loadout.melee = 'vertbar';
+    save.loadout.armour = 0;
     expect(partFits(save, 'chassis', 'scout')).toBe(false);
     buyOrEquip(save, 'chassis', 'scout');
     expect(save.loadout.chassis).toBe('brawler');
-    expect(save.loadout.armour).toBe(150);
   });
 
-  it('never touches armour for a part that only takes room', () => {
+  it('also gives way for a heavier weapon', () => {
     const save = heavy();
-    save.loadout.armour = 100;
-    save.loadout.melee = 'dagger';
-    buyOrEquip(save, 'melee', 'vertbar');
+    expect(buyOrEquip(save, 'melee', 'vertbar')).toBe(true);
+    expect(save.loadout.melee).toBe('vertbar');
+    expect(save.loadout.armour).toBeLessThan(100);
+    expect(buildProblem(save.loadout)).toBeNull();
+  });
+
+  it('is left alone by a part that fits as it is', () => {
+    const save = heavy();
+    buyOrEquip(save, 'melee', 'dagger');
     expect(save.loadout.armour).toBe(100);
   });
 });
@@ -203,14 +209,14 @@ describe('saves from when there were guns', () => {
     const save = oldSave();
     const loaded = loadSave({ getItem: () => JSON.stringify(save) });
     expect(loaded.owned).not.toHaveProperty('turret');
-    expect(spaceUsed(loaded.loadout)).toBeGreaterThan(0);
+    expect(pointsUsed(loaded.loadout)).toBeGreaterThan(0);
   });
 });
 
 describe('a new player', () => {
   it('can afford a couple of parts straight away', () => {
     const { money } = newSave();
-    expect(money).toBeGreaterThanOrEqual(MELEE.vertdisc.price + TOWERS.small.price);
+    expect(money).toBeGreaterThanOrEqual(MELEE.vertdisc.price + WHEELS.six.price - 50);
     expect(money).toBeGreaterThanOrEqual(MELEE.drum.price + MELEE.spear.price);
     expect(money).toBeLessThan(CHASSIS.juggernaut.price);
   });

@@ -38,6 +38,8 @@ interface BotVisual {
   model: RobotModel;
   barBack: THREE.Mesh;
   barFront: THREE.Mesh;
+  /** A thin strip above the health bar, for the armour left. */
+  barArmour: THREE.Mesh;
   label: THREE.Sprite;
   smokeT: number;
   wheelSpin: number;
@@ -155,6 +157,7 @@ export class MatchView {
   private readonly wreckMat = new THREE.MeshStandardMaterial({ color: 0x2a2b2d, metalness: 0.6, roughness: 0.8, flatShading: true });
   private readonly barGeo = new THREE.PlaneGeometry(2.4, 0.22);
   private readonly barBackMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.6, depthTest: false });
+  private readonly barArmourMat = new THREE.MeshBasicMaterial({ color: 0x9fc4e8, depthTest: false });
 
   constructor() {
     this.arena = this.sceneFor('pit');
@@ -230,20 +233,22 @@ export class MatchView {
   }
 
   private addBot(bot: Bot): void {
-    const { chassis, melee, defense, paint, rearMelee, tower, wheels } = bot.loadout;
-    const model = buildRobot({ chassis, melee, defense, paint, rearMelee, tower, wheels, color: bot.color });
+    const { chassis, melee, defense, paint, rearMelee, wheels } = bot.loadout;
+    const model = buildRobot({ chassis, melee, defense, paint, rearMelee, wheels, color: bot.color });
     model.root.scale.setScalar(bot.size);
     const barBack = new THREE.Mesh(this.barGeo, this.barBackMat);
     const barFront = new THREE.Mesh(
       this.barGeo,
       new THREE.MeshBasicMaterial({ color: 0x5be36a, depthTest: false, toneMapped: false }),
     );
+    const barArmour = new THREE.Mesh(this.barGeo, this.barArmourMat);
     barBack.renderOrder = 10;
     barFront.renderOrder = 11;
+    barArmour.renderOrder = 11;
     const label = nameSprite(bot.name, bot.color);
     label.renderOrder = 12;
-    this.arena.scene.add(model.root, barBack, barFront, label);
-    this.visuals.set(bot.id, { model, barBack, barFront, label, smokeT: 0, wheelSpin: 0, airPeak: 0, chainTravel: 0, flipPeak: 0, roll: 0, platesLost: 0 });
+    this.arena.scene.add(model.root, barBack, barFront, barArmour, label);
+    this.visuals.set(bot.id, { model, barBack, barFront, barArmour, label, smokeT: 0, wheelSpin: 0, airPeak: 0, chainTravel: 0, flipPeak: 0, roll: 0, platesLost: 0 });
   }
 
   private clearMatch(): void {
@@ -252,7 +257,7 @@ export class MatchView {
     this.ragdolls.clear();
     this.deathHold = 0;
     for (const v of this.visuals.values()) {
-      scene.remove(v.model.root, v.barBack, v.barFront, v.label);
+      scene.remove(v.model.root, v.barBack, v.barFront, v.barArmour, v.label);
       disposeRobot(v.model);
       (v.barFront.material as THREE.Material).dispose();
       v.label.material.map?.dispose();
@@ -412,6 +417,7 @@ export class MatchView {
       const seen = bot.cloakT <= 0 || match.bots[this.followId].xrayT > 0;
       const clear = bot.alive && seen && id !== this.followId && v.label.position.distanceTo(this.camera.position) > 10;
       v.barBack.visible = v.barFront.visible = v.label.visible = clear;
+      v.barArmour.visible = clear && bot.armour > 0;
     }
   }
 
@@ -680,17 +686,24 @@ export class MatchView {
     v.barFront.translateX(-1.2 * (1 - health));
     const color = health > 0.5 ? 0x5be36a : health > 0.25 ? 0xf2c037 : 0xe84a3a;
     (v.barFront.material as THREE.MeshBasicMaterial).color.setHex(color);
+    const armour = bot.maxArmour > 0 ? bot.armour / bot.maxArmour : 0;
+    v.barArmour.position.set(x, barY, z);
+    v.barArmour.quaternion.copy(this.camera.quaternion);
+    v.barArmour.scale.set(Math.max(0.001, armour), 0.4, 1);
+    v.barArmour.translateX(-1.2 * (1 - armour));
+    v.barArmour.translateY(0.2);
     v.label.position.set(x, barY + 0.55, z);
   }
 
-  /** The paint scorches and armor plates break off as a robot takes damage. */
+  /** Armor plates break off as its armor wears away, or with its health if it has none, and the paint scorches as its health goes. */
   private showDamage(bot: Bot, v: BotVisual, health: number): void {
     const { model } = v;
     const shade = 0.4 + 0.6 * health;
     model.materials.forEach((material, i) => material.color.copy(model.baseColors[i]).multiplyScalar(shade));
 
     // Health can round to just above full on its way over the network.
-    const lost = Math.floor(Math.max(0, 1 - health) * 1.4 * model.plates.length);
+    const plating = bot.maxArmour > 0 ? bot.armour / bot.maxArmour : health;
+    const lost = Math.floor(Math.max(0, 1 - plating) * 1.4 * model.plates.length);
     const target = Math.min(lost, model.plates.length);
     if (target < v.platesLost) {
       // Healing bolts the armor back on.

@@ -1352,6 +1352,15 @@ select:focus-visible {
   transition: width 80ms linear;
 }
 
+.armor-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 4px;
+  background: #9fc4e8;
+  transition: width 80ms linear;
+}
+
 .hp-text {
   position: absolute;
   inset: 0;

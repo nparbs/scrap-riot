@@ -1,11 +1,13 @@
 import { ACHIEVEMENTS, CAREER, isUnlocked, type AchievementStats, type CareerProgress, type Fight, type Medal } from '../game/career';
-import { canSell, CATALOG, CHEAT_MAX, partFits, previewLoadout, sellPrice, upgradeCost, type PartPreview, type Save, type Slot } from '../game/progress';
+import { canSell, CATALOG, CHEAT_MAX, partProblem, previewLoadout, sellPrice, upgradeCost, type PartPreview, type Save, type Slot } from '../game/progress';
 import { ACTIONS, activeLevel, keyLabel, LEVELS, QUALITY, VOLUME_KINDS, type Action, type Bindings, type Quality, type Settings, type VolumeKind } from '../game/settings';
 import { DEFAULT_NAME, NAME_MAX, sanitizeName, type HistoryEntry, type LeaderboardEntry, type OnlineQueue, type OnlineStatus, type Profile } from '../net/protocol';
 import { logoUrl } from '../render/logo';
 import { ARENA_ORDER, ARENAS, type ArenaId } from '../sim/arena';
 import {
   ARMOUR,
+  batteryCost,
+  buildProblem,
   buildStats,
   CHASSIS,
   DEFENSES,
@@ -21,13 +23,15 @@ import {
   POWERUP_ORDER,
   POWERUP_SLOTS,
   fittedPowerups,
-  spaceCapacity,
-  spaceUsed,
+  payloadUsed,
+  POINT_BUDGET,
+  pointsUsed,
   UPGRADES,
-  weaponSpace,
   type MeleeId,
   type ModeId,
   type Paint,
+  ENGINES,
+  POWER_SOURCES,
   type PartDef,
   type PowerupId,
   type UpgradeId,
@@ -250,17 +254,17 @@ export type BuyCategory = Slot | 'powerups' | 'upgrades';
 const TOP_TABS: [GarageTab, string][] = [['workshop', 'Workshop'], ['paintshop', 'Paintshop'], ['sell', 'Sell Parts'], ['bots', 'Fight Bots'], ['stats', 'Stats'], ['help', 'Help']];
 const SIDE_TABS: [SideTab, string][] = [['stats', 'Specs'], ['highscore', 'Highscore'], ['players', 'Players']];
 const SLOT_LABELS: Record<Slot, string> = {
-  chassis: 'Chassis', tower: 'Tower', wheels: 'Wheels', engine: 'Engine', power: 'Power source',
+  chassis: 'Chassis', wheels: 'Wheels', engine: 'Engine', power: 'Power source',
   melee: 'Main weapon', defense: 'Defense',
 };
 const SLOTS = Object.keys(SLOT_LABELS) as Slot[];
 /** The shop's sections down the side, in the order you'd think about a robot. */
 const SHOP_GROUPS: [string, [BuyCategory, string][]][] = [
   ['Weapons', [['melee', SLOT_LABELS.melee], ['defense', SLOT_LABELS.defense]]],
-  ['Robot', [['chassis', SLOT_LABELS.chassis], ['tower', SLOT_LABELS.tower], ['wheels', SLOT_LABELS.wheels], ['engine', SLOT_LABELS.engine], ['power', SLOT_LABELS.power]]],
-  ['Extras', [['powerups', 'Powerups'], ['upgrades', 'Upgrades']]],
+  ['Robot', [['chassis', SLOT_LABELS.chassis], ['wheels', SLOT_LABELS.wheels], ['engine', SLOT_LABELS.engine], ['power', SLOT_LABELS.power]]],
+  ['Extras', [['powerups', 'Powerups'], ['upgrades', 'Career Upgrades']]],
 ];
-const STAT_MAX = { speed: 24, hp: 440 };
+const STAT_MAX = { speed: 20, hp: 250 };
 
 export interface GarageOptions {
   onlineAvailable: boolean;
@@ -374,22 +378,29 @@ function percentChip(value: number | undefined, label: string, lowerIsBetter = f
   return chip(`${value > 1 ? '+' : '−'}${Math.round(Math.abs(value - 1) * 100)}% ${label}`, better ? 'good' : 'bad');
 }
 
-/** What the shop says about a part. Weapons take room according to their price, and the chassis provides it. */
+function costChips(part: { points: number; weight: number }): string {
+  return chip(`${part.points} pts`) + chip(`${part.weight} kg`);
+}
+
+/** What the shop says about a part: what it does, and what it costs in points and weight. */
 function partChips(slot: Slot, id: string): string {
   if (slot === 'chassis') {
     const c = CHASSIS[id as keyof typeof CHASSIS];
-    return chip(`${c.hp} HP`) + chip(`Speed ${c.speed}`) + chip(`${c.mass} t`) + chip(`Room ${c.space}`, 'good');
+    const stock = buildStats({ chassis: id as keyof typeof CHASSIS, melee: 'chainsaw', defense: 'shield' });
+    return chip(`${c.hp} health`) + chip(`Carries ${c.payload} kg`, 'good') + chip(`Speed about ${stock.speed.toFixed(0)}`) + chip(`Hits at ${Math.round(stock.punch * 100)}%`) + costChips(c);
   }
   if (slot === 'melee') {
     const weapon = MELEE[id as MeleeId];
     const held = weapon.kind === 'held' || weapon.kind === 'magnet' || weapon.kind === 'claw';
+    const battery = batteryCost(weapon);
     return [
       weapon.damage ? chip(`${weapon.damage}${held ? ' per sec' : ' dmg'}`) : '',
       weapon.range ? chip(`Reach ${weapon.range}`) : '',
       weapon.cooldown >= 0.3 ? chip(`${weapon.cooldown}s reload`) : '',
-      weapon.battery || weapon.drain ? chip('Battery', 'bad') : '',
+      weapon.pierce ? chip(`${Math.round(weapon.pierce * 100)}% through armor`, 'good') : '',
+      battery > 0 ? chip(`${Math.round(battery * 100)}% battery ${held ? 'per sec' : 'per hit'}`, 'bad') : chip('No battery', 'good'),
       weapon.onTower ? chip('On the tower', 'good') : '',
-      chip(`Takes ${weaponSpace(weapon.price)} room`),
+      costChips(weapon),
     ].join('');
   }
   if (slot === 'defense') {
@@ -397,19 +408,21 @@ function partChips(slot: Slot, id: string): string {
     return [
       defense.passive ? chip('Always on', 'good') : chip(`${defense.cooldown}s reload`),
       defense.mounted ? chip('One side') : chip('All around', 'good'),
-      chip(`Takes ${weaponSpace(defense.price)} room`),
+      defense.battery ? chip(`${Math.round(defense.battery * 100)}% battery`, 'bad') : '',
+      costChips(defense),
     ].join('');
   }
   const part = (CATALOG[slot] as Record<string, PartDef>)[id];
+  const engine = slot === 'engine' ? ENGINES[id as keyof typeof ENGINES] : null;
+  const power = slot === 'power' ? POWER_SOURCES[id as keyof typeof POWER_SOURCES] : null;
   return [
-    percentChip(part.hp, 'armour'),
+    engine ? chip(`${engine.power} power`) : '',
+    power ? percentChip(power.regen, 'recharge') + percentChip(power.capacity, 'capacity') : '',
     percentChip(part.speed, 'speed'),
     percentChip(part.accel, 'accel'),
     percentChip(part.turn, 'turning'),
-    percentChip(part.mass, 'weight', true),
-    percentChip(part.regen, 'recharge'),
-    part.room ? chip(`+${part.room} room`, 'good') : '',
-    chip(`Takes ${part.space} room`),
+    percentChip(part.mass, 'grip'),
+    costChips(part),
   ].join('');
 }
 
@@ -418,7 +431,7 @@ function bar(label: string, fraction: number, over = false): string {
 }
 
 function fittedPart(loadout: Save['loadout'], slot: Slot): string {
-  return (loadout as unknown as Record<Slot, string>)[slot] ?? installedParts(loadout)[slot as 'tower'];
+  return (loadout as unknown as Record<Slot, string>)[slot] ?? installedParts(loadout)[slot as 'engine'];
 }
 
 /** Every part of one type. Clicking one only tries it on, and nothing is spent without pressing its button. */
@@ -431,14 +444,14 @@ function partCards(save: Save, slot: Slot, preview: PartPreview | null): string 
       const has = owned.includes(id);
       const trying = preview?.slot === slot && preview.id === id;
       const broke = !has && save.money < item.price;
-      const fits = partFits(save, slot, id);
+      const problem = partProblem(save, slot, id);
       const type = slot === 'melee' ? `<small class="card-type">${MELEE[id as MeleeId].type}</small>` : '';
       // Made by scripts/make-previews.mjs, from the game's own models.
       const thumb = slot === 'melee' || slot === 'defense' ? `<img class="card-thumb" src="${import.meta.env.BASE_URL}previews/${slot}-${id}.jpg" alt="" loading="lazy" />` : '';
       const about = `${thumb}<strong>${item.name}</strong>${type}<span>${item.blurb}</span><div class="chips">${partChips(slot, id)}</div>`;
       const price = has ? '<small class="card-owned">Owned</small>' : `<small class="card-price">$${item.price.toLocaleString()}</small>`;
       const action = has
-        ? `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${fits ? '' : 'disabled'}>${fits ? 'Fit' : 'No room'}</button>`
+        ? `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${problem ? 'disabled' : ''}>${problem === 'weight' ? 'Too heavy' : problem === 'points' ? 'Too many points' : 'Fit'}</button>`
         : `<button class="plate-btn plate-buy" data-slot="${slot}" data-id="${id}" ${broke ? 'disabled' : ''}>Buy</button>`;
       return on
         ? `<div class="card part-card card-on"><div class="part-card-about">${about}</div><div class="card-foot"><small class="card-owned">Fitted</small></div></div>`
@@ -483,14 +496,15 @@ function workshopPanel(save: Save, options: GarageOptions): string {
   const shown = previewLoadout(loadout, preview);
   const parts = installedParts(shown);
   const stats = buildStats(shown);
-  const used = spaceUsed(shown);
-  const capacity = spaceCapacity(shown);
+  const used = pointsUsed(shown);
+  const carried = payloadUsed(shown);
+  const payload = CHASSIS[shown.chassis].payload;
 
-  const armourFits = spaceUsed({ ...loadout, armour: parts.armour + ARMOUR.step }) <= spaceCapacity(loadout);
-  const armour = `<span class="part-armour">Armour:
-    <button class="step-btn" data-armour="${parts.armour - ARMOUR.step}" ${parts.armour <= ARMOUR.min ? 'disabled' : ''} aria-label="Less armour">◀</button>
+  const armourFits = !buildProblem({ ...loadout, armour: parts.armour + ARMOUR.step });
+  const armour = `<span class="part-armour">Armor:
+    <button class="step-btn" data-armour="${parts.armour - ARMOUR.step}" ${parts.armour <= ARMOUR.min ? 'disabled' : ''} aria-label="Less armor">◀</button>
     <b>${parts.armour}</b>
-    <button class="step-btn" data-armour="${parts.armour + ARMOUR.step}" ${parts.armour >= ARMOUR.max || !armourFits ? 'disabled' : ''} aria-label="More armour">▶</button></span>`;
+    <button class="step-btn" data-armour="${parts.armour + ARMOUR.step}" ${parts.armour >= ARMOUR.max || !armourFits ? 'disabled' : ''} aria-label="More armor">▶</button></span>`;
   const rear = loadout.rearMelee === true;
   const placement = {
     melee: `<select data-placement aria-label="Main weapon placement"><option value="0"${rear ? '' : ' selected'}>Front</option><option value="1"${rear ? ' selected' : ''}>Back</option></select>`,
@@ -508,7 +522,7 @@ function workshopPanel(save: Save, options: GarageOptions): string {
   const title = SHOP_GROUPS.flatMap(([, items]) => items).find(([id]) => id === category)?.[1] ?? '';
   const cards = category === 'powerups' ? powerupCards(save, options.keys) : category === 'upgrades' ? upgradeCards(save) : partCards(save, category, preview);
   const hint = category === 'upgrades'
-    ? ''
+    ? '<p class="settings-hint"><b>Career only.</b> Upgrades work in Career fights, and nowhere else. Online matches, Offline vs Bots and Training are fought without them.</p>'
     : category === 'powerups'
     ? `<p class="preview-note">Select up to ${POWERUP_SLOTS} to take into a match. Any you don't select stay in the garage, unused.</p>`
     : `<p class="preview-note${preview ? ' preview-on' : ''}">${preview ? `Previewing <b>${partName(preview.slot, preview.id)}</b>. Nothing has changed yet.` : `${isTouchDevice() ? 'Tap' : 'Click'} a part to try it on your robot. Nothing is bought until you press its button.`}</p>`;
@@ -519,9 +533,10 @@ function workshopPanel(save: Save, options: GarageOptions): string {
         <div class="shop-head">
           <h3>${title}</h3>
           <div class="stat-bars">
-            ${bar(`Room ${used} / ${capacity}`, used / capacity, used > capacity)}
+            ${bar(`Points ${used} / ${POINT_BUDGET}`, used / POINT_BUDGET, used > POINT_BUDGET)}
+            ${bar(`Weight ${carried} / ${payload} kg`, carried / payload, carried > payload)}
             ${bar('Top speed', stats.speed / STAT_MAX.speed)}
-            ${bar('Armour', stats.hp / STAT_MAX.hp)}
+            ${bar(`Health ${stats.hp}`, stats.hp / STAT_MAX.hp)}
           </div>
           ${armour}
         </div>
@@ -535,16 +550,21 @@ function workshopPanel(save: Save, options: GarageOptions): string {
 function statsPanel(save: Save, preview: PartPreview | null): string {
   const shown = previewLoadout(save.loadout, preview);
   const stats = buildStats(shown);
-  const used = spaceUsed(shown);
-  const room = spaceCapacity(shown);
+  const used = pointsUsed(shown);
+  const carried = payloadUsed(shown);
+  const payload = CHASSIS[shown.chassis].payload;
   const rows: [string, string, string?][] = [
-    ['Armour', `${Math.round(stats.hp)} HP`],
+    ['Health', `${Math.round(stats.hp)}`],
+    ['Armor', `${stats.armour}`],
     ['Top speed', stats.speed.toFixed(1)],
+    ['Hit power', `${Math.round(stats.punch * 100)}%`],
+    ['Battery size', `${Math.round(stats.capacity * 100)}%`],
+    ['Battery recharge', `${Math.round(stats.regen * 100)}%`],
+    ['Points', `${used} / ${POINT_BUDGET}`, used > POINT_BUDGET ? 'spec-over' : ''],
+    ['Carrying', `${carried} / ${payload} kg`, carried > payload ? 'spec-over' : ''],
+    ['Weight', `${stats.weight} kg`],
     ['Acceleration', stats.accel.toFixed(1)],
     ['Turning', stats.turn.toFixed(2)],
-    ['Weight', `${stats.mass.toFixed(2)} t`],
-    ['Used space', `${used} / ${room}`, used > room ? 'spec-over' : ''],
-    ['Battery recharge', `${Math.round(stats.regen * 100)}%`],
     ['Main weapon', MELEE[shown.melee].name],
   ];
   return `<dl class="spec-grid">${rows.map(([label, value, cls]) => `<div class="${cls ?? ''}"><dt>${label}</dt><dd>${value}</dd></div>`).join('')}</dl>`;
@@ -653,7 +673,10 @@ function helpPanel(keys: Bindings): string {
   const list = (items: string[]) => `<ul class="help-list">${items.map((item) => `<li>${item}</li>`).join('')}</ul>`;
   return `<div class="help-grid">
     <section><h3>The basics</h3>${list([
-      'Build a robot in the Workshop. Every part takes up room, so a bigger chassis fits more.',
+      `Build a robot in the Workshop. Every robot gets ${POINT_BUDGET} points to spend, and stronger parts cost more of them.`,
+      'Everything has a weight too. Big weapons need a big chassis, and the more you carry, the slower you go, unless the engine can keep up.',
+      'Armor wears away before health, though some weapons punch through it. Repairs mend health, and only the Armor Regenerator rebuilds armor.',
+      'Weapons and boost run off the battery, and the harder a weapon hits, the more each hit takes.',
       'Tick up to three powerups in the Workshop to take into a match. The rest stay in your garage.',
       'Robots only turn while rolling, so a stopped robot has to drive forward or back to change direction.',
       'Your defense goes on the opposite side from your main weapon, so moving the weapon to the back moves the defense to the front.',
@@ -664,7 +687,7 @@ function helpPanel(keys: Bindings): string {
       'A flipper lands you upside down, and you can\'t do anything until your robot rights itself about three seconds later.',
     ])}</section>
     <section><h3>Ways to play</h3>${list([
-      '<b>Online Duel:</b> one on one on the roof. Wreck them or knock them off. If time runs out, the most armour left wins.',
+      '<b>Online Duel:</b> one on one on the roof. Wreck them or knock them off. If time runs out, whoever has the most left wins.',
       '<b>Online Brawl:</b> up to eight robots on a random map, with bots in any seats no pilot takes. Wrecked robots come back, first to 8 kills wins, and helping with a kill pays too.',
       '<b>Offline vs Bots and Career:</b> pick a map and mode, or climb the ladder of fights.',
       '<b>Knocked out of Last Robot Standing?</b> Stay and watch from above. You earn money every second, and you can steer a marker and set off the map\'s traps. Leaving means no payout.',

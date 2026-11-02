@@ -1,7 +1,9 @@
 import type { ArenaId } from '../sim/arena';
 import type { ChassisId, DefenseId, MeleeId, ModeId } from '../sim/data';
+import { fillBuild } from '../sim/data';
 import type { BotSetup, Standing } from '../sim/match';
-import { makeRivals } from './progress';
+import { makeRng } from '../sim/rng';
+import { makeRivals, rivalPoints } from './progress';
 
 const CAREER_KEY = 'scrap-riot.career.v1';
 
@@ -38,20 +40,20 @@ export const CAREER: Fight[] = [
   { id: 'c4', title: 'Hold the Deck', blurb: 'Take the middle and keep it, with the ball swinging through.', arena: 'rig', mode: 'koth', rivals: 3, level: 1, reward: 250 },
   {
     id: 'c5', title: 'Old Ironjaw', blurb: 'Boss. The scrapyard\'s oldest brawler wants a word.', arena: 'pit', mode: 'ffa', rivals: 1, level: 1, reward: 500, killTarget: 4,
-    boss: { name: 'Old Ironjaw', chassis: 'rhino', melee: 'hammer', defense: 'steelram', color: 0x8a9096, hpMult: 2.5, size: 1.3 },
+    boss: { name: 'Old Ironjaw', chassis: 'rhino', melee: 'hammer', defense: 'steelram', color: 0x8a9096, hpMult: 1.2, size: 1.3 },
   },
   { id: 'c6', title: 'Heat Stroke', blurb: 'Stay off the vents. Shove them in the steel.', arena: 'furnace', mode: 'ffa', rivals: 4, level: 1, reward: 300, killTarget: 8 },
   { id: 'c7', title: 'Last One Out', blurb: 'One life each, five rivals.', arena: 'furnace', mode: 'lms', rivals: 5, level: 2, reward: 350 },
   { id: 'c8', title: 'Moving Parts', blurb: 'Learn the belts and hammers before they teach you.', arena: 'foundry', mode: 'ffa', rivals: 4, level: 2, reward: 400, killTarget: 8 },
   {
     id: 'c9', title: 'Queen Cinder', blurb: 'Boss. She built the Furnace, and she likes it hot.', arena: 'furnace', mode: 'ffa', rivals: 2, level: 2, reward: 800, killTarget: 5,
-    boss: { name: 'Queen Cinder', chassis: 'juggernaut', melee: 'flamethrower', defense: 'mines', color: 0xe0503a, hpMult: 3, size: 1.4 },
+    boss: { name: 'Queen Cinder', chassis: 'juggernaut', melee: 'flamethrower', defense: 'mines', color: 0xe0503a, hpMult: 2.2, size: 1.4 },
   },
   { id: 'c10', title: 'Thin Ice', blurb: 'Nobody can stop out here, including you.', arena: 'glacier', mode: 'ffa', rivals: 5, level: 3, reward: 500, killTarget: 10 },
   { id: 'c11', title: 'Three Lanes', blurb: 'Hold the middle lane, with chasms on both sides.', arena: 'canyon', mode: 'koth', rivals: 5, level: 3, reward: 600 },
   {
     id: 'c12', title: 'The Last Machine', blurb: 'Final boss. Nothing has ever scratched it.', arena: 'foundry', mode: 'ffa', rivals: 3, level: 4, reward: 1500, killTarget: 6,
-    boss: { name: 'The Last Machine', chassis: 'juggernaut', melee: 'magnet', defense: 'emp', color: 0x33363b, hpMult: 4, size: 1.6 },
+    boss: { name: 'The Last Machine', chassis: 'juggernaut', melee: 'magnet', defense: 'emp', color: 0x33363b, hpMult: 3, size: 1.6 },
   },
 ];
 
@@ -111,10 +113,10 @@ export function fightSetups(fight: Fight, seed: number): BotSetup[] {
       boss: { hpMult, size },
       loadout: {
         ...base.loadout,
-        chassis,
-        melee,
-        defense,
-        powerups: { rage: 1, megashield: 1, cloaking: 0, xray: 0, repair: 1, battery: 1 },
+        // Its toughness is all in its extra health, so it has no armour on top.
+        ...fillBuild({ chassis, melee, defense }, makeRng(seed), Infinity, rivalPoints(level)),
+        armour: 0,
+        powerups: { rage: 1, megashield: 1, cloaking: 0, xray: 0, repair: 0, battery: 0 },
         paint: { primary: color, secondary: 0x33363b, pattern: 'hazard', body: 'slab' },
       },
     },

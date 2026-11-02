@@ -29,7 +29,7 @@ Names and broad behavior come from the sources below. **Exact behavior, damage a
 | Claw | Claw | All | Named only. Carrying the victim is our design. |
 | Magnet | Magnet | RR3 | Named only. Pulling robots is our design. |
 | Spike Ram | none | Ours | Original to Scrap Riot |
-| Vertical Disc, Vertical Bar, Horizontal Bar, Undercutter, Drum, Eggbeater, Ring Spinner, Hammer Saw, Pneumatic Flipper, Hydraulic Crusher, Lifting Forks | none | Real combat robots | See below |
+| Vertical Disc, Vertical Bar, Horizontal Bar, Undercutter, Drum, Hammer Saw, Pneumatic Flipper, Hydraulic Crusher, Lifting Forks | none | Real combat robots | See below |
 | **Gun (Q)** | | | |
 | Chaingun | Chaingun, Mini-Gun | All | Fires along the weapon's forward angle, and doesn't track. 200 charges, damage 2. |
 | Missile Pod | Missiles | RR3 | Named only |

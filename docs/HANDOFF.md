@@ -14,12 +14,24 @@ If `git pull --ff-only origin main` fails with "Cannot fast-forward to multiple 
 
 ## Current state
 
-- **Live:** everything through PR #43 is merged and on the page.
-- **Server:** on protocol 11, last rebuilt for PR #43. The map work is protocol 12, so the page and server have to go live together.
+- **Live:** everything through PR #45 is merged and on the page, with the server on protocol 12.
+- **Not live yet:** the points and balance work on the `points-balance` branch is protocol 13, so the page and server have to go live together.
 - **Tests:** see `npm test`, which includes the map layout checks.
-- **Not verified yet:** the new maps, animations, tracks and window fixes have only run in a headless browser, and nobody has played them by hand. Hazard timings and damage are first guesses, tuned against bots only. An account already showing `null/3` hasn't been checked on the real database, only in tests. Nothing since the phone work has run on a real phone. That includes the thumb buttons, the face-off when a phone really rotates or goes full screen, the landscape lock and Add to Home Screen. The join banner and phone counts have only run against a mocked server, not a real queue.
+- **Not verified yet:** nobody has played the points, weight, armor or battery rules by hand, and no online match has run on them against the real server. The new maps, animations, tracks and window fixes have also only run in a headless browser. Hazard timings and damage are first guesses, tuned against bots only. An account already showing `null/3` hasn't been checked on the real database, only in tests. Nothing since the phone work has run on a real phone. That includes the thumb buttons, the face-off when a phone really rotates or goes full screen, the landscape lock and Add to Home Screen. The join banner and phone counts have only run against a mocked server, not a real queue.
 
-## Latest work (protocol 12)
+## Latest work (protocol 13)
+
+- **Points and weight:** rules, how to test and current results are in [balance.md](balance.md). `POINT_BUDGET`, `pointsUsed`, `payloadUsed`, `buildProblem` and `buildStats` in `src/sim/data.ts` are the core. A chassis has no speed stat any more, because speed comes from engine power against total weight. `Bot.chassis` still has `speed`, `accel` and `mass`, worked out when the robot is created.
+- **Armor:** `Bot.armour` is a separate bar, sent in snapshots. `Match.damage` takes a `pierce` share. The HUD shows it as a thin strip across the top of the health bar, and over each robot's head. Plates fall off the model as armor goes.
+- **Battery:** `batteryCost` in `src/sim/data.ts`, spent through `Match.spend`. `battery` and `drain` on weapons are gone. Running out sets `batteryFlat`, sent in snapshots, which cuts out the weapon and boost until it recharges to `BATTERY_RESTART`. The HUD shows BATTERY FLAT, and bots back away meanwhile.
+- **Towers:** no longer a part. `TOWER_LOOK` in `src/render/robots.ts` sets each chassis's tower size and plating. The Flamethrower and Spear still mount on it, and the Tesla Coil now points forward from the nose.
+- **Old saves:** `retireParts` in `src/game/progress.ts` refunds towers and the removed weapons, and `fitToLimits` cuts a robot down to the limits on load. As with guns, a refund reaches the database with the player's next garage action.
+- **Rivals:** `fillBuild` finishes a robot for bots, and `rivalPoints` limits how many points they get by level, so early rivals are near a starter robot. Bosses get no armor, repair kit or battery pack, because their toughness is in `hpMult`, which was lowered to suit.
+- **Online:** `onlineLoadout` holds a browser's request to the limits. Accounts are held to them by the garage actions and on load.
+- **Upgrades:** Career only, through `withoutUpgrades` in `src/sim/data.ts`, called from `server/room.ts` and from `startMatch` and `startTraining` in `src/main.ts`. The workshop page is called Career Upgrades and says so. Only `Match` setups drop them, so the save keeps them. Rivals outside Career get tougher with wins (`WINS_PER_RIVAL_LEVEL`) and have no upgrades, and online bots use `ONLINE_BOTS`.
+- **Spinners:** they now hold back until 45% speed (`SPINNER_MIN_SPEED`). At 20% they fired feeble hits as soon as they touched anything.
+
+## Earlier work (protocol 12)
 
 - **Maps redone:** the brief, and what the research said, are in [map-design.md](map-design.md). `ARENAS` in `src/sim/arena.ts` holds each layout, and `tests/maps.test.ts` fails if anything on a floor overlaps anything else, which is what caused the old glitches, so a new map gets that check for free. Everything new is timed by `match.time`, so it needs no extra snapshot data.
 - **Real holes:** `floorGeometry` in `src/render/hazards.ts` cuts them out of one sheet of floor, with walls going down and a hot line and glow at the rim. Canyon and Black Ice build only the sides of what's under the floor, because a solid box would plug the holes. Trapdoor leaves sit just below the floor and slide under it, so the floor hides them, and nothing there may use `polygonOffset` or it draws on top.
@@ -35,7 +47,7 @@ If `git pull --ff-only origin main` fails with "Cannot fast-forward to multiple 
 - **Weapon animations:** `poseWeapon` in `src/render/robots.ts` drives them, for both the match and the workshop preview, which now demonstrates the weapon on a loop. Each weapon's own moving parts are in the `animate` it returns from `buildMelee`. New: claw and crusher jaws open and shut, forks lift, the magnet draws in rings of force, the flamethrower's pilot light flickers and flares, the Tesla Coil's crown kicks, the spear telescopes, and the dagger pushes out as the robot charges. All of it reads fields already in snapshots, so the protocol didn't change, and none of it changes the rules. A held robot isn't lifted by the forks, because `clawTarget` isn't sent to clients.
 - **Map and career pictures:** `public/previews`, made from the game's own scenes by `scripts/make-previews.mjs` (instructions at the top of that file). They're plain JPEGs on the cards, about 400 KB in all, loaded only when the Fight Bots tab opens. Run it again if a map, a career fight or the look of a robot changes.
 - **Three powerups at a time:** `POWERUP_SLOTS`. `loadout.powerupSlots` lists what goes into a match, in slot order, and `fittedPowerups` in `src/sim/data.ts` caps it and picks for robots nobody chose for. `Match` only loads those (`carriedPowerups`), so the server enforces it and the rest of the garage stock can't be spent. Keys 1 to 3 and the D-pad's up, right and down fire slots, not particular powerups. Workshop cards have a tick box. In a match they sit in the dock's weapon row on a desktop, and on touch in an arc above the thumb buttons (`.touch-power`).
-- **Tower weapons:** `onTower` on the Flamethrower, Tesla Coil and Pneumatic Spear mounts them on the tower in `buildRobot`, placed by `TOWER_MOUNTS`. Every robot always has a tower, so nothing has to enforce needing one. The rules are unchanged: only the model and where the flame starts moved.
+- **Tower weapons:** `onTower` on the Flamethrower and Pneumatic Spear mounts them on the tower in `buildRobot`, placed by `TOWER_MOUNTS`. Every robot always has a tower, so nothing has to enforce needing one.
 - **Spinner sound:** set well below everything else on purpose, including the extra clang when they land a big hit (`SPINNER_HIT_VOLUME`). The whine is a low triangle wave now.
 - **Announcer:** "Winner" and "Scrapped" are the game's own robot voice, in `public/voice/`, played by `Sfx.announce` through the effects mix. `scripts/make-voice.mjs` makes them from scratch with a small formant synthesizer, so no recording or outside voice is involved. Nothing plays in a draw.
 - **Phone workshop menu:** every section shows at once in a grid (`.shop-rail`), 3 across upright and 5 sideways. The top tabs also fit without scrolling, with a row of their own on an upright phone.
@@ -46,7 +58,7 @@ If `git pull --ff-only origin main` fails with "Cannot fast-forward to multiple 
 - **Defense gear on show:** `buildDefenseGear` gives every defense its own model. Big things sit on a shelf behind the hull, opposite the main weapon, and small ones on the tower at `TOWER_SPOT`, because only the tower stands above the deck. It's only a look, and changes nothing in the rules.
 - **Long names:** names can be 16 wide letters. The face-off shrinks them to fit (`fitNames`), and it must not clip them, because the slanted font leans past its own box. Elsewhere they end in an ellipsis.
 - **No guns:** turrets, projectiles and the gun key are gone. The Flamethrower, Arc Coil (now Tesla Coil) and Spear Gun (now Pneumatic Spear) became main weapons. `retireGuns` in `src/game/progress.ts` upgrades old saves on load, refunding any other gun bought and handing over the weapon a converted one became. The refund reaches the database with the player's next garage action.
-- **Balance:** `npm run balance` plays 8-robot matches in every big mode, plus a duel round robin. Bots-only numbers can't show how a weapon feels to a person. Bots are poor with the Magnet (27% of duels) and strong with the Ring Spinner (69%, mostly by outlasting), so check those by hand before moving them further.
+- **Balance:** see [balance.md](balance.md).
 - **Big matches:** assists pay `REWARD.assist`, splash shrinks with `CROWD_SPLASH` for each extra robot caught, chained stuns shorten under `STUN_GUARD`, repairs spawn faster with more robots, landing a hit ends spawn protection and cloaking, bots avoid piling on one target and lean toward the leader, and a shared hill splits its points.
 - **Death:** `src/render/ragdoll.ts` tumbles a copy of the model for `RAGDOLL_TIME`, then blows it apart. `kill` events carry position and speed for this, and the sim no longer sends an explosion when a robot dies. The Hud then fades to black with a line from `src/game/lastWords.ts`. The user asked for Breaking Bad quotes there, but these are original lines, because this is a public game and the show's dialogue isn't ours to ship. The list is plain text and easy to change.
 - **Duel face-off:** `src/ui/duelIntro.ts`, with its own small renderer so robots sit between the page's layers. A duel's countdown is `COUNTDOWN + DUEL_INTRO`, including online, so the face-off is timed by the match and a late joiner lands part way through. On an upright screen the robots stack, each by their own name, because the VS would cover them side by side.
@@ -69,7 +81,7 @@ If `git pull --ff-only origin main` fails with "Cannot fast-forward to multiple 
 - **Weapon models:** every weapon in `src/render/robots.ts` is rebuilt from helpers such as `sawBlade`, `sideOn`, `turned` and `piston`. The chainsaw's teeth really run around its bar, using an `InstancedMesh`. Reach is about what it was, so models still match what they hit.
 - **Online Brawl:** a second online queue, set by `BRAWL_ROOM_OPTIONS` in `server/room.ts`. It's a Free-for-All on a random map for 8 robots, needing at least 2 humans, with bots in the other seats. It starts 10 seconds after a second pilot joins, or 3 seconds after it fills. Leaving or staying disconnected removes the robot and ranks that pilot last, a last human fights on against the bots, and the match ends once every human has gone. The queue screen shows bots fighting on the chosen map, using the same demo match as the title screen.
 - **Cheat codes:** on the Stats page. `money` gives $5,000 each time, and `unlock` owns every part, in `applyCheat` in `src/game/progress.ts`. With an account the server applies them, and money shows in the ledger as `garage: cheat`. They work for anyone, and the codes are readable in the public page and repo, so nothing bought online can be trusted as earned. Worth removing or limiting before sharing widely.
-- **Armour makes room:** switching to a smaller chassis or tower lowers armour as far as needed to fit, in `withPart` in `src/game/progress.ts`. If even the minimum armour doesn't fit, the part still says No room.
+- **Armor gives way:** fitting any part lowers armor as far as needed to stay within the limits, in `withPart` in `src/game/progress.ts`. If even no armor isn't enough, the part says Too heavy or Too many points.
 - **Intro:** one second, with the logo slamming down, a flash, a shockwave ring and sparks. It's all CSS, timed around the moment of impact. Rating runs evenly from +25 for first to -15 for last.
 - **Payouts:** anyone still in a match when it ends earns at least `REWARD.minimum` ($100), including losers and draws, however short the match. Anyone who surrendered gets no minimum, and anyone who left gets nothing. With an account, offline and career matches are now banked with a `payout` garage action, capped at `OFFLINE_PAYOUT_MAX`. They used to pay accounts nothing, and every player gets a guest account, so that's why payouts looked broken. The server takes the browser's word for the amount, and two accounts can farm a duel by surrendering. Neither matters while the `money` cheat exists, but both should be closed before wide sharing.
 - **Countdown:** every match starts with 3, 2, 1, GO!, set by `COUNTDOWN`. Nothing moves and the clock doesn't run until it ends. The title screen and queue background matches skip it.
@@ -95,9 +107,9 @@ Shipped before the latest work, and still true unless it says otherwise above.
 
 - **1v1 online:** Online Duel is always a Duel on The Skyscraper with no bots. A match starts only once a second player joins.
 - **Ways to play:** Online Duel, Online Brawl, Offline vs Bots (choice of map and mode, plus Career) and Training (a practice dummy, no payout).
-- **Workshop:** in the style of the original, with Chassis, Tower, Wheels, Engine, Power Source and an Armour dial, limited by Used Space.
+- **Workshop:** in the style of the original, with Chassis, Wheels, Engine, Power Source and an Armor dial, limited by points and weight.
 - **Paintshop:** paint on an unfolded robot with drawing tools and a 120-colour palette. Opponents see it. Paint jobs are in `src/game/skin.ts`.
-- **Melee only:** 23 main weapons, including spinners that store energy, a flipper, a crusher and forks.
+- **Melee only:** 21 main weapons, including spinners that store energy, a flipper, a crusher and forks.
 - **Battery:** runs the Shift boost and powered weapons.
 - **Look and sound:** BattleBots-style robots, a redrawn logo, synthesized sound and music, a short intro, and a name prompt on first visit.
 - **Netcode:** fixed the online stutter with an input queue on the server and blended prediction on the client.
@@ -113,17 +125,17 @@ The user tests by hand, and their feedback should drive what comes next. Open it
 
 1. **Real phone test:** see "Not verified yet" under Current state. The face-off and the join banner are the first things to try.
 2. **Paintshop on phones:** the last layout problem at the 720p minimum. See Known weak spots.
-3. **Human playtest:** nobody has played the new weapons by hand against another person. Balance has only been tuned against bots.
+3. **Human playtest:** nobody has played the points, weight, armor and battery rules by hand. Balance has only been tuned against bots.
 4. **Sound by ear:** levels were measured but never listened to by the person building them, so the user's opinion overrides the numbers. That includes the quieter spinners.
 5. **Google sign-in:** the name prompt is a stopgap until this exists. `GOOGLE_CLIENT_ID` isn't set on the server.
 6. **Name and paint moderation:** there is no filter on names and no report button for paint jobs. This is needed before sharing widely. The original had a Report Abuse button.
 7. **Custom domain:** `scrapriot.parbs.online` was discussed but not set up. DNS, GitHub Pages and the server's `ALLOWED_ORIGINS` would all need changing.
 8. **Database backups:** the nightly backup in [hosting.md](hosting.md) was never set up on the VM.
-9. **Roadmap items:** modular robots with two main weapons, weight as a stat.
+9. **Roadmap items:** modular robots with two main weapons.
 
 ### Known weak spots
 
-- **Weapon balance:** the turning change reshuffled bot-only duels, so the numbers need a fresh look. Axe (about 76%) and Ring Spinner (about 71%) lead, Flipper is about 65%, and Magnet and Lifting Forks still trail at about 15%. Run `npm run balance -- 42 6` for current numbers.
+- **Balance:** see Known limits in [balance.md](balance.md). Light robots lose bot brawls, and the Magnet leads brawls while trailing duels.
 - **Bot driving:** bots can't turn on the spot either, so `mindTheEdge` in `src/sim/ai.ts` slows them for turns near a ledge and backs them away. Without it, about 70% of bot duels ended in a fall. It's now about 10%, except for the Flipper at about 60%, where falls are the point. Maps with pits rely on the older steering away from hazards, and weren't measured separately.
 - **Mini-Robot:** it still hunts on its own. The user asked for no gun tracking, and this is a drone, so it was left alone and flagged to them. They have not said either way.
 - **Windows Sticky Keys:** tapping Shift five times can bring up the prompt.

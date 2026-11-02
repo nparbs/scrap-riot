@@ -5,7 +5,7 @@ import { DEFAULT_BINDINGS, loadSettings } from '../src/game/settings';
 import { PadReader, type PadLike } from '../src/gamepad';
 import { onlineLoadout } from '../src/net/protocol';
 import { buildRobot } from '../src/render/robots';
-import { fittedPowerups, MELEE, POWERUP_SLOTS, type MeleeId } from '../src/sim/data';
+import { CHASSIS, fittedPowerups, MELEE, POWERUP_SLOTS, type ChassisId, type MeleeId } from '../src/sim/data';
 import { Match, type Loadout } from '../src/sim/match';
 
 const ALL = { rage: 2, megashield: 2, cloaking: 2, xray: 2, repair: 2, battery: 2 };
@@ -131,11 +131,24 @@ describe('powerup controls', () => {
 
 describe('gun-style weapons', () => {
   const GUNS = (Object.keys(MELEE) as MeleeId[]).filter((id) => MELEE[id].onTower);
-  const build = (melee: MeleeId, rearMelee = false, tower: 'small' | 'medium' | 'large' = 'medium') =>
-    buildRobot({ chassis: 'brawler', melee, defense: 'shield', color: 0xff8a2a, rearMelee, tower });
+  const build = (melee: MeleeId, rearMelee = false, chassis: ChassisId = 'brawler') =>
+    buildRobot({ chassis, melee, defense: 'shield', color: 0xff8a2a, rearMelee });
 
-  it('are the flamethrower, the tesla coil and the spear', () => {
-    expect(GUNS.sort()).toEqual(['flamethrower', 'spear', 'tesla']);
+  it('are the flamethrower and the spear', () => {
+    expect(GUNS.sort()).toEqual(['flamethrower', 'spear']);
+  });
+
+  it('leave the tesla coil out, which points forward from the nose', () => {
+    const model = build('tesla');
+    expect(model.meleePivot.parent).toBe(model.root);
+    model.root.updateMatrixWorld(true);
+    const coil = new THREE.Box3().setFromObject(model.meleePivot);
+    const hull = new THREE.Box3().setFromObject(build('dagger').root);
+    expect(coil.max.z).toBeGreaterThan(hull.max.z - 1);
+    expect(coil.min.z).toBeGreaterThan(0);
+    const rear = build('tesla', true);
+    rear.root.updateMatrixWorld(true);
+    expect(new THREE.Box3().setFromObject(rear.meleePivot).max.z).toBeLessThan(0);
   });
 
   it('bolt onto the tower, while everything else stays on the hull', () => {
@@ -156,9 +169,9 @@ describe('gun-style weapons', () => {
     expect(point(true).min.z).toBeLessThan(-1);
   });
 
-  it('flame from the end of the barrel, whichever tower it is on', () => {
-    for (const tower of ['small', 'medium', 'large'] as const) {
-      const model = build('flamethrower', false, tower);
+  it('flame from the end of the barrel, whichever chassis it is on', () => {
+    for (const chassis of Object.keys(CHASSIS) as ChassisId[]) {
+      const model = build('flamethrower', false, chassis);
       model.root.updateMatrixWorld(true);
       const barrel = new THREE.Box3().setFromObject(model.meleePivot);
       expect(model.muzzle.reach).toBeCloseTo(barrel.max.z, 1);

@@ -12,8 +12,8 @@ import {
   PATTERNS,
   POWER_SOURCES,
   POWERUP_ORDER,
+  fitToLimits,
   fittedPowerups,
-  TOWERS,
   WHEELS,
   type ModeId,
   type Paint,
@@ -23,7 +23,7 @@ import type { BotSetup, GameEvent, Loadout } from '../sim/match';
 import type { Save } from '../game/progress';
 import { decodeSkin } from '../game/skin';
 
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 /** The most a browser can bank for a match it ran itself. */
 export const OFFLINE_PAYOUT_MAX = 10_000;
 export const NAME_MAX = 16;
@@ -144,7 +144,8 @@ export function sanitizePaint(raw: unknown): Paint {
 export function onlineLoadout(raw: unknown): Loadout {
   const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   const powerups: Record<PowerupId, number> = { rage: 1, megashield: 1, cloaking: 1, xray: 1, repair: 1, battery: 1 };
-  return {
+  // A browser could ask for any mix, so it's held to the same limits as the workshop.
+  return fitToLimits({
     chassis: pickKey(CHASSIS, r.chassis, 'brawler'),
     melee: pickKey(MELEE, r.melee, 'chainsaw'),
     defense: pickKey(DEFENSES, r.defense, 'shield'),
@@ -153,12 +154,11 @@ export function onlineLoadout(raw: unknown): Loadout {
     upgrades: { armor: 0, engine: 0, weapons: 0 },
     paint: sanitizePaint(r.paint),
     rearMelee: r.rearMelee === true,
-    tower: pickKey(TOWERS, r.tower, 'medium'),
     wheels: pickKey(WHEELS, r.wheels, 'large4'),
     engine: pickKey(ENGINES, r.engine, 'medium'),
     power: pickKey(POWER_SOURCES, r.power, 'alkaline'),
-    armour: typeof r.armour === 'number' && r.armour >= ARMOUR.min && r.armour <= ARMOUR.max ? r.armour : ARMOUR.default,
-  };
+    armour: typeof r.armour === 'number' && r.armour >= ARMOUR.min && r.armour <= ARMOUR.max && r.armour % ARMOUR.step === 0 ? r.armour : ARMOUR.default,
+  });
 }
 
 // --- Accounts ---
