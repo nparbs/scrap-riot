@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buyOrEquip, newSave, partFits, sellPart, setArmour } from '../src/game/progress';
+import { buyOrEquip, loadSave, makeRivals, newSave, partFits, partProblem, retireParts, sellPart, setArmour } from '../src/game/progress';
 import { ARENAS } from '../src/sim/arena';
-import { ARMOUR, buildStats, CHASSIS, REWARD, spaceCapacity, spaceUsed, TOWERS, DEFENSES } from '../src/sim/data';
+import { ARMOUR, batteryCost, BATTERY_RESTART, buildProblem, buildStats, CHASSIS, DEFENSES, ENGINES, fillBuild, fitToLimits, MELEE, payloadUsed, POINT_BUDGET, pointsUsed, POWER_SOURCES, REWARD, WHEELS, withoutUpgrades, type ChassisId, type MeleeId } from '../src/sim/data';
+import { onlineLoadout } from '../src/net/protocol';
+import { makeRng } from '../src/sim/rng';
 import { Match, type BotSetup, type Loadout } from '../src/sim/match';
 
 const pilot = (name: string, over: Partial<Loadout> = {}): BotSetup => ({ name, color: 0, isAI: false, loadout: { ...newSave().loadout, ...over } });
@@ -10,28 +12,45 @@ function duel(a: Partial<Loadout> = {}, b: Partial<Loadout> = {}): Match {
   return new Match([pilot('A', a), pilot('B', b)], { seed: 1, arena: 'skyscraper', mode: 'duel' });
 }
 
+/** Two robots face to face on an open bit of floor, with nothing protecting them. */
+function open(a: Partial<Loadout> = {}, b: Partial<Loadout> = {}): Match {
+  const match = new Match([pilot('A', a), pilot('B', b)], { seed: 1, arena: 'foundry', mode: 'ffa' });
+  const [x, y] = match.bots;
+  x.invulnT = y.invulnT = 0;
+  x.x = y.x = -20;
+  x.z = -5;
+  x.heading = 0;
+  y.z = -2;
+  y.heading = Math.PI;
+  return match;
+}
+
 describe('robot parts', () => {
-  it('a starter robot has the plain stats of its chassis', () => {
+  it('a starter robot takes its health from its chassis, and moves by power against weight', () => {
     const stats = buildStats(newSave().loadout);
-    const { hp, speed, accel, turn, mass } = CHASSIS.brawler;
-    expect(stats).toMatchObject({ hp, speed, accel, turn, mass, regen: 1 });
+    expect(stats.hp).toBe(CHASSIS.brawler.hp);
+    expect(stats.armour).toBe(ARMOUR.default);
+    expect(stats.weight).toBe(CHASSIS.brawler.weight + payloadUsed(newSave().loadout));
+    expect(stats.regen).toBe(1);
   });
 
-  it('armour trades speed and room for toughness', () => {
+  it('armour trades speed, points and weight for protection, and leaves health alone', () => {
     const base = newSave().loadout;
     const heavy = { ...base, armour: ARMOUR.max };
-    expect(buildStats(heavy).hp).toBeGreaterThan(buildStats(base).hp);
+    expect(buildStats(heavy).armour).toBeGreaterThan(buildStats(base).armour);
+    expect(buildStats(heavy).hp).toBe(buildStats(base).hp);
     expect(buildStats(heavy).mass).toBeGreaterThan(buildStats(base).mass);
     expect(buildStats(heavy).speed).toBeLessThan(buildStats(base).speed);
-    expect(spaceUsed(heavy)).toBeGreaterThan(spaceUsed(base));
+    expect(pointsUsed(heavy)).toBeGreaterThan(pointsUsed(base));
+    expect(payloadUsed(heavy)).toBeGreaterThan(payloadUsed(base));
   });
 
   it('parts reach the robot in a match', () => {
-    const match = duel({ engine: 'turbo', wheels: 'tracks', tower: 'large', power: 'reactor' });
+    const match = duel({ engine: 'turbo', wheels: 'tracks', power: 'reactor', armour: 100 });
     const [tuned, plain] = match.bots;
     expect(tuned.chassis.mass).toBeGreaterThan(plain.chassis.mass);
-    expect(tuned.chassis.accel).toBeGreaterThan(plain.chassis.accel);
-    expect(tuned.maxHp).toBeCloseTo(plain.maxHp * TOWERS.large.hp!);
+    expect(tuned.armour).toBe(100);
+    expect(tuned.maxHp).toBe(plain.maxHp);
     expect(tuned.batteryRegen).toBeGreaterThan(plain.batteryRegen);
     tuned.ammo = 0;
     plain.ammo = 0;
@@ -39,49 +58,55 @@ describe('robot parts', () => {
     expect(tuned.ammo).toBeGreaterThan(plain.ammo);
   });
 
-  it('a large tower adds armour and room, as it did in the original', () => {
+  it('a new robot has points and weight to spare', () => {
     const { loadout } = newSave();
-    const large = { ...loadout, tower: 'large' as const };
-    expect(spaceCapacity(large)).toBeGreaterThan(spaceCapacity(loadout));
-    expect(buildStats(large).hp).toBeGreaterThan(buildStats(loadout).hp);
-    expect(buildStats({ ...loadout, tower: 'small' }).hp).toBeLessThan(buildStats(loadout).hp);
-  });
-
-  it('a new robot has room to spare', () => {
-    const { loadout } = newSave();
-    expect(spaceUsed(loadout)).toBeLessThan(spaceCapacity(loadout));
+    expect(pointsUsed(loadout)).toBeLessThan(POINT_BUDGET);
+    expect(payloadUsed(loadout)).toBeLessThan(CHASSIS.brawler.payload);
   });
 
   it('a bought part that does not fit goes on the shelf', () => {
     const save = newSave();
     save.money = 99999;
+    expect(buyOrEquip(save, 'chassis', 'juggernaut')).toBe(true);
     expect(buyOrEquip(save, 'defense', 'emp')).toBe(true);
-    expect(buyOrEquip(save, 'melee', 'shell')).toBe(true);
-    expect(buyOrEquip(save, 'engine', 'turbo')).toBe(true);
-    expect(spaceUsed(save.loadout)).toBeLessThanOrEqual(spaceCapacity(save.loadout));
-    // There's no room left for a reactor, so it's bought but not fitted.
+    expect(buyOrEquip(save, 'melee', 'vertbar')).toBe(true);
+    expect(save.loadout.melee).toBe('vertbar');
+    expect(buildProblem(save.loadout)).toBeNull();
+    // A reactor is too much on top of that, even with no armour, so it's bought but not fitted.
     expect(partFits(save, 'power', 'reactor')).toBe(false);
     expect(buyOrEquip(save, 'power', 'reactor')).toBe(true);
     expect(save.owned.power).toContain('reactor');
     expect(save.loadout.power).toBe('alkaline');
     // Fitting it again now is refused, as it's already owned.
     expect(buyOrEquip(save, 'power', 'reactor')).toBe(false);
-    // A bigger chassis makes room.
-    expect(buyOrEquip(save, 'chassis', 'juggernaut')).toBe(true);
+    // Spending less on the weapon leaves enough.
+    save.loadout.melee = 'chainsaw';
     expect(buyOrEquip(save, 'power', 'reactor')).toBe(true);
     expect(save.loadout.power).toBe('reactor');
+  });
+
+  it('says whether a part is too heavy or too many points', () => {
+    const save = newSave();
+    save.owned.chassis.push('scout');
+    save.loadout.chassis = 'scout';
+    save.loadout.armour = 0;
+    expect(partProblem(save, 'melee', 'vertbar')).toBe('weight');
+    const big = newSave();
+    big.loadout.chassis = 'juggernaut';
+    big.loadout.melee = 'vertbar';
+    big.loadout.armour = 0;
+    big.loadout.defense = 'emp';
+    expect(partProblem(big, 'power', 'reactor')).toBe('points');
   });
 
   it('a smaller chassis lowers armour if that makes the parts fit', () => {
     const save = newSave();
     save.money = 10000;
     save.owned.chassis.push('scout');
-    buyOrEquip(save, 'defense', 'emp');
-    buyOrEquip(save, 'melee', 'vertbar');
     expect(buyOrEquip(save, 'chassis', 'scout')).toBe(true);
     expect(save.loadout.chassis).toBe('scout');
     expect(save.loadout.armour).toBeLessThan(ARMOUR.default);
-    expect(spaceUsed(save.loadout)).toBeLessThanOrEqual(spaceCapacity(save.loadout));
+    expect(buildProblem(save.loadout)).toBeNull();
   });
 
   it('sells unused parts for half, and nothing else', () => {
@@ -99,12 +124,402 @@ describe('robot parts', () => {
     expect(sellPart(save, 'defense', 'emp')).toBe(false);
   });
 
-  it('armour stays in its steps and within the room available', () => {
+  it('armour stays in its steps and within the limits', () => {
     const save = newSave();
     expect(setArmour(save, 100)).toBe(true);
     expect(save.loadout.armour).toBe(100);
     for (const bad of [10, 90, 175, NaN, Infinity]) expect(setArmour(save, bad)).toBe(false);
     expect(save.loadout.armour).toBe(100);
+  });
+});
+
+describe('points and weight', () => {
+  const chassisIds = Object.keys(CHASSIS) as ChassisId[];
+  const meleeIds = Object.keys(MELEE) as MeleeId[];
+  const canCarry = (chassis: ChassisId, melee: MeleeId) => !buildProblem({ chassis, melee, defense: 'shield', engine: 'small', wheels: 'small4', power: 'alkaline', armour: 0 });
+
+  it('gives every part a cost in both, for free parts too', () => {
+    for (const table of [CHASSIS, WHEELS, ENGINES, POWER_SOURCES, MELEE, DEFENSES]) {
+      for (const part of Object.values(table)) {
+        expect(part.points, part.name).toBeGreaterThan(0);
+        expect(part.weight, part.name).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('lets every chassis fight, and every weapon find a chassis', () => {
+    for (const chassis of chassisIds) expect(meleeIds.some((melee) => canCarry(chassis, melee)), chassis).toBe(true);
+    for (const melee of meleeIds) expect(canCarry('juggernaut', melee), melee).toBe(true);
+  });
+
+  it('keeps the biggest weapons off the small chassis', () => {
+    expect(canCarry('scout', 'vertbar')).toBe(false);
+    expect(canCarry('scout', 'hammer')).toBe(false);
+    expect(canCarry('ghost', 'vertbar')).toBe(false);
+    expect(canCarry('brawler', 'vertbar')).toBe(true);
+  });
+
+  it('charges more points for the stronger weapons', () => {
+    expect(MELEE.vertbar.points).toBeGreaterThan(MELEE.chainsaw.points);
+    expect(MELEE.vertbar.damage).toBeGreaterThan(MELEE.vertdisc.damage);
+    expect(MELEE.vertbar.weight).toBeGreaterThan(MELEE.vertdisc.weight);
+  });
+
+  it('makes heavy robots slower and their hits harder', () => {
+    const build = (chassis: ChassisId) => buildStats({ chassis, melee: 'chainsaw', defense: 'shield' });
+    for (let i = 1; i < chassisIds.length; i++) {
+      expect(build(chassisIds[i]).speed, chassisIds[i]).toBeLessThan(build(chassisIds[i - 1]).speed);
+      expect(build(chassisIds[i]).punch, chassisIds[i]).toBeGreaterThan(build(chassisIds[i - 1]).punch);
+      expect(build(chassisIds[i]).hp, chassisIds[i]).toBeGreaterThan(build(chassisIds[i - 1]).hp);
+    }
+    expect(buildStats({ chassis: 'brawler', melee: 'dagger', defense: 'shield' }).speed).toBeGreaterThan(buildStats({ chassis: 'brawler', melee: 'hammer', defense: 'shield' }).speed);
+  });
+
+  it('a heavier weapon on the same chassis hits harder for its own weight, not just its numbers', () => {
+    const match = open({ melee: 'hammer', armour: 0 }, { armour: 0 });
+    const [a, b] = match.bots;
+    a.input.melee = true;
+    for (let i = 0; i < 20; i++) match.step();
+    expect(b.maxHp - b.hp).toBeCloseTo(MELEE.hammer.damage * a.punch, 3);
+  });
+
+  it('builds a legal robot for anything a rival might be given', () => {
+    const rng = makeRng(5);
+    for (const chassis of chassisIds) {
+      for (const melee of meleeIds) {
+        for (const defense of Object.keys(DEFENSES) as (keyof typeof DEFENSES)[]) {
+          const build = fillBuild({ chassis, melee, defense }, rng);
+          expect(buildProblem(build), `${chassis} ${melee} ${defense}`).toBeNull();
+          expect(build.melee).toBe(melee);
+        }
+      }
+    }
+    for (let seed = 1; seed < 30; seed++) {
+      for (const rival of makeRivals(null, 6, seed)) expect(buildProblem(rival.loadout)).toBeNull();
+    }
+  });
+
+  it('cuts down a robot that is over the limits, whatever is on it', () => {
+    const loaded = fitToLimits({ chassis: 'scout' as const, melee: 'vertbar' as const, defense: 'emp' as const, engine: 'turbo' as const, wheels: 'tracks' as const, power: 'reactor' as const, armour: 150 });
+    expect(buildProblem(loaded)).toBeNull();
+    const fair = { chassis: 'brawler' as const, melee: 'axe' as const, defense: 'shield' as const, armour: 75 };
+    expect(fitToLimits(fair)).toEqual(fair);
+  });
+
+  it('holds online robots to the same limits, even if a browser asks for more', () => {
+    const cheat = onlineLoadout({ chassis: 'juggernaut', melee: 'vertbar', defense: 'emp', engine: 'turbo', wheels: 'tracks', power: 'reactor', armour: 150 });
+    expect(buildProblem(cheat)).toBeNull();
+    expect(onlineLoadout({ armour: 10 }).armour).toBe(ARMOUR.default);
+  });
+});
+
+describe('armour', () => {
+  const ready = (a: Partial<Loadout> = {}, b: Partial<Loadout> = {}) => {
+    const match = duel(a, b);
+    for (const bot of match.bots) bot.invulnT = 0;
+    return { match, a: match.bots[0], b: match.bots[1] };
+  };
+
+  it('is a bar of its own that wears away before health', () => {
+    const { match, a, b } = ready({}, { armour: 100 });
+    expect(b.maxArmour).toBe(100);
+    match.damage(b, 70, a.id);
+    expect(b.hp).toBe(b.maxHp);
+    expect(b.armour).toBeCloseTo(100 - 70 * ARMOUR.wear);
+    match.damage(b, 200, a.id);
+    expect(b.armour).toBe(0);
+    expect(b.hp).toBeLessThan(b.maxHp);
+  });
+
+  it('runs out mid-hit, and the rest of the hit reaches health', () => {
+    const { match, a, b } = ready({}, { armour: 25 });
+    const soaks = 25 / ARMOUR.wear;
+    match.damage(b, soaks + 30, a.id);
+    expect(b.armour).toBe(0);
+    expect(b.hp).toBeCloseTo(b.maxHp - 30);
+  });
+
+  it('lets a piercing hit through by its share', () => {
+    const { match, a, b } = ready({}, { armour: 100 });
+    match.damage(b, 40, a.id, 0.5);
+    expect(b.hp).toBeCloseTo(b.maxHp - 20);
+    expect(b.armour).toBeCloseTo(100 - 20 * ARMOUR.wear);
+  });
+
+  it('does nothing against a Tesla bolt', () => {
+    expect(MELEE.tesla.pierce).toBe(1);
+  });
+
+  it('is not mended by a repair, but is by the regenerator, and comes back with a respawn', () => {
+    const { match, a, b } = ready({}, { armour: 100, defense: 'regen', powerups: { ...newSave().loadout.powerups, repair: 1 }, powerupSlots: ['repair'] });
+    match.damage(b, 200, a.id);
+    const armourBefore = b.armour;
+    b.input.powerup = 'repair';
+    match.step();
+    expect(b.armour).toBe(armourBefore);
+    expect(b.hp).toBeGreaterThan(b.maxHp - 200 + 100 * 0);
+    b.input.defense = true;
+    match.step();
+    b.input.defense = false;
+    for (let i = 0; i < 60; i++) match.step();
+    expect(b.armour).toBeGreaterThan(armourBefore);
+  });
+
+  it('counts toward who wins a duel that runs out of time', () => {
+    const match = new Match([pilot('A', { armour: 100 }), pilot('B', { armour: 0 })], { seed: 1, arena: 'skyscraper', mode: 'duel', duration: 1 });
+    const [a, b] = match.bots;
+    a.invulnT = b.invulnT = 0;
+    // A has lost more armour than B has lost health, but B has less left of what it started with.
+    match.damage(a, 60, b.id);
+    match.damage(b, 60, a.id);
+    while (!match.over) match.step();
+    expect(match.standings()[0].bot).toBe(a);
+  });
+});
+
+describe('the battery', () => {
+  const ready = (a: Partial<Loadout>, b: Partial<Loadout> = {}) => {
+    const match = open({ armour: 0, ...a }, { armour: 0, ...b });
+    return { match, a: match.bots[0], b: match.bots[1] };
+  };
+
+  it('costs more for a harder hit', () => {
+    expect(batteryCost(MELEE.vertbar)).toBeGreaterThan(batteryCost(MELEE.vertdisc));
+    expect(batteryCost(MELEE.hammer)).toBeGreaterThan(batteryCost(MELEE.axe));
+    expect(batteryCost(MELEE.dagger)).toBe(0);
+  });
+
+  it('pays for each strike, and a bigger battery feels it less', () => {
+    const swing = (power: 'alkaline' | 'lithium') => {
+      const { match, a } = ready({ melee: 'hammer', power });
+      a.input.melee = true;
+      match.step();
+      return 1 - a.ammo;
+    };
+    expect(swing('alkaline')).toBeGreaterThan(0);
+    expect(swing('lithium')).toBeLessThan(swing('alkaline'));
+    expect(swing('lithium')).toBeCloseTo(swing('alkaline') / POWER_SOURCES.lithium.capacity, 2);
+  });
+
+  it('will not swing with too little left', () => {
+    const { match, a, b } = ready({ melee: 'hammer' });
+    a.ammo = 0;
+    a.input.melee = true;
+    for (let i = 0; i < 30; i++) match.step();
+    expect(b.hp).toBe(b.maxHp);
+  });
+
+  it('runs a held weapon faster when it is cutting than when it is idle', () => {
+    const idle = ready({ melee: 'chainsaw' });
+    idle.b.z += 20;
+    idle.a.input.melee = true;
+    for (let i = 0; i < 60; i++) idle.match.step();
+    const cutting = ready({ melee: 'chainsaw' });
+    cutting.a.input.melee = true;
+    for (let i = 0; i < 60; i++) cutting.match.step();
+    expect(cutting.a.ammo).toBeLessThan(idle.a.ammo);
+    expect(idle.a.ammo).toBeLessThan(1);
+  });
+
+  it('takes far less to hold a spinner at speed than to get it there', () => {
+    const { match, a, b } = ready({ melee: 'vertdisc' });
+    b.z += 20;
+    a.input.melee = true;
+    for (let i = 0; i < 60; i++) match.step();
+    expect(a.meleeCharge).toBe(1);
+    const spinUp = 1 - a.ammo;
+    const paid = a.ammo;
+    for (let i = 0; i < 60; i++) match.step();
+    expect(paid - a.ammo).toBeLessThan(spinUp / 3);
+  });
+
+  it('a heavier robot burns more to boost', () => {
+    const boost = (chassis: ChassisId) => {
+      const { match, a, b } = ready({ chassis });
+      b.z += 20;
+      a.input.boost = true;
+      for (let i = 0; i < 30; i++) match.step();
+      return 1 - a.ammo;
+    };
+    expect(boost('juggernaut')).toBeGreaterThan(boost('scout'));
+  });
+
+  it('never spends a defense it can not pay for', () => {
+    const { match, a } = ready({ defense: 'emp' });
+    a.ammo = 0;
+    a.input.defense = true;
+    match.step();
+    expect(a.defenseCd).toBe(0);
+    a.ammo = 1;
+    match.step();
+    expect(a.defenseCd).toBeGreaterThan(0);
+    expect(a.ammo).toBeLessThan(1);
+  });
+});
+
+describe('a flat battery', () => {
+  const flat = (over: Partial<Loadout> = {}) => {
+    const match = open({ armour: 0, ...over }, { armour: 0 });
+    const [a, b] = match.bots;
+    a.input.melee = true;
+    return { match, a, b };
+  };
+
+  it('cuts the weapon out when it runs dry, until it has recharged a little', () => {
+    const { match, a, b } = flat({ melee: 'chainsaw' });
+    a.ammo = 0.02;
+    while (!a.batteryFlat) match.step();
+    const hurt = b.hp;
+    for (let i = 0; i < 60; i++) match.step();
+    expect(a.batteryFlat).toBe(true);
+    expect(b.hp).toBe(hurt);
+    let frames = 0;
+    while (a.batteryFlat && frames++ < 600) match.step();
+    expect(a.ammo).toBeGreaterThanOrEqual(BATTERY_RESTART - 0.01);
+    expect(frames).toBeLessThan(600);
+  });
+
+  it('stops the boost as well, and recharges with the key still held', () => {
+    const { match, a } = flat({ melee: 'dagger' });
+    a.input.boost = true;
+    a.ammo = 0.001;
+    match.step();
+    expect(a.batteryFlat).toBe(true);
+    match.step();
+    expect(a.boostT).toBeLessThanOrEqual(0.12);
+    const low = a.ammo;
+    for (let i = 0; i < 30; i++) match.step();
+    expect(a.ammo).toBeGreaterThan(low);
+  });
+
+  it('never stops a weapon that needs no battery', () => {
+    const { match, a, b } = flat({ melee: 'dagger' });
+    a.ammo = 0;
+    a.batteryFlat = true;
+    for (let i = 0; i < 30; i++) match.step();
+    expect(b.hp).toBeLessThan(b.maxHp);
+  });
+
+  it('does not cut out over a defense it can not afford', () => {
+    const { match, a } = flat({ melee: 'dagger', defense: 'emp' });
+    a.ammo = 0.05;
+    a.input.defense = true;
+    match.step();
+    expect(a.batteryFlat).toBe(false);
+    expect(a.defenseCd).toBe(0);
+  });
+
+  it('charges a swing that misses the same as one that lands', () => {
+    const swing = (reach: number) => {
+      const { match, a, b } = flat({ melee: 'hammer' });
+      b.z = a.z + reach;
+      match.step();
+      return a.ammo;
+    };
+    expect(swing(20)).toBeCloseTo(swing(3), 3);
+    expect(swing(20)).toBeLessThan(1);
+  });
+
+  it('charges a spinner to wait at full speed', () => {
+    const { match, a, b } = flat({ melee: 'vertdisc' });
+    b.z = a.z + 25;
+    a.meleeCharge = 1;
+    a.ammo = 0.5;
+    a.batteryRegen = 0;
+    match.step();
+    expect(a.ammo).toBeLessThan(0.5);
+  });
+
+  it('comes back after a respawn', () => {
+    const { match, a } = flat();
+    a.batteryFlat = true;
+    a.ammo = 0;
+    match.damage(a, 9999, 1);
+    for (let i = 0; i < 300; i++) match.step();
+    expect(a.alive).toBe(true);
+    expect(a.batteryFlat).toBe(false);
+  });
+});
+
+describe('upgrades', () => {
+  it('can be left out of a robot without touching the rest of it', () => {
+    const { loadout } = newSave();
+    loadout.upgrades = { armor: 3, engine: 2, weapons: 1 };
+    const plain = withoutUpgrades(loadout);
+    expect(plain.upgrades).toEqual({ armor: 0, engine: 0, weapons: 0 });
+    expect(loadout.upgrades.armor).toBe(3);
+    expect(plain.chassis).toBe(loadout.chassis);
+  });
+
+  it('count on a robot that keeps them, and not on one without', () => {
+    const { loadout } = newSave();
+    loadout.upgrades = { armor: 5, engine: 5, weapons: 5 };
+    const match = new Match([pilot('A', { upgrades: loadout.upgrades }), pilot('B', withoutUpgrades(loadout))], { seed: 1, arena: 'foundry', mode: 'ffa' });
+    const [a, b] = match.bots;
+    expect(a.maxHp).toBeGreaterThan(b.maxHp);
+    expect(a.damageMult).toBeGreaterThan(b.damageMult);
+    expect(a.speedMult).toBeGreaterThan(b.speedMult);
+  });
+
+  it('make rivals tougher only when they are given some, so rivals outside Career use none', () => {
+    const veteran = { wins: 30, loadout: withoutUpgrades(newSave().loadout) };
+    for (const rival of makeRivals(veteran, 4, 1)) expect(rival.loadout.upgrades).toEqual({ armor: 0, engine: 0, weapons: 0 });
+    const fresh = makeRivals({ wins: 0, loadout: withoutUpgrades(newSave().loadout) }, 1, 1)[0];
+    expect(makeRivals(veteran, 1, 1)[0].skill).toBeGreaterThan(fresh.skill!);
+  });
+});
+
+describe('a bigger robot', () => {
+  it('reaches further with the same weapon, and is easier to hit', () => {
+    const reach = (attacker: ChassisId, target: ChassisId, z: number, x = 0) => {
+      const match = duel({ chassis: attacker, melee: 'chainsaw' }, { chassis: target });
+      const [a, b] = match.bots;
+      a.x = 0;
+      a.z = 0;
+      a.heading = 0;
+      b.x = x;
+      b.z = z;
+      return match.inCone(a, b, 0, MELEE.chainsaw.range, MELEE.chainsaw.arc);
+    };
+    const edge = MELEE.chainsaw.range + 1.4;
+    expect(reach('juggernaut', 'scout', edge)).toBe(true);
+    expect(reach('scout', 'scout', edge)).toBe(false);
+    // Just outside the arc for a small target, but a big one sticks out into it.
+    expect(reach('brawler', 'juggernaut', 3, 2.97)).toBe(true);
+    expect(reach('brawler', 'scout', 3, 2.97)).toBe(false);
+  });
+});
+
+describe('saves from before points', () => {
+  const old = () => {
+    const save = newSave();
+    return { ...save, money: 0, owned: { ...save.owned, tower: ['medium', 'small', 'large'], melee: ['chainsaw', 'shell', 'eggbeater', 'axe'] } } as typeof save;
+  };
+
+  it('pays back towers, the Ring Spinner and the Eggbeater, once', () => {
+    const save = retireParts(old());
+    expect(save.money).toBe(100 + 400 + 1000 + 500);
+    expect(save.owned).not.toHaveProperty('tower');
+    expect(save.owned.melee).toEqual(['chainsaw', 'axe']);
+    retireParts(save);
+    expect(save.money).toBe(100 + 400 + 1000 + 500);
+  });
+
+  it('takes a removed weapon off the robot', () => {
+    const save = old();
+    (save.loadout as { melee: string }).melee = 'shell';
+    (save.loadout as { tower?: string }).tower = 'large';
+    retireParts(save);
+    expect(save.loadout.melee).toBe('chainsaw');
+    expect(save.loadout).not.toHaveProperty('tower');
+  });
+
+  it('cuts a robot down to the limits when it loads', () => {
+    const save = old();
+    Object.assign(save.loadout, { chassis: 'juggernaut', melee: 'vertbar', engine: 'turbo', power: 'reactor', wheels: 'tracks', defense: 'emp', armour: 150 });
+    const loaded = loadSave({ getItem: () => JSON.stringify(save) });
+    expect(buildProblem(loaded.loadout)).toBeNull();
+    expect(loaded.loadout.melee).toBe('vertbar');
   });
 });
 
@@ -138,7 +553,7 @@ describe('the duel', () => {
     expect(match.standings()[0].bot).toBe(b);
   });
 
-  it('when time runs out, the most armour left wins', () => {
+  it('when time runs out, whoever has the most left wins', () => {
     const match = new Match([pilot('A'), pilot('B')], { seed: 1, arena: 'skyscraper', mode: 'duel', duration: 1 });
     const [a, b] = match.bots;
     a.invulnT = b.invulnT = 0;

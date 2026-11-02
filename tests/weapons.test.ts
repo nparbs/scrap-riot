@@ -6,7 +6,7 @@ import type { SnapshotMessage } from '../src/net/protocol';
 import { applyBotState, applyWorldState, encodeSnapshot } from '../src/net/snapshot';
 import { Match, type Bot, type BotSetup, type Loadout } from '../src/sim/match';
 
-const pilot = (name: string, over: Partial<Loadout> = {}): BotSetup => ({ name, color: 0, isAI: false, loadout: { ...newSave().loadout, ...over } });
+const pilot = (name: string, over: Partial<Loadout> = {}): BotSetup => ({ name, color: 0, isAI: false, loadout: { ...newSave().loadout, armour: 0, ...over } });
 
 function fight(a: Partial<Loadout> = {}, b: Partial<Loadout> = {}, arena: 'foundry' | 'skyscraper' = 'foundry'): [Match, Bot, Bot] {
   const match = new Match([pilot('A', a), pilot('B', b)], { seed: 1, arena, mode: 'ffa' });
@@ -476,11 +476,12 @@ describe('spinners', () => {
   };
 
   it('hit in proportion to how fast they are turning', () => {
-    const slow = hitAt('vertdisc', 0.3).damage;
-    const fast = hitAt('vertdisc', 1).damage;
+    const slow = hitAt('vertdisc', 0.45).damage;
+    const fastHit = hitAt('vertdisc', 1);
+    const fast = fastHit.damage;
     expect(slow).toBeGreaterThan(0);
-    expect(fast).toBeGreaterThan(slow * 2.5);
-    expect(fast).toBeCloseTo(MELEE.vertdisc.damage, 0);
+    expect(fast).toBeGreaterThan(slow * 2);
+    expect(fast).toBeCloseTo(MELEE.vertdisc.damage * fastHit.a.punch, 0);
   });
 
   it('do nothing until spun up past a minimum', () => {
@@ -516,24 +517,6 @@ describe('spinners', () => {
 
   it('an undercutter goes for the wheels', () => {
     expect(hitAt('undercutter', 1).b.slowT).toBeGreaterThan(0);
-  });
-
-  it('a ring spinner hits from nearly every side, and costs top speed', () => {
-    const [match, a, b] = fight({ melee: 'shell' });
-    b.x = a.x + 2;
-    b.z = a.z - 2;
-    a.meleeCharge = 1;
-    a.input.melee = true;
-    match.step();
-    expect(b.hp).toBeLessThan(b.maxHp);
-    expect(a.chassis.speed).toBeLessThan(b.chassis.speed);
-    // Dead astern is the way to get at one.
-    const [blind, c, d] = fight({ melee: 'shell' });
-    d.z = c.z - 2.8;
-    c.meleeCharge = 1;
-    c.input.melee = true;
-    blind.step();
-    expect(d.hp).toBe(d.maxHp);
   });
 
   it('a horizontal bar reaches wider than a vertical disc', () => {

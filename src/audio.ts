@@ -17,8 +17,8 @@ const REGISTER_BELL = [[2093, 1, 0.75], [3140, 0.7, 0.6], [4700, 0.4, 0.4], [628
 // louder than a thud with the same peak. Re-measure after changing how a sound is made.
 // Spinners are then set well below the rest on purpose, because they were tiring to listen to.
 const MELEE_LEVEL: Record<MeleeId, number> = {
-  vertbar: 0.42, vertdisc: 0.42, shell: 0.42, horizbar: 0.42, flipper: 1.07, axe: 1.66, hammer: 1.7, undercutter: 0.7, crusher: 1.7,
-  hammersaw: 1.74, drum: 0.7, eggbeater: 0.7, ram: 2.16, chainsaw: 2.66, drill: 2.66, rollingpin: 2.66, dagger: 2.69, magnet: 2.72, claw: 3, forks: 3,
+  vertbar: 0.42, vertdisc: 0.42, horizbar: 0.42, flipper: 1.07, axe: 1.66, hammer: 1.7, undercutter: 0.7, crusher: 1.7,
+  hammersaw: 1.74, drum: 0.7, ram: 2.16, chainsaw: 2.66, drill: 2.66, rollingpin: 2.66, dagger: 2.69, magnet: 2.72, claw: 3, forks: 3,
   flamethrower: 1, tesla: 1.2, spear: 2,
 };
 /** How long the announcer waits for each result's sting to finish, in seconds. */
@@ -250,13 +250,11 @@ export class Sfx {
       case 'vertdisc':
       case 'vertbar':
       case 'horizbar':
-      case 'shell':
         this.clang(0.9 * volume, 180, 0.7);
         this.thud(0.5 * volume, 0.28);
         this.burst(0.2 * volume, 0.3, 2200, 'bandpass', 900);
         break;
       case 'drum':
-      case 'eggbeater':
       case 'undercutter':
         this.clang(0.6 * volume, 340, 0.3);
         this.burst(0.18 * volume, 0.14, 2200, 'bandpass');

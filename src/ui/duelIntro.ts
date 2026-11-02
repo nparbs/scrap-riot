@@ -116,8 +116,8 @@ export class DuelIntro {
     scene.add(key);
 
     const place = (bot: Bot, side: 1 | -1) => {
-      const { chassis, melee, defense, paint, rearMelee, tower, wheels } = bot.loadout;
-      const model = buildRobot({ chassis, melee, defense, paint, rearMelee, tower, wheels, color: bot.color });
+      const { chassis, melee, defense, paint, rearMelee, wheels } = bot.loadout;
+      const model = buildRobot({ chassis, melee, defense, paint, rearMelee, wheels, color: bot.color });
       // Turned most of the way toward the other robot, with the main weapon leading.
       const turn = -side * 1.05 + (rearMelee ? Math.PI : 0);
       model.root.scale.setScalar(1.25);

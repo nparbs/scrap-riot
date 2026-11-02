@@ -98,7 +98,7 @@ describe('rear-mounted weapons', () => {
     name: 'A',
     color: 0,
     isAI: false,
-    loadout: { ...newSave().loadout, rearMelee },
+    loadout: { ...newSave().loadout, armour: 0, rearMelee },
   });
 
   function duelAt(z: number, rearMelee: boolean) {

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { decodeSkin, ERASED, SKIN_PANELS, SKIN_SIZE, type PanelId } from '../game/skin';
-import { DEFAULT_PAINT, MELEE, PAINT_COLORS, type BodyId, type ChassisId, type DefenseId, type MeleeId, type Paint, type PatternId, type TowerId, type WheelsId } from '../sim/data';
+import { DEFAULT_PAINT, MELEE, PAINT_COLORS, type BodyId, type ChassisId, type DefenseId, type MeleeId, type Paint, type PatternId, type WheelsId } from '../sim/data';
 
 export interface RobotBuild {
   chassis: ChassisId;
@@ -9,7 +9,6 @@ export interface RobotBuild {
   defense: DefenseId;
   paint?: Paint;
   rearMelee?: boolean;
-  tower?: TowerId;
   wheels?: WheelsId;
   /** Fallback main color when there is no paint job. */
   color: number;
@@ -242,7 +241,14 @@ const HULLS: Record<ChassisId, HullSpec> = {
   juggernaut: { width: 2.15, length: 2.95, height: 0.9, trackWidth: 0.46, wheelRadius: 0.42, wheelCount: 5, nose: 0.5, taper: 0.94 },
 };
 
-const TOWER_SCALE: Record<TowerId, number> = { small: 0.82, medium: 1, large: 1.25 };
+/** Every chassis comes with a tower to suit it. */
+const TOWER_LOOK: Record<ChassisId, { scale: number; collar: boolean; cheeks: boolean }> = {
+  scout: { scale: 0.68, collar: false, cheeks: false },
+  ghost: { scale: 0.8, collar: false, cheeks: false },
+  brawler: { scale: 1, collar: false, cheeks: false },
+  rhino: { scale: 1.2, collar: true, cheeks: false },
+  juggernaut: { scale: 1.42, collar: true, cheeks: true },
+};
 /** Tyre size relative to the hull, and how many down each side. */
 const WHEEL_LOOK: Record<Exclude<WheelsId, 'tracks'>, { radius: number; count: number }> = {
   small4: { radius: 1, count: 2 },
@@ -675,8 +681,18 @@ function swingMount(pivot: THREE.Group, width: number): void {
   for (const side of [-1, 1]) pivot.add(rod([side * (width / 2 + 0.02), 0, 0.04], [side * (width / 2 + 0.04), 0, 0.04], 0.12, steel, ROUND_SIDES));
 }
 
-/** The tower is a low armoured drum with a hatch and a sensor mast. */
-function buildTower(pivot: THREE.Group, head: THREE.Material): void {
+/** The tower is a low armoured drum with a hatch and a sensor mast, with more plating on the bigger chassis. */
+function buildTower(pivot: THREE.Group, head: THREE.Material, chassis: ChassisId): void {
+  const { collar, cheeks } = TOWER_LOOK[chassis];
+  if (collar) {
+    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.6, 0.09, ROUND_SIDES * 2), dark);
+    skirt.position.y = 0.05;
+    skirt.castShadow = true;
+    pivot.add(skirt);
+  }
+  if (cheeks) {
+    for (const side of [-1, 1]) pivot.add(box(0.1, 0.17, 0.5, steel, side * 0.5, 0.15, -0.02));
+  }
   const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.5, 0.26, ROUND_SIDES * 2), head);
   tower.position.y = 0.13;
   tower.castShadow = true;
@@ -782,7 +798,6 @@ function buildChainsaw(pivot: THREE.Group): BuiltMelee {
 /** Where gun-style weapons bolt onto the tower, and how far they stand above it, both in the tower's own size. */
 const TOWER_MOUNTS: Partial<Record<MeleeId, { y: number; z: number; top: number; muzzle: number }>> = {
   flamethrower: { y: 0.34, z: 0.06, top: 0.25, muzzle: 1.5 },
-  tesla: { y: 0.3, z: -0.28, top: 1, muzzle: 0 },
   spear: { y: 0.36, z: 0.08, top: 0.25, muzzle: 1.75 },
 };
 
@@ -834,33 +849,34 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec): BuiltMelee
         };
       }
     case 'tesla': {
-      // An insulated stack on the nose, with a polished ring on top.
-      pivot.add(turned([[0, 0], [0.24, 0], [0.18, 0.08], [0.18, 0.2], [0, 0.2]], dark, 0.28, 0));
+      // A coil lying along the nose and pointing the way the bolt goes, with a polished ring at the front.
+      pivot.add(sideOn([[-0.08, -0.13], [0.2, -0.13], [0.3, -0.06], [0.3, 0.1], [0.2, 0.16], [-0.08, 0.16]], 0.4, dark, 0.02));
+      pivot.add(turned([[0, 0.26], [0.2, 0.26], [0.24, 0.32], [0.16, 0.38], [0, 0.38]], dark, 0, 0.02));
       const stack = new THREE.Group();
-      stack.position.set(0, 0.2, 0.28);
-      for (let i = 0; i < 4; i++) {
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.2 - i * 0.02, 0.035, 8, ROUND_SIDES), copper);
-        ring.rotation.x = Math.PI / 2;
-        ring.position.y = i * 0.09;
+      stack.position.set(0, 0.02, 0.4);
+      for (let i = 0; i < 5; i++) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.2 - i * 0.022, 0.035, 8, ROUND_SIDES), copper);
+        ring.position.z = i * 0.09;
+        ring.castShadow = true;
         stack.add(ring);
       }
-      const post = cylinder(0.07, 0.46, steel);
-      post.position.y = 0.2;
+      const post = cylinder(0.06, 0.62, steel);
+      post.rotation.x = Math.PI / 2;
+      post.position.z = 0.28;
       stack.add(post);
-      const crown = new THREE.Mesh(new THREE.TorusGeometry(0.21, 0.07, 10, ROUND_SIDES), glowBlue);
-      crown.rotation.x = Math.PI / 2;
-      crown.position.y = 0.46;
+      const crown = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.06, 10, ROUND_SIDES), glowBlue);
+      crown.position.z = 0.6;
       stack.add(crown);
       pivot.add(stack);
       return {
         spinner: stack,
-        axis: 'y',
+        axis: 'z',
         animate: ({ swing, time }) => {
-          // The crown swells as the bolt goes, and hums a little the rest of the time.
+          // The crown swells and jumps forward as the bolt goes, and hums a little the rest of the time.
           const kick = Math.exp(-swing * 7);
           const size = 1 + kick * 0.5 + Math.sin(time * 9) * 0.03;
           crown.scale.set(size, size, 1 + kick * 0.3);
-          crown.position.y = 0.46 + kick * 0.09;
+          crown.position.z = 0.6 + kick * 0.09;
         },
       };
     }
@@ -1094,50 +1110,6 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec): BuiltMelee
       }
       pivot.add(drum);
       return { spinner: drum, axis: 'x' };
-    }
-    case 'eggbeater': {
-      const width = spec.width * 0.66;
-      forkArms(pivot, width / 2 + 0.08, 0.76, 0);
-      const beater = new THREE.Group();
-      beater.position.set(0, 0.04, 0.76);
-      beater.add(axle(0.06, width + 0.16, dark));
-      // Two loops at right angles, bulging at the middle, with a tooth on each side.
-      for (const turn of [0, Math.PI / 2]) {
-        const points: Vec[] = [];
-        for (let i = 0; i < 20; i++) {
-          const t = (i / 20) * Math.PI * 2;
-          const r = Math.sin(t) * 0.46;
-          points.push([Math.cos(t) * (width / 2), Math.cos(turn) * r, Math.sin(turn) * r]);
-        }
-        beater.add(tube(points, 0.05, steel, true, 48));
-        for (const side of [-1, 1]) {
-          const holder = new THREE.Group();
-          holder.rotation.x = -turn + (side > 0 ? 0 : Math.PI);
-          holder.add(sideOn([[-0.11, 0.42], [0.1, 0.42], [0.16, 0.6], [0.02, 0.55], [-0.12, 0.47]], 0.13, blade, 0.012));
-          beater.add(holder);
-        }
-      }
-      pivot.add(beater);
-      return { spinner: beater, axis: 'x' };
-    }
-    case 'shell': {
-      // A heavy shell ring around the whole robot, centered on the hull rather than the nose.
-      const ring = new THREE.Group();
-      ring.position.set(0, 0, -spec.length / 2);
-      const radius = Math.hypot(spec.width / 2 + spec.trackWidth, spec.length / 2) + 0.14;
-      const band = new THREE.Mesh(
-        smoothed(new THREE.LatheGeometry([[radius - 0.09, -0.15], [radius + 0.06, -0.15], [radius + 0.12, -0.05], [radius + 0.12, 0.05], [radius + 0.06, 0.15], [radius - 0.09, 0.15], [radius - 0.09, -0.15]].map(([r, h]) => new THREE.Vector2(r, h)), 40), 0.5),
-        steel,
-      );
-      band.castShadow = true;
-      ring.add(band);
-      for (const end of [-1, 1]) {
-        const tooth = topOn(end > 0 ? [[radius, -0.26], [radius + 0.28, -0.14], [radius + 0.22, 0.26], [radius, 0.26]] : [[-radius, 0.26], [-radius - 0.28, 0.14], [-radius - 0.22, -0.26], [-radius, -0.26]], 0.26, blade, 0.02);
-        ring.add(tooth);
-      }
-      ring.add(box(radius * 2, 0.06, 0.2, dark));
-      pivot.add(ring);
-      return { spinner: ring, axis: 'y' };
     }
     case 'hammersaw': {
       // A swinging arm with a guarded circular saw on the end.
@@ -1497,11 +1469,11 @@ export function buildRobot(build: RobotBuild): RobotModel {
 
   const towerPivot = new THREE.Group();
   // Set back on the deck, leaving the nose clear for the main weapon.
-  const towerScale = TOWER_SCALE[build.tower ?? 'medium'];
+  const towerScale = TOWER_LOOK[build.chassis].scale;
   const towerZ = -spec.length * 0.14;
   towerPivot.position.set(0, towerSeat(spec, paint.body, towerZ, 0.35 * towerScale), towerZ);
   towerPivot.scale.setScalar(towerScale);
-  buildTower(towerPivot, headMaterial);
+  buildTower(towerPivot, headMaterial, build.chassis);
   root.add(towerPivot);
 
   const meleePivot = new THREE.Group();

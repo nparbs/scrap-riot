@@ -89,14 +89,14 @@ describe('defense gear on show', () => {
   });
 
   it.each(['teleport', 'flash', 'cloak', 'shield'] as const)('the %s sits on the tower, so it grows with it', (defense) => {
-    const reach = (tower: 'small' | 'large') => {
-      const model = buildRobot({ ...build('brawler', 'wedge', defense), tower });
+    const reach = (chassis: 'scout' | 'juggernaut') => {
+      const model = buildRobot(build(chassis, 'wedge', defense));
       // The force field's bubble is far bigger than anything else, and only shows when it's on.
       model.shield.removeFromParent();
       model.root.updateMatrixWorld(true);
       return new THREE.Box3().setFromObject(model.root).max.y;
     };
-    expect(reach('large')).toBeGreaterThan(reach('small'));
+    expect(reach('juggernaut')).toBeGreaterThan(reach('scout'));
   });
 });
 

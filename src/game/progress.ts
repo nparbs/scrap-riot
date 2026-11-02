@@ -14,10 +14,11 @@ import {
   POWERUP_CAP,
   POWERUP_ORDER,
   POWERUP_SLOTS,
+  buildProblem,
+  fillBuild,
   fittedPowerups,
-  spaceCapacity,
-  spaceUsed,
-  TOWERS,
+  fitToLimits,
+  POINT_BUDGET,
   UPGRADES,
   WHEELS,
   type ChassisId,
@@ -30,7 +31,6 @@ import {
   type PowerId,
   type PowerupId,
   type BodyId,
-  type TowerId,
   type UpgradeId,
   type WheelsId,
   installedParts,
@@ -42,7 +42,7 @@ import { makeRng } from '../sim/rng';
 // Bumped when the shape of a save changes. Old saves are not carried over, so everyone starts fresh.
 const SAVE_KEY = 'scrap-riot.save.v3';
 
-export type Slot = 'chassis' | 'tower' | 'wheels' | 'engine' | 'power' | 'melee' | 'defense';
+export type Slot = 'chassis' | 'wheels' | 'engine' | 'power' | 'melee' | 'defense';
 
 export interface Save {
   name: string;
@@ -51,7 +51,6 @@ export interface Save {
   wins: number;
   owned: {
     chassis: ChassisId[];
-    tower: TowerId[];
     wheels: WheelsId[];
     engine: EngineId[];
     power: PowerId[];
@@ -62,7 +61,7 @@ export interface Save {
   practice: { arena: ArenaId; mode: ModeId };
 }
 
-export const CATALOG = { chassis: CHASSIS, tower: TOWERS, wheels: WHEELS, engine: ENGINES, power: POWER_SOURCES, melee: MELEE, defense: DEFENSES };
+export const CATALOG = { chassis: CHASSIS, wheels: WHEELS, engine: ENGINES, power: POWER_SOURCES, melee: MELEE, defense: DEFENSES };
 
 const SELL_RATE = 0.5;
 /** Enough to buy a couple of parts straight away. */
@@ -74,10 +73,9 @@ export function newSave(): Save {
     money: STARTING_MONEY,
     matches: 0,
     wins: 0,
-    owned: { chassis: ['brawler'], tower: ['medium'], wheels: ['large4'], engine: ['medium'], power: ['alkaline'], melee: ['chainsaw'], defense: ['shield'] },
+    owned: { chassis: ['brawler'], wheels: ['large4'], engine: ['medium'], power: ['alkaline'], melee: ['chainsaw'], defense: ['shield'] },
     loadout: {
       chassis: 'brawler',
-      tower: 'medium',
       wheels: 'large4',
       engine: 'medium',
       power: 'alkaline',
@@ -112,6 +110,30 @@ export function retireGuns<T extends { money: number; owned: Save['owned']; load
   return save;
 }
 
+/** What was paid for parts that have since gone from the game. */
+const OLD_PART_PRICES: Record<string, Record<string, number>> = {
+  tower: { small: 100, medium: 0, large: 400 },
+  melee: { shell: 1000, eggbeater: 500 },
+};
+
+/**
+ * Towers became part of the chassis, and the Ring Spinner and Eggbeater went, so anyone who bought
+ * one gets the money back. Points replaced room, so a robot that doesn't fit any more is cut down to fit.
+ */
+export function retireParts<T extends { money: number; owned: Save['owned']; loadout: Loadout }>(save: T): T {
+  const owned = save.owned as unknown as Record<string, string[] | undefined>;
+  for (const id of owned.tower ?? []) save.money += OLD_PART_PRICES.tower[id] ?? 0;
+  delete owned.tower;
+  delete (save.loadout as Loadout & { tower?: string }).tower;
+  for (const id of save.owned.melee.filter((part) => part in OLD_PART_PRICES.melee)) {
+    save.money += OLD_PART_PRICES.melee[id];
+    save.owned.melee.splice(save.owned.melee.indexOf(id), 1);
+  }
+  if ((save.loadout.melee as string) in OLD_PART_PRICES.melee) save.loadout.melee = 'chainsaw';
+  Object.assign(save.loadout, fitToLimits(save.loadout));
+  return save;
+}
+
 /**
  * Every powerup gets a real count. Old saves can lack one that was added or renamed later, as the
  * Battery Pack was, and a count that's missing turns into NaN and then null once it's saved.
@@ -132,7 +154,7 @@ export function tidyPowerups<T extends { loadout: Loadout; practice?: Save['prac
 export function loadSave(storage: Pick<Storage, 'getItem'> | null): Save {
   try {
     const raw = storage?.getItem(SAVE_KEY);
-    if (raw) return tidyPowerups(retireGuns({ ...newSave(), ...(JSON.parse(raw) as Partial<Save>) }));
+    if (raw) return tidyPowerups(retireParts(retireGuns({ ...newSave(), ...(JSON.parse(raw) as Partial<Save>) })));
   } catch {
     // Blocked storage or a corrupt save both just start a new game.
   }
@@ -149,28 +171,30 @@ export function writeSave(storage: Pick<Storage, 'setItem'> | null, save: Save):
 
 const priceOf = (slot: Slot, id: string) => (CATALOG[slot] as Record<string, { price: number }>)[id].price;
 
-/** Would the robot still have room with this one part changed? */
 export interface PartPreview {
   slot: Slot;
   id: string;
 }
 
-/** The robot with this part changed. A smaller chassis or tower gives up armour to make room, if that's enough. */
+/** The robot with this part changed. It gives up armour to stay within its limits, if that's enough. */
 function withPart<T extends PartsChoice>(loadout: T, slot: Slot, id: string): T {
   const swapped: T = { ...loadout, [slot]: id };
-  if (slot !== 'chassis' && slot !== 'tower') return swapped;
-  const next = { ...swapped };
+  let next = swapped;
   let { armour } = installedParts(next);
-  while (spaceUsed(next) > spaceCapacity(next) && armour > ARMOUR.min) {
-    armour = Math.max(ARMOUR.min, armour - ARMOUR.step);
-    next.armour = armour;
+  while (buildProblem(next) && armour > ARMOUR.min) {
+    armour -= ARMOUR.step;
+    next = { ...next, armour };
   }
-  return spaceUsed(next) <= spaceCapacity(next) ? next : swapped;
+  return buildProblem(next) ? swapped : next;
+}
+
+/** Why this part can't be fitted, or null if it can. */
+export function partProblem(save: Save, slot: Slot, id: string): 'points' | 'weight' | null {
+  return buildProblem(withPart(save.loadout, slot, id));
 }
 
 export function partFits(save: Save, slot: Slot, id: string): boolean {
-  const next = withPart(save.loadout, slot, id);
-  return spaceUsed(next) <= spaceCapacity(next);
+  return partProblem(save, slot, id) === null;
 }
 
 /** The robot as it would be with this part, for trying one out without buying or fitting it. */
@@ -195,7 +219,7 @@ export function applyCheat(save: Save, code: string): string | null {
   }
 }
 
-/** Buys the part if needed, then fits it. A part with no room goes on the shelf until there is. */
+/** Buys the part if needed, then fits it. A part that's over the limits goes on the shelf until it isn't. */
 export function buyOrEquip(save: Save, slot: Slot, id: string): boolean {
   const owned = save.owned[slot] as string[];
   const buying = !owned.includes(id);
@@ -228,8 +252,7 @@ export function sellPart(save: Save, slot: Slot, id: string): boolean {
 
 export function setArmour(save: Save, armour: number): boolean {
   if (!Number.isFinite(armour) || armour < ARMOUR.min || armour > ARMOUR.max || armour % ARMOUR.step !== 0) return false;
-  const next = { ...save.loadout, armour };
-  if (spaceUsed(next) > spaceCapacity(next)) return false;
+  if (buildProblem({ ...save.loadout, armour })) return false;
   save.loadout.armour = armour;
   return true;
 }
@@ -303,7 +326,14 @@ function rivalPaint(color: number, rng: () => number): Paint {
 
 const keysOf = <T extends object>(table: T) => Object.keys(table) as (keyof T)[];
 
-/** Rivals scale with how far the player has upgraded, so the money never trivialises the game. */
+const WINS_PER_RIVAL_LEVEL = 6;
+
+/** A starter robot uses about 64 points, so the first rivals aren't far past that, and later ones use all they have. */
+export function rivalPoints(level: number): number {
+  return Math.min(POINT_BUDGET, 64 + level * 9);
+}
+
+/** Rivals get better with the player's wins, and in Career with the upgrades they're given to match the fight. */
 export function makeRivals(
   save: { wins: number; loadout: { upgrades: Record<UpgradeId, number> } } | null,
   count: number,
@@ -312,18 +342,21 @@ export function makeRivals(
   const rng = makeRng(seed);
   const up = save?.loadout.upgrades ?? { armor: 0, engine: 0, weapons: 0 };
   const invested = up.armor + up.engine + up.weapons;
-  const level = Math.min(5, Math.floor(invested / 3));
+  const upgraded = Math.min(5, Math.floor(invested / 3));
+  const level = Math.max(upgraded, Math.min(5, Math.floor((save?.wins ?? 0) / WINS_PER_RIVAL_LEVEL)));
   const veteran = (save?.wins ?? 0) >= 2 || level >= 1;
   // New players meet the simpler gear first, and the whole arsenal once they've found their feet.
   const affordable = <T extends object>(table: T) =>
     keysOf(table).filter((id) => veteran || (table[id] as { price: number }).price <= 600);
   return RIVALS.slice(0, count).map((rival) => {
     const loadout: Loadout = {
-      chassis: pick(affordable(CHASSIS).length > 1 ? affordable(CHASSIS) : (['brawler', 'scout'] as ChassisId[]), rng),
-      melee: pick(affordable(MELEE), rng),
-      defense: pick(affordable(DEFENSES), rng),
+      ...fillBuild({
+        chassis: pick(affordable(CHASSIS).length > 1 ? affordable(CHASSIS) : (['brawler', 'scout'] as ChassisId[]), rng),
+        melee: pick(affordable(MELEE), rng),
+        defense: pick(affordable(DEFENSES), rng),
+      }, rng, veteran ? Infinity : 600, rivalPoints(level)),
       powerups: { rage: level >= 2 ? 1 : 0, megashield: level >= 3 ? 1 : 0, cloaking: 0, xray: 0, repair: 1, battery: 1 },
-      upgrades: { armor: level, engine: level, weapons: level },
+      upgrades: { armor: upgraded, engine: upgraded, weapons: upgraded },
       paint: rivalPaint(rival.color, rng),
     };
     return { ...rival, loadout, isAI: true, skill: Math.min(0.95, 0.45 + level * 0.1 + rng() * 0.1) };

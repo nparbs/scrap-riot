@@ -66,7 +66,7 @@ Player feedback from playing against the original's look. Melee is the main even
 - [ ] Sparks and visible damage from spinner hits
 - [ ] Modular robots: two main weapons at once, front and back, as in the original's weapon slots
 - [x] Self-righting: a Flipper lands robots upside down, and they right themselves about 3 seconds later
-- [ ] Weight as a stat, as the original's parts had
+- [x] Weight as a stat, as the original's parts had
 - [x] Guns removed altogether, with the Flamethrower, Tesla Coil and Pneumatic Spear kept as main weapons
 - [x] Gun-style weapons mounted on the tower, and a Flamethrower barrel that can't be seen through
 - [x] A choice of three powerups for each match, with the rest left in the garage
@@ -83,6 +83,14 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] A shape, landmark and signature hazard of its own for each map
 - [x] The Rig replaces Rooftop Rumble, which was a second city roof
 - [x] A count of who's online beside the balance, and a picture on every weapon and defense card
+- [x] A 100-point budget for every robot in place of room, with a weight limit on each chassis
+- [x] Speed from engine power against total weight, and hit power from weight
+- [x] Health and armor as separate bars, with some weapons piercing armor
+- [x] Battery use that follows how hard a weapon hits, on every weapon, and a flat battery that cuts the weapon out
+- [x] Upgrades that only count in Career
+- [x] Towers built into each chassis, and the Ring Spinner and Eggbeater removed
+- [x] A forward-facing Tesla Coil on the nose
+- [ ] Human playtest of points, weight, armor and battery
 
 ## v0.1: Playable slice (done)
 

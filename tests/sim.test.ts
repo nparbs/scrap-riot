@@ -11,6 +11,7 @@ function loadout(over: Partial<Loadout> = {}): Loadout {
     chassis: 'brawler',
     melee: 'chainsaw',
     defense: 'shield',
+    armour: 0,
     powerups: { rage: 1, megashield: 1, cloaking: 1, xray: 1, repair: 1, battery: 1 },
     upgrades: { armor: 0, engine: 0, weapons: 0 },
     ...over,

@@ -28,7 +28,7 @@ import { CAREER } from '../src/game/career';
 import { Match } from '../src/sim/match';
 
 const save = newSave();
-const pilot = (name: string) => ({ name, color: 0xff8a2a, isAI: false, loadout: newSave().loadout });
+const pilot = (name: string) => ({ name, color: 0xff8a2a, isAI: false, loadout: { ...newSave().loadout, armour: 0 } });
 const duel = (arena: ArenaId) => new Match([pilot('A'), pilot('B')], { seed: 1, arena, mode: 'ffa', countdown: 0, duration: 999, killTarget: 999 });
 
 const circlesTouch = (a: Circle, b: Circle, gap = 0) => Math.hypot(a.x - b.x, a.z - b.z) < a.r + b.r + gap;

@@ -1,6 +1,6 @@
 import { closestOnBlock, rayBlock, sawPos, shockerActive, type Block, ballHeight, ballPos, BALL_HIT_HEIGHT, BALL_RADIUS, HAMMER_WARN, hammerClock, solidGround, trapdoorWarning } from './arena';
 import { DEFENSES, MELEE } from './data';
-import { bearing, wrapAngle, type Bot, type Match } from './match';
+import { bearing, condition, wrapAngle, type Bot, type Match } from './match';
 
 const THINK_INTERVAL = 0.2;
 const RETARGET_INTERVAL = 1.5;
@@ -77,6 +77,9 @@ export class BotBrain {
       this.setGoal(match.arena.hill.x, match.arena.hill.z);
     } else if (scrap && Math.hypot(scrap.x - bot.x, scrap.z - bot.z) < 10) {
       this.setGoal(scrap.x, scrap.z);
+    } else if (this.target && bot.batteryFlat) {
+      // Nothing works until it recharges, so keep away for now.
+      this.setGoal(bot.x * 2 - this.target.x, bot.z * 2 - this.target.z);
     } else if (this.target) {
       // Every build closes in, because the real damage is up close.
       this.setGoal(this.target.x, this.target.z);
@@ -371,21 +374,23 @@ export class BotBrain {
         bot.input.melee = dist < melee.range && angle < melee.arc;
         break;
       case 'spinner':
-        // Spin up on the way in, so the weapon is at speed when it arrives.
-        bot.input.melee = dist < 16;
+        // Spin up on the way in, so the weapon is at speed when it arrives. Sooner than this wastes battery.
+        bot.input.melee = dist < 12;
         break;
       default:
-        bot.input.melee = dist - target.radius < melee.range && angle < melee.arc;
+        // The less skilled swing a bit early and wide, and pay for it in battery.
+        bot.input.melee = this.match.inCone(bot, target, bot.heading, melee.range + (1 - this.skill) * 3, melee.arc + (1 - this.skill) * 0.6);
     }
 
-    bot.input.boost = dist > 12 && angle < 0.3 && bot.ammo > 0.4;
+    // The weapon runs off the same battery, so only a good charge is worth spending on getting there.
+    bot.input.boost = dist > 12 && angle < 0.3 && bot.ammo > 0.6;
 
     bot.input.defense = this.wantsDefense(target, dist, angle);
   }
 
   private wantsDefense(target: Bot, dist: number, angle: number): boolean {
     const { bot, match } = this;
-    const health = bot.hp / bot.maxHp;
+    const health = condition(bot);
     const recentlyHit = match.time - bot.lastHitT < 0.5;
     const def = DEFENSES[bot.loadout.defense];
     switch (bot.loadout.defense) {
@@ -405,7 +410,7 @@ export class BotBrain {
       case 'emp':
         return dist < def.radius * 0.7;
       case 'regen':
-        return health < 0.6;
+        return bot.armour < bot.maxArmour * 0.5 || bot.hp < bot.maxHp * 0.7;
       case 'cloak':
         return health < 0.45 && recentlyHit;
       case 'minibot':
@@ -427,9 +432,10 @@ export class BotBrain {
     const { bot, match, target } = this;
     if (match.rng() > this.skill) return;
     const dist = target ? Math.hypot(target.x - bot.x, target.z - bot.z) : Infinity;
-    const health = bot.hp / bot.maxHp;
+    const health = condition(bot);
     const p = bot.powerups;
-    if (health < 0.4 && p.repair > 0) bot.input.powerup = 'repair';
+    // A kit only mends health, so it waits until the armour has stopped protecting it.
+    if (bot.hp / bot.maxHp < 0.5 && p.repair > 0) bot.input.powerup = 'repair';
     else if (health < 0.5 && dist < 12 && p.megashield > 0) bot.input.powerup = 'megashield';
     else if (dist < 9 && health > 0.4 && p.rage > 0) bot.input.powerup = 'rage';
     else if (health < 0.3 && p.cloaking > 0) bot.input.powerup = 'cloaking';
