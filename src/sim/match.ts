@@ -97,6 +97,7 @@ import {
   type WheelsId,
 } from './data';
 import { makeRng, type Rng } from './rng';
+import type { BrainOverride } from './tactics';
 
 export const STEP = 1 / 60;
 /** How fast a robot must be rolling, forward or back, to turn at its full rate. */
@@ -305,6 +306,8 @@ export interface BotSetup {
   loadout: Loadout;
   isAI: boolean;
   skill?: number;
+  /** For tests and training: fights by these rather than what its skill would give it. */
+  brain?: BrainOverride;
   /** Career bosses are tougher and physically bigger. */
   boss?: { hpMult: number; size: number };
 }
@@ -406,7 +409,7 @@ export class Match {
     setups.forEach((setup, id) => {
       const bot = this.createBot(id, setup);
       this.bots.push(bot);
-      if (setup.isAI) this.brains.set(id, new BotBrain(this, bot, setup.skill ?? 0.6));
+      if (setup.isAI) this.brains.set(id, new BotBrain(this, bot, setup.skill ?? 0.6, setup.brain));
     });
     this.bots.forEach((bot, i) => {
       const spawn = this.arena.spawns[i % this.arena.spawns.length];
@@ -746,6 +749,11 @@ export class Match {
     if (centres - other.radius > range + bot.radius - REACH_RADIUS) return false;
     const width = Math.atan2(other.radius, centres) * TARGET_WIDTH;
     return Math.abs(wrapAngle(bearing(bot.x, bot.z, other.x, other.z) - angle)) <= arc + width;
+  }
+
+  /** How far apart the middles of two robots can be for this reach to touch. */
+  reachTo(bot: Bot, other: Bot, range: number): number {
+    return range + bot.radius - REACH_RADIUS + other.radius;
   }
 
   /** Takes battery for the weapon, if there's enough. Trying with next to nothing left makes it cut out. */

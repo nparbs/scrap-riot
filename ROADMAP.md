@@ -64,7 +64,6 @@ Player feedback from playing against the original's look. Melee is the main even
 - [ ] Replace the name prompt with Google sign-in, and add a name filter
 - [ ] A report button or a way to hide other players' paint jobs
 - [ ] Sparks and visible damage from spinner hits
-- [ ] Modular robots: two main weapons at once, front and back, as in the original's weapon slots
 - [x] Self-righting: a Flipper lands robots upside down, and they right themselves about 3 seconds later
 - [x] Weight as a stat, as the original's parts had
 - [x] Guns removed altogether, with the Flamethrower, Tesla Coil and Pneumatic Spear kept as main weapons
@@ -90,6 +89,8 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] Upgrades that only count in Career
 - [x] Towers built into each chassis, and the Ring Spinner and Eggbeater removed
 - [x] A forward-facing Tesla Coil on the nose
+- [x] Bots trained over simulated fights, with tactics for each weapon and defense
+- [ ] Bot tactics for crowds, as training only helped in duels
 - [ ] Human playtest of points, weight, armor and battery
 
 ## v0.1: Playable slice (done)

@@ -14,13 +14,13 @@ If `git pull --ff-only origin main` fails with "Cannot fast-forward to multiple 
 
 ## Current state
 
-- **Live:** everything through PR #45 is merged and on the page, with the server on protocol 12.
-- **Not live yet:** the points and balance work on the `points-balance` branch is protocol 13, so the page and server have to go live together.
+- **Live:** everything is merged and on the page, including the trained bots, with the server on protocol 13.
 - **Tests:** see `npm test`, which includes the map layout checks.
 - **Not verified yet:** nobody has played the points, weight, armor or battery rules by hand, and no online match has run on them against the real server. The new maps, animations, tracks and window fixes have also only run in a headless browser. Hazard timings and damage are first guesses, tuned against bots only. An account already showing `null/3` hasn't been checked on the real database, only in tests. Nothing since the phone work has run on a real phone. That includes the thumb buttons, the face-off when a phone really rotates or goes full screen, the landscape lock and Add to Home Screen. The join banner and phone counts have only run against a mocked server, not a real queue.
 
 ## Latest work (protocol 13)
 
+- **Trained bots:** `src/sim/ai.ts` now flanks, backs off facing the target, leads its swings and shoves robots near a drop, by the numbers in `src/sim/tactics.ts`. `scripts/train-bots.ts` evolves those numbers into `src/sim/trained.ts`, and `trainedShare` scales how much of them a bot of a given skill uses. How it's done and what it achieved are in [balance.md](balance.md). Trained bots win duels but do no better in brawls.
 - **Points and weight:** rules, how to test and current results are in [balance.md](balance.md). `POINT_BUDGET`, `pointsUsed`, `payloadUsed`, `buildProblem` and `buildStats` in `src/sim/data.ts` are the core. A chassis has no speed stat any more, because speed comes from engine power against total weight. `Bot.chassis` still has `speed`, `accel` and `mass`, worked out when the robot is created.
 - **Armor:** `Bot.armour` is a separate bar, sent in snapshots. `Match.damage` takes a `pierce` share. The HUD shows it as a thin strip across the top of the health bar, and over each robot's head. Plates fall off the model as armor goes.
 - **Battery:** `batteryCost` in `src/sim/data.ts`, spent through `Match.spend`. `battery` and `drain` on weapons are gone. Running out sets `batteryFlat`, sent in snapshots, which cuts out the weapon and boost until it recharges to `BATTERY_RESTART`. The HUD shows BATTERY FLAT, and bots back away meanwhile.
@@ -131,7 +131,6 @@ The user tests by hand, and their feedback should drive what comes next. Open it
 6. **Name and paint moderation:** there is no filter on names and no report button for paint jobs. This is needed before sharing widely. The original had a Report Abuse button.
 7. **Custom domain:** `scrapriot.parbs.online` was discussed but not set up. DNS, GitHub Pages and the server's `ALLOWED_ORIGINS` would all need changing.
 8. **Database backups:** the nightly backup in [hosting.md](hosting.md) was never set up on the VM.
-9. **Roadmap items:** modular robots with two main weapons.
 
 ### Known weak spots
 
@@ -179,7 +178,8 @@ The user tests by hand, and their feedback should drive what comes next. Open it
 npm run dev          # the game, on the port Vite prints
 npm run server:dev   # local server with a temporary database
 npm test
-npm run balance -- 42 6
+npm run balance -- 24000 2400
+npm run train-bots -- 2 60 12
 ```
 
 For a second local player, use a private window. Two normal tabs share an account and get rejected.
