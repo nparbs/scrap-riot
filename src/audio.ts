@@ -21,12 +21,6 @@ const MELEE_LEVEL: Record<MeleeId, number> = {
   hammersaw: 1.74, drum: 0.7, ram: 2.16, chainsaw: 2.66, drill: 2.66, rollingpin: 2.66, dagger: 2.69, magnet: 2.72, claw: 3, forks: 3,
   flamethrower: 1, tesla: 1.2, spear: 2,
 };
-/** How long the announcer waits for each result's sting to finish, in seconds. */
-const WIN_VOICE_DELAY = 0.65;
-const LOSE_VOICE_DELAY = 0.85;
-const VOICE_LINES = ['winner', 'scrapped'] as const;
-type VoiceLine = (typeof VOICE_LINES)[number];
-const VOICE_LEVEL = 0.8;
 /** The Tesla Coil's bolt and the teleport's crackle. */
 const ARC_LEVEL = 2;
 
@@ -54,7 +48,7 @@ export interface LoopState {
 
 const SILENT: LoopState = { engine: -1, boosting: false, saw: 0, spinSpeed: 0, spinLevel: 0, flame: false };
 
-/** Everything is synthesized here, except the announcer's two short lines. */
+/** Everything is synthesized here. */
 export class Sfx {
   muted = false;
   private ctx: AudioContext | null = null;
@@ -74,7 +68,6 @@ export class Sfx {
   private spinGain: GainNode | null = null;
   private spinOsc: OscillatorNode | null = null;
   private lastHit = -1;
-  private readonly voices = new Map<VoiceLine, AudioBuffer>();
 
   /** Browsers only allow audio after a user gesture, so call this from input handlers. */
   unlock(): void {
@@ -135,7 +128,6 @@ export class Sfx {
 
     this.music = new Music(ctx, this.musicBus, buffer);
     this.music.play(this.volumes.music > 0 ? this.wantedTrack : null);
-    this.loadVoices();
   }
 
   /** The filter of the loop made most recently, for the one loop that sweeps. */
@@ -319,40 +311,22 @@ export class Sfx {
     this.tone(0.1, 0.25, 600, 2400, 'triangle', 0.04);
   }
 
+  /** A quick run up to a bright held chord, with a sparkle on top. */
   win(): void {
-    [440, 554, 659, 880].forEach((freq, i) => this.tone(0.075, 0.32, freq, freq, 'square', i * 0.13));
-    this.announce('winner', WIN_VOICE_DELAY);
+    [523, 659, 784].forEach((freq, i) => this.tone(0.07, 0.16, freq, freq, 'square', i * 0.12));
+    [523, 659, 784, 1047].forEach((freq) => this.tone(0.05, 0.8, freq, freq, 'square', 0.36));
+    this.tone(0.05, 0.3, 2093, 2637, 'triangle', 0.5);
+    this.tone(0.04, 0.3, 2637, 3136, 'triangle', 0.62);
   }
 
+  /** Sad trombone: three steps down, then a long droop as it all runs out of power. */
   lose(): void {
-    [392, 349, 311, 220].forEach((freq, i) => this.tone(0.07, 0.4, freq, freq * 0.98, 'sawtooth', i * 0.18));
-    this.announce('scrapped', LOSE_VOICE_DELAY);
-  }
-
-  /** The robot announcer, once the sting has played. The files come from scripts/make-voice.mjs. */
-  private announce(line: VoiceLine, delay: number): void {
-    const { ctx, effects } = this;
-    const buffer = this.voices.get(line);
-    if (!ctx || !effects || !buffer || this.muted) return;
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    const gain = ctx.createGain();
-    gain.gain.value = VOICE_LEVEL;
-    source.connect(gain).connect(effects);
-    source.start(ctx.currentTime + delay);
-  }
-
-  /** Fetched ahead of time, so a line is ready the moment a match ends. A match just goes without if this fails. */
-  private loadVoices(): void {
-    const { ctx } = this;
-    if (!ctx) return;
-    for (const line of VOICE_LINES) {
-      fetch(`${import.meta.env.BASE_URL}voice/${line}.mp3`)
-        .then((response) => (response.ok ? response.arrayBuffer() : Promise.reject(new Error(String(response.status)))))
-        .then((data) => ctx.decodeAudioData(data))
-        .then((buffer) => this.voices.set(line, buffer))
-        .catch(() => {});
-    }
+    [311, 294, 277].forEach((freq, i) => {
+      this.tone(0.075, 0.3, freq, freq * 0.97, 'sawtooth', i * 0.3);
+      this.tone(0.07, 0.3, freq / 2, (freq / 2) * 0.97, 'triangle', i * 0.3);
+    });
+    this.tone(0.085, 1.1, 262, 110, 'sawtooth', 0.9);
+    this.tone(0.08, 1.1, 131, 55, 'triangle', 0.9);
   }
 
   click(): void {

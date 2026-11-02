@@ -71,7 +71,7 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] A choice of three powerups for each match, with the rest left in the garage
 - [x] A model on the robot for every defense
 - [x] Spinners turned well down, because they were loud and harsh
-- [x] A robot voice saying "Winner" and "Scrapped"
+- [x] A happy or sad sound at the end of a match
 - [x] A duel face-off before the countdown
 - [x] Robots tumble and blow up where they actually are, including below the edge
 - [x] The Fight Bots start button always on screen, at the bottom of the panel
