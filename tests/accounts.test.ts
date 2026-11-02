@@ -1,9 +1,9 @@
 import { exportJWK, generateKeyPair, SignJWT, createLocalJWKSet, type JWK } from 'jose';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { embeddedDb } from '../scripts/embedded-db';
 import { Accounts, ratingChange } from '../server/accounts';
 import { connectPostgres, type Db } from '../server/db';
-import { startGameServer, type GameServer } from '../server/gameServer';
+import { ACTIVE_FOR_MS, startGameServer, type GameServer } from '../server/gameServer';
 import { googleVerifier } from '../server/google';
 import { STARTING_MONEY } from '../src/game/progress';
 import { NetClient } from '../src/net/client';
@@ -324,6 +324,49 @@ describe('over the network', () => {
     await until(() => first.inbox.some((m) => m.t === 'start'));
     const fighting = await online();
     expect([fighting.queued, fighting.playing]).toEqual([0, 2]);
+  });
+
+  it('counts anyone at the controls as online, once each, until they stop', async () => {
+    const s = await server({ minPlayers: 2, capacity: 2, lobbyMs: 300, fullLobbyMs: 300 });
+    const online = async () => (await api(s, '/api/online')).json() as Promise<OnlineStatus>;
+    const beat = (token: string) => api(s, '/api/presence', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    const before = (await online()).active!;
+    const one = await accounts.createGuest();
+    const two = await accounts.createGuest();
+
+    const answer = await beat(one.token);
+    expect(answer.status).toBe(200);
+    expect(((await answer.json()) as OnlineStatus).active).toBe(before + 1);
+    await beat(one.token);
+    expect((await online()).active).toBe(before + 1);
+    await beat(two.token);
+    expect((await online()).active).toBe(before + 2);
+
+    // Waiting in a queue as well doesn't count them twice.
+    const queued = raw(s);
+    await queued.opened;
+    queued.ws.send(JSON.stringify({ t: 'join', v: PROTOCOL_VERSION, session: one.token, name: '', loadout: {} }));
+    await until(() => queued.inbox.some((m) => m.t === 'queue'));
+    const waiting = await online();
+    expect(waiting.queued).toBe(1);
+    expect(waiting.active).toBe(before + 2);
+
+    // Once word stops coming, only the one still in the queue counts.
+    const later = Date.now() + ACTIVE_FOR_MS + 1000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(later);
+    try {
+      expect((await online()).active).toBe(before + 1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('takes word of being online only from a real session', async () => {
+    const s = await server();
+    const before = ((await (await api(s, '/api/online')).json()) as OnlineStatus).active;
+    expect((await api(s, '/api/presence', { method: 'POST' })).status).toBe(401);
+    expect((await api(s, '/api/presence', { method: 'POST', headers: { Authorization: 'Bearer nonsense' } })).status).toBe(401);
+    expect(((await (await api(s, '/api/online')).json()) as OnlineStatus).active).toBe(before);
   });
 
   it('does not list players who have been gone a long time', async () => {

@@ -91,6 +91,9 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] A forward-facing Tesla Coil on the nose
 - [x] Bots trained over simulated fights, with tactics for each weapon and defense
 - [ ] Bot tactics for crowds, as training only helped in duels
+- [x] Five chassis classes, each with its own weapons and bonus
+- [x] The Whippet rebuilds its armor out of combat, in place of the Armor Regenerator
+- [x] Chassis rebuilt with their own proportions, suspension, noses, towers and weapon mounts
 - [ ] Human playtest of points, weight, armor and battery
 
 ## v0.1: Playable slice (done)

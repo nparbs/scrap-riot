@@ -36,7 +36,6 @@ export const TRAINED_HABITS: Partial<Record<DefenseId, Habit>> = {
   cutter: { range: 0, health: 0.823, reserve: 0.215 },
   teleport: { range: 13.181, health: 0.111, reserve: 0.301 },
   flash: { range: 18.709, health: 0.825, reserve: 0.103 },
-  regen: { range: 40, health: 0.6, reserve: 0 },
   cloak: { range: 32.916, health: 0.715, reserve: 0.228 },
   emp: { range: 6.3, health: 1, reserve: 0 },
   minibot: { range: 27.088, health: 0.865, reserve: 0.231 },

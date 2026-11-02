@@ -615,8 +615,8 @@ export class MatchView {
     if (bot.burnT > 0 && Math.random() < 0.5) {
       this.particles.burst(bot.x, bot.z, { count: 1, color: 0xff8a2a, speed: 2, size: 0.3, life: 0.35, y: 1.2, gravity: -5 });
     }
-    if (bot.regenT > 0 && Math.random() < 0.4) {
-      this.particles.burst(bot.x, bot.z, { count: 1, color: 0x5be36a, speed: 2, size: 0.14, life: 0.5, y: 0.6, gravity: -6 });
+    if (bot.rebuilding && Math.random() < 0.4) {
+      this.particles.burst(bot.x, bot.z, { count: 1, color: 0x9fc4e8, speed: 2, size: 0.14, life: 0.5, y: 0.6, gravity: -6 });
     }
     if (bot.kamikazeT > 0) {
       this.particles.burst(bot.x, bot.z, { count: 1, color: 0xff2a1a, speed: 5, size: 0.2, life: 0.2, y: 1.5, gravity: 0 });

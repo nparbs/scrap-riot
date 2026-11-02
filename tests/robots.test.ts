@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { buildRobot, type RobotBuild, type RobotModel } from '../src/render/robots';
-import { BODIES, CHASSIS, DEFAULT_PAINT, DEFENSES, type BodyId, type ChassisId, type DefenseId } from '../src/sim/data';
+import { BODIES, CHASSIS, DEFAULT_PAINT, DEFENSES, MELEE, type BodyId, type ChassisId, type DefenseId, type MeleeId } from '../src/sim/data';
 import { Match, type BotSetup } from '../src/sim/match';
 import { newSave } from '../src/game/progress';
 
@@ -71,7 +71,7 @@ describe('defense gear on show', () => {
     for (const defense of ALL) expect(look(defense).length, defense).toBeGreaterThan(bare);
   });
 
-  it.each(['oil', 'glue', 'nails', 'mines', 'regen', 'emp', 'minibot', 'remote', 'kamikaze'] as const)('the %s rides behind the hull, opposite the main weapon', (defense) => {
+  it.each(['oil', 'glue', 'nails', 'mines', 'emp', 'minibot', 'remote', 'kamikaze'] as const)('the %s rides behind the hull, opposite the main weapon', (defense) => {
     const shelfEnd = (rearMelee: boolean) => {
       const model = buildRobot({ ...build('brawler', 'wedge', defense), melee: 'hammer', rearMelee });
       model.root.updateMatrixWorld(true);
@@ -124,13 +124,79 @@ describe('body shapes', () => {
   });
 });
 
+describe('how robots are held together', () => {
+  const WEAPONS = Object.keys(MELEE) as MeleeId[];
+  const bounds = (object: THREE.Object3D) => {
+    object.updateWorldMatrix(true, true);
+    return new THREE.Box3().setFromObject(object);
+  };
+
+  it.each(CHASSIS_IDS)('stands every weapon on a mount that reaches it, on the %s', (chassis) => {
+    for (const melee of WEAPONS) {
+      for (const rearMelee of [false, true]) {
+        const model = buildRobot({ ...build(chassis, 'wedge'), melee, rearMelee });
+        if (MELEE[melee].onTower) {
+          expect(model.weaponMount, melee).toBeNull();
+          continue;
+        }
+        const mount = bounds(model.weaponMount!);
+        const pivot = model.meleePivot.position;
+        expect(pivot.y, melee).toBeGreaterThanOrEqual(mount.min.y);
+        expect(pivot.y, melee).toBeLessThanOrEqual(mount.max.y);
+        expect(Math.abs(pivot.z - (mount.min.z + mount.max.z) / 2), melee).toBeLessThan((mount.max.z - mount.min.z) / 2 + 0.1);
+        // And its foot is down on the frame.
+        expect(mount.min.y, melee).toBeLessThan(model.tower.position.y);
+      }
+    }
+  }, 30_000);
+
+  it('keeps every big spinning weapon off the floor', () => {
+    for (const chassis of CHASSIS_IDS) {
+      for (const [melee, drop] of [['vertdisc', 0.72], ['vertbar', 0.78], ['rollingpin', 0.46], ['drum', 0.5]] as const) {
+        expect(buildRobot({ ...build(chassis, 'wedge'), melee }).meleePivot.position.y - drop, `${chassis} ${melee}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it.each(['small4', 'large4', 'six', 'tracks'] as const)('reaches out to every %s wheel from the frame', (wheels) => {
+    for (const chassis of CHASSIS_IDS) {
+      const model = buildRobot({ ...build(chassis, 'wedge'), wheels });
+      let inner = Infinity;
+      for (const wheel of model.wheels) inner = Math.min(inner, Math.abs(wheel.position.x));
+      // Everything but the wheels, weapon, tower and gear: the frame must get as far as the wheels do.
+      const frame = new THREE.Box3();
+      model.root.traverse((node) => {
+        if (node.parent === model.root && node instanceof THREE.Group && node !== model.tower && node !== model.meleePivot && node !== model.weaponMount) frame.expandByObject(node);
+      });
+      expect(frame.max.x, `${chassis} ${wheels}`).toBeGreaterThanOrEqual(inner - 0.3);
+    }
+  });
+
+  it('gives every chassis a different tower, bigger on the bigger ones', () => {
+    const shape = (chassis: ChassisId) => {
+      const parts: string[] = [];
+      buildRobot(build(chassis, 'wedge')).tower.traverse((node) => {
+        if (node instanceof THREE.Mesh) parts.push(node.geometry.type);
+      });
+      return parts.join();
+    };
+    expect(new Set(CHASSIS_IDS.map(shape)).size).toBe(CHASSIS_IDS.length);
+    const width = (chassis: ChassisId) => bounds(buildRobot(build(chassis, 'wedge')).tower).getSize(new THREE.Vector3()).x;
+    expect(width('juggernaut')).toBeGreaterThan(width('brawler'));
+    expect(width('brawler')).toBeGreaterThan(width('scout'));
+  });
+});
+
 describe('robot models', () => {
   it('keep the deck clear, with only the tower above the hull', () => {
     for (const chassis of CHASSIS_IDS) {
       for (const body of BODY_IDS) {
         for (const defense of Object.keys(DEFENSES) as DefenseId[]) {
           const model = buildRobot(build(chassis, body, defense));
-          model.root.children.find((node) => node.children.length > 0 && node.position.y > 0 && node !== model.meleePivot && node !== model.shield && node.position.x === 0 && node.position.z < 0)?.removeFromParent();
+          model.tower.removeFromParent();
+          // It's all merged into one, which reaches the whole robot, so it says nothing about the deck.
+          model.frame.removeFromParent();
+          model.weaponMount?.removeFromParent();
           model.meleePivot.removeFromParent();
           model.shield.removeFromParent();
           const hull = hullBox(model);
@@ -140,12 +206,14 @@ describe('robot models', () => {
             const part = new THREE.Box3().setFromObject(node);
             const center = part.getCenter(new THREE.Vector3());
             const overDeck = Math.abs(center.x) < hull.max.x && Math.abs(center.z) < hull.max.z;
-            if (overDeck) expect(part.max.y, `${chassis} ${body} ${defense}`).toBeLessThanOrEqual(hull.max.y + 1e-6);
+            // Panel seams lie on top of the shell, a hair above it.
+            if (overDeck) expect(part.max.y, `${chassis} ${body} ${defense}`).toBeLessThanOrEqual(hull.max.y + 0.01);
           });
         }
       }
     }
-  });
+    // Every chassis, shape and defense is a lot of robots to build, especially with other tests running.
+  }, 30_000);
 
   it('still have armour to lose as they take damage', () => {
     for (const body of BODY_IDS) expect(buildRobot(build('brawler', body)).plates.length).toBeGreaterThanOrEqual(4);

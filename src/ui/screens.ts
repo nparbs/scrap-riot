@@ -6,10 +6,13 @@ import { logoUrl } from '../render/logo';
 import { ARENA_ORDER, ARENAS, type ArenaId } from '../sim/arena';
 import {
   ARMOUR,
+  ARMOUR_REGEN_DELAY,
   batteryCost,
   buildProblem,
   buildStats,
   CHASSIS,
+  CLASSES,
+  classFor,
   DEFENSES,
   MELEE,
   REWARD,
@@ -32,6 +35,8 @@ import {
   type Paint,
   ENGINES,
   POWER_SOURCES,
+  type ChassisId,
+  type ClassBonus,
   type PartDef,
   type PowerupId,
   type UpgradeId,
@@ -382,8 +387,20 @@ function costChips(part: { points: number; weight: number }): string {
   return chip(`${part.points} pts`) + chip(`${part.weight} kg`);
 }
 
+/** A class's bonus in words. */
+function bonusText(bonus: ClassBonus): string {
+  const parts = [
+    bonus.damage !== 1 ? `+${Math.round((bonus.damage - 1) * 100)}% damage` : '',
+    bonus.reload !== 1 ? `${Math.round((1 - bonus.reload) * 100)}% faster reload` : '',
+    bonus.battery !== 1 ? `${Math.round((1 - bonus.battery) * 100)}% less battery` : '',
+    bonus.grip !== 1 ? `+${Math.round((bonus.grip - 1) * 100)}% grip time` : '',
+    bonus.reach !== 1 ? `${Math.round((bonus.reach - 1) * 100)}% more reach` : '',
+  ];
+  return parts.filter(Boolean).join(', ');
+}
+
 /** What the shop says about a part: what it does, and what it costs in points and weight. */
-function partChips(slot: Slot, id: string): string {
+function partChips(slot: Slot, id: string, fitted: ChassisId): string {
   if (slot === 'chassis') {
     const c = CHASSIS[id as keyof typeof CHASSIS];
     const stock = buildStats({ chassis: id as keyof typeof CHASSIS, melee: 'chainsaw', defense: 'shield' });
@@ -400,6 +417,7 @@ function partChips(slot: Slot, id: string): string {
       weapon.pierce ? chip(`${Math.round(weapon.pierce * 100)}% through armor`, 'good') : '',
       battery > 0 ? chip(`${Math.round(battery * 100)}% battery ${held ? 'per sec' : 'per hit'}`, 'bad') : chip('No battery', 'good'),
       weapon.onTower ? chip('On the tower', 'good') : '',
+      chip(`Best on ${CHASSIS[classFor(id as MeleeId)].name}`, classFor(id as MeleeId) === fitted ? 'good' : ''),
       costChips(weapon),
     ].join('');
   }
@@ -417,7 +435,7 @@ function partChips(slot: Slot, id: string): string {
   const power = slot === 'power' ? POWER_SOURCES[id as keyof typeof POWER_SOURCES] : null;
   return [
     engine ? chip(`${engine.power} power`) : '',
-    power ? percentChip(power.regen, 'recharge') + percentChip(power.capacity, 'capacity') : '',
+    power ? percentChip(power.regen, 'recharge') + percentChip(power.capacity, 'capacity') + (power.restart ? chip('Restarts quickly', 'good') : '') : '',
     percentChip(part.speed, 'speed'),
     percentChip(part.accel, 'accel'),
     percentChip(part.turn, 'turning'),
@@ -437,6 +455,7 @@ function fittedPart(loadout: Save['loadout'], slot: Slot): string {
 /** Every part of one type. Clicking one only tries it on, and nothing is spent without pressing its button. */
 function partCards(save: Save, slot: Slot, preview: PartPreview | null): string {
   const fitted = fittedPart(save.loadout, slot);
+  const shown = previewLoadout(save.loadout, preview);
   const owned = save.owned[slot] as string[];
   return Object.entries(CATALOG[slot] as Record<string, { name: string; blurb: string; price: number }>)
     .map(([id, item]) => {
@@ -445,10 +464,12 @@ function partCards(save: Save, slot: Slot, preview: PartPreview | null): string 
       const trying = preview?.slot === slot && preview.id === id;
       const broke = !has && save.money < item.price;
       const problem = partProblem(save, slot, id);
-      const type = slot === 'melee' ? `<small class="card-type">${MELEE[id as MeleeId].type}</small>` : '';
+      const type = slot === 'melee' ? `<small class="card-type">${MELEE[id as MeleeId].type}</small>` : slot === 'chassis' ? `<small class="card-type">${CLASSES[id as ChassisId].role}</small>` : '';
       // Made by scripts/make-previews.mjs, from the game's own models.
       const thumb = slot === 'melee' || slot === 'defense' ? `<img class="card-thumb" src="${import.meta.env.BASE_URL}previews/${slot}-${id}.jpg" alt="" loading="lazy" />` : '';
-      const about = `${thumb}<strong>${item.name}</strong>${type}<span>${item.blurb}</span><div class="chips">${partChips(slot, id)}</div>`;
+      const job = slot === 'chassis' ? CLASSES[id as ChassisId] : null;
+      const specialty = job ? `<span class="class-note"><b>${bonusText(job.bonus)}</b> with ${job.weapons.map((weapon) => MELEE[weapon].name).join(', ')}${job.movingTarget ? `. <b>${Math.round(job.movingTarget * 100)}% less damage</b> at speed` : ''}${job.armourRegen ? `. <b>Rebuilds armor</b> after ${ARMOUR_REGEN_DELAY} seconds out of combat` : ''}</span>` : '';
+      const about = `${thumb}<strong>${item.name}</strong>${type}<span>${item.blurb}</span>${specialty}<div class="chips">${partChips(slot, id, shown.chassis)}</div>`;
       const price = has ? '<small class="card-owned">Owned</small>' : `<small class="card-price">$${item.price.toLocaleString()}</small>`;
       const action = has
         ? `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${problem ? 'disabled' : ''}>${problem === 'weight' ? 'Too heavy' : problem === 'points' ? 'Too many points' : 'Fit'}</button>`
@@ -553,7 +574,10 @@ function statsPanel(save: Save, preview: PartPreview | null): string {
   const used = pointsUsed(shown);
   const carried = payloadUsed(shown);
   const payload = CHASSIS[shown.chassis].payload;
+  const job = CLASSES[shown.chassis];
   const rows: [string, string, string?][] = [
+    ['Class', job.role],
+    ['Class bonus', job.weapons.includes(shown.melee) ? 'Active' : 'Not with this weapon'],
     ['Health', `${Math.round(stats.hp)}`],
     ['Armor', `${stats.armour}`],
     ['Top speed', stats.speed.toFixed(1)],
@@ -576,10 +600,11 @@ export function queueLabel(online: OnlineStatus | null, queue: OnlineQueue): str
   return waiting === undefined ? '' : `${waiting} in queue`;
 }
 
-/** How many people are playing or waiting right now, for beside the balance. */
+/** How many people are around right now, for beside the balance. */
 export function onlineLabel(online: OnlineStatus | null): string {
   if (!online) return '';
-  return `${online.queued + online.playing} online`;
+  // A server a step behind the page doesn't count anyone outside a queue or a match.
+  return `${online.active ?? online.queued + online.playing} online`;
 }
 
 /** Who's around now, and who was recently. */
@@ -587,6 +612,7 @@ export function playersPanel(online: OnlineStatus | null): string {
   if (!online) return '<p class="settings-hint">Connect to a game server to see who is playing.</p>';
   const rows = online.recent.map((player) => `<tr><td>${escapeText(player.name)}</td><td>${timeAgo(player.lastSeen)}</td></tr>`).join('');
   return `<div class="stat-row players-now">
+      <div><b>${online.active ?? online.queued + online.playing}</b><span>Online</span></div>
       <div><b>${online.queued}</b><span>In queue</span></div>
       <div><b>${online.playing}</b><span>In a match</span></div>
     </div>
@@ -675,7 +701,8 @@ function helpPanel(keys: Bindings): string {
     <section><h3>The basics</h3>${list([
       `Build a robot in the Workshop. Every robot gets ${POINT_BUDGET} points to spend, and stronger parts cost more of them.`,
       'Everything has a weight too. Big weapons need a big chassis, and the more you carry, the slower you go, unless the engine can keep up.',
-      'Armor wears away before health, though some weapons punch through it. Repairs mend health, and only the Armor Regenerator rebuilds armor.',
+      'Each chassis is a class with its own weapons. Fit one of them and it hits harder, reloads faster or uses less battery, depending on the class.',
+      'Armor wears away before health, though some weapons punch through it. Repairs mend health, and armor stays worn until you respawn, unless you drive a Whippet, which rebuilds its own armor when it\'s out of combat.',
       'Weapons and boost run off the battery, and the harder a weapon hits, the more each hit takes.',
       'Tick up to three powerups in the Workshop to take into a match. The rest stay in your garage.',
       'Robots only turn while rolling, so a stopped robot has to drive forward or back to change direction.',

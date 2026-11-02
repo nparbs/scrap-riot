@@ -15,6 +15,7 @@ import {
   POWERUP_ORDER,
   POWERUP_SLOTS,
   buildProblem,
+  classFor,
   fillBuild,
   fittedPowerups,
   fitToLimits,
@@ -114,11 +115,12 @@ export function retireGuns<T extends { money: number; owned: Save['owned']; load
 const OLD_PART_PRICES: Record<string, Record<string, number>> = {
   tower: { small: 100, medium: 0, large: 400 },
   melee: { shell: 1000, eggbeater: 500 },
+  defense: { regen: 700 },
 };
 
 /**
- * Towers became part of the chassis, and the Ring Spinner and Eggbeater went, so anyone who bought
- * one gets the money back. Points replaced room, so a robot that doesn't fit any more is cut down to fit.
+ * Towers became part of the chassis, and the Ring Spinner, Eggbeater and Armor Regenerator went,
+ * so anyone who bought one gets the money back. Points replaced room, so a robot that doesn't fit any more is cut down to fit.
  */
 export function retireParts<T extends { money: number; owned: Save['owned']; loadout: Loadout }>(save: T): T {
   const owned = save.owned as unknown as Record<string, string[] | undefined>;
@@ -130,6 +132,11 @@ export function retireParts<T extends { money: number; owned: Save['owned']; loa
     save.owned.melee.splice(save.owned.melee.indexOf(id), 1);
   }
   if ((save.loadout.melee as string) in OLD_PART_PRICES.melee) save.loadout.melee = 'chainsaw';
+  for (const id of save.owned.defense.filter((part) => part in OLD_PART_PRICES.defense)) {
+    save.money += OLD_PART_PRICES.defense[id];
+    save.owned.defense.splice(save.owned.defense.indexOf(id), 1);
+  }
+  if ((save.loadout.defense as string) in OLD_PART_PRICES.defense) save.loadout.defense = 'shield';
   Object.assign(save.loadout, fitToLimits(save.loadout));
   return save;
 }
@@ -303,12 +310,13 @@ export function applyResult(save: Save, payout: number, place: number, remaining
 }
 
 const RIVALS = [
-  { name: 'Rustjaw', color: 0xe0503a },
-  { name: 'Tin Tyrant', color: 0x3aa7e0 },
-  { name: 'Grinder', color: 0xa066e0 },
-  { name: 'Mama Volt', color: 0x4fd18b },
-  { name: 'Sprocket', color: 0xe0c13a },
-  { name: 'Dozer', color: 0xe07ab8 },
+  { name: 'Heisenberg', color: 0xe0503a },
+  { name: 'Gus Fring', color: 0x3aa7e0 },
+  { name: 'Saul Goodman', color: 0xa066e0 },
+  { name: 'Skyler White', color: 0x4fd18b },
+  { name: 'Jesse', color: 0xe0c13a },
+  { name: 'Mike', color: 0xe07ab8 },
+  { name: 'Hank Schrader', color: 0xe08a3a },
 ];
 
 function pick<T>(list: readonly T[], rng: () => number): T {
@@ -327,6 +335,7 @@ function rivalPaint(color: number, rng: () => number): Paint {
 const keysOf = <T extends object>(table: T) => Object.keys(table) as (keyof T)[];
 
 const WINS_PER_RIVAL_LEVEL = 6;
+const RIVALS_IN_CLASS = 0.7;
 
 /** A starter robot uses about 64 points, so the first rivals aren't far past that, and later ones use all they have. */
 export function rivalPoints(level: number): number {
@@ -349,10 +358,14 @@ export function makeRivals(
   const affordable = <T extends object>(table: T) =>
     keysOf(table).filter((id) => veteran || (table[id] as { price: number }).price <= 600);
   return RIVALS.slice(0, count).map((rival) => {
+    const melee = pick(affordable(MELEE), rng);
+    const chassisChoices = affordable(CHASSIS).length > 1 ? affordable(CHASSIS) : (['brawler', 'scout'] as ChassisId[]);
+    // Rivals know their classes, most of the time, as long as they could have bought it.
+    const suited = classFor(melee);
     const loadout: Loadout = {
       ...fillBuild({
-        chassis: pick(affordable(CHASSIS).length > 1 ? affordable(CHASSIS) : (['brawler', 'scout'] as ChassisId[]), rng),
-        melee: pick(affordable(MELEE), rng),
+        chassis: rng() < RIVALS_IN_CLASS && chassisChoices.includes(suited) ? suited : pick(chassisChoices, rng),
+        melee,
         defense: pick(affordable(DEFENSES), rng),
       }, rng, veteran ? Infinity : 600, rivalPoints(level)),
       powerups: { rage: level >= 2 ? 1 : 0, megashield: level >= 3 ? 1 : 0, cloaking: 0, xray: 0, repair: 1, battery: 1 },

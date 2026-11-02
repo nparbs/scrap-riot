@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { waitingQueue, type OnlineQueue, type OnlineStatus } from '../src/net/protocol';
+import { onlineLabel } from '../src/ui/screens';
 
 const status = (duel: number, brawl: number): OnlineStatus => ({ queued: duel + brawl, queues: { duel, brawl }, playing: 0, recent: [] });
 const none = new Set<OnlineQueue>();
+
+describe('the count of who is online', () => {
+  it('goes by everyone around, and copes with a server that only knows about matches', () => {
+    expect(onlineLabel({ ...status(1, 0), playing: 2, active: 5 })).toBe('5 online');
+    expect(onlineLabel({ ...status(1, 0), playing: 2 })).toBe('3 online');
+    expect(onlineLabel(null)).toBe('');
+  });
+});
 
 describe('joining someone waiting online, from a bot fight', () => {
   it('stays quiet when nobody is waiting, or without a server', () => {

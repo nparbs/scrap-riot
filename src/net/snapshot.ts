@@ -6,10 +6,10 @@ import type { SnapshotMessage } from './protocol';
 const MOTION = ['x', 'z', 'heading', 'vx', 'vz'] as const;
 const STATE = [
   'hp', 'armour', 'respawnT', 'meleeCd', 'defenseCd', 'shieldT', 'megaT', 'boostT', 'rageT', 'stunT',
-  'invulnT', 'flashT', 'burnT', 'slowT', 'blindT', 'cloakT', 'xrayT', 'regenT', 'bladesT', 'kamikazeT',
+  'invulnT', 'flashT', 'burnT', 'slowT', 'blindT', 'cloakT', 'xrayT', 'bladesT', 'kamikazeT',
   'meleeWindup', 'meleeSwing', 'lungeT', 'ammo', 'trapX', 'trapZ', 'strikeCd', 'slickCd', 'pullCd', 'airT', 'flipT', 'meleeCharge', 'hillScore', 'kills', 'assists', 'deaths', 'damageDealt', 'earned', 'eliminatedAt',
 ] as const;
-const FLAGS = ['alive', 'out', 'forfeited', 'meleeActive', 'oiled', 'glued', 'batteryFlat'] as const;
+const FLAGS = ['alive', 'out', 'forfeited', 'meleeActive', 'oiled', 'glued', 'batteryFlat', 'rebuilding'] as const;
 
 const FLAGS_AT = MOTION.length + STATE.length;
 const POWERUPS_AT = FLAGS_AT + 1;

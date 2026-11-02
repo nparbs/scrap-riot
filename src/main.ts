@@ -8,7 +8,7 @@ import { Tutorial } from './game/tutorial';
 import { Keyboard } from './input';
 import { Api, ApiError } from './net/api';
 import { NetClient, type NetFailure } from './net/client';
-import { OFFLINE_PAYOUT_MAX, sanitizeName, waitingQueue, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineQueue, type OnlineStatus, type Profile } from './net/protocol';
+import { OFFLINE_PAYOUT_MAX, sanitizeName, TAUNT_IDS, waitingQueue, type GarageAction, type HistoryEntry, type LeaderboardEntry, type OnlineQueue, type OnlineStatus, type Profile } from './net/protocol';
 import { GarageView } from './render/garageView';
 import type { ArenaId } from './sim/arena';
 import { installLogoIcon } from './render/logo';
@@ -37,8 +37,15 @@ const WORKSHOP_METAL = 0x121314;
 const DRILL_AFTER_SALE = 0.55;
 const DESK_DOCK_HEIGHT = 136;
 const SPINNER_HIT_VOLUME = 0.35;
+/** Seconds a bot waits between taunts, and the chance one taunts after a kill. */
+const TAUNT_GAP = 6;
+const TAUNT_CHANCE = 0.5;
 const SKIN_SAVE_DELAY_MS = 700;
 const ONLINE_POLL_MS = 5_000;
+/** How often a player at the controls says so. Who's online doesn't need to be any fresher than this. */
+const PRESENCE_MS = 30_000;
+/** How long after touching the controls someone still counts as online. */
+const RECENT_INPUT_MS = 60_000;
 const TRAINING_SECONDS = 30 * 60;
 /** How far away another robot's continuous sounds can be heard. */
 const SOUND_RANGE = 40;
@@ -82,6 +89,8 @@ class Game {
   /** The server's copy of this player, when connected. It then replaces the local save. */
   private profile: Profile | null = null;
   private readonly api: Api | null = SERVER_URL ? new Api(SERVER_URL, this.storage) : null;
+  private lastInputAt = -Infinity;
+  private lastPresenceAt = -Infinity;
   private connecting = false;
   private googleClientId: string | null = null;
   private history: HistoryEntry[] = [];
@@ -137,6 +146,8 @@ class Game {
   private accumulator = 0;
   private last = performance.now();
   private clock = 0;
+  /** When a bot last taunted, so they don't all pile on at once. */
+  private lastTaunt = -Infinity;
 
   constructor() {
     const r = this.renderer;
@@ -198,6 +209,9 @@ class Game {
     this.view.onEvent = (event) => this.onMatchEvent(event);
     this.painter.onChange = (skin, done) => this.onSkinChange(skin, done);
     window.setInterval(() => void this.pollOnline(), ONLINE_POLL_MS);
+    for (const kind of ['keydown', 'pointerdown', 'pointermove', 'wheel', 'touchstart']) {
+      window.addEventListener(kind, () => this.noteInput(), { capture: true, passive: true });
+    }
 
     this.sfx.setVolumes(audibleVolume(this.settings));
     this.sfx.setMuted(this.settings.muted);
@@ -470,11 +484,24 @@ class Game {
     void this.connectAccount().then(() => this.pollOnline());
   }
 
-  /** Updates just the parts of the page that show this, so nothing being done there is interrupted. */
+  /** Someone back at the controls shows as online straight away, rather than at the next refresh. */
+  private noteInput(): void {
+    const now = performance.now();
+    this.lastInputAt = now;
+    if (now - this.lastPresenceAt >= PRESENCE_MS) void this.pollOnline();
+  }
+
+  /**
+   * Updates just the parts of the page that show this, so nothing being done there is interrupted.
+   * A player in an online match is already counted by being in it, and has no use for the answer.
+   */
   private async pollOnline(): Promise<void> {
-    if (!this.api || !(this.mode === 'garage' || this.inBotFight()) || document.hidden) return;
+    if (!this.api || this.net || document.hidden) return;
+    const now = performance.now();
+    const active = now - this.lastInputAt < RECENT_INPUT_MS && now - this.lastPresenceAt >= PRESENCE_MS;
+    if (active) this.lastPresenceAt = now;
     try {
-      this.online = await this.api.online();
+      this.online = await this.api.online(active);
     } catch {
       // An older server or a blip. Whatever is showing stays until the next try.
       return;
@@ -1095,6 +1122,14 @@ class Game {
         break;
       case 'kill':
         if (event.fell) this.sfx.fall(near(player.x, player.z));
+        // Offline, a winning bot gloats now and then. Online chat is the server's to send.
+        if (!this.net && event.killer >= 0 && event.killer !== player.id) {
+          const killer = this.match.bots[event.killer];
+          if (killer?.isAI && killer.alive && this.clock - this.lastTaunt > TAUNT_GAP && Math.random() < TAUNT_CHANCE) {
+            this.lastTaunt = this.clock;
+            this.hud?.showChat(killer.id, TAUNT_IDS[Math.floor(Math.random() * TAUNT_IDS.length)]);
+          }
+        }
         break;
       case 'explosion':
         this.sfx.explosion(near(event.x, event.z));
@@ -1227,10 +1262,12 @@ class Game {
 
     // A click when a powered weapon has nothing left, so a press doesn't feel like a dropped key.
     this.keyboard.peek(this.tutorialInput);
+    // Gamepads send the page no events, so this is the only way to see one being used.
+    if (this.tutorialInput.throttle || this.tutorialInput.steer || this.tutorialInput.melee || this.tutorialInput.defense) this.noteInput();
     const wantsToFire = this.tutorialInput.melee;
     const weapon = MELEE[player.loadout.melee];
     const heldDown = weapon.kind === 'held' || weapon.kind === 'magnet' || weapon.kind === 'claw' || weapon.kind === 'spinner';
-    if (wantsToFire && !this.wasFiring && player.alive && (player.batteryFlat || (batteryCost(weapon) * (heldDown ? 0.1 : 1)) / player.batteryCap > player.ammo)) this.sfx.dryFire();
+    if (wantsToFire && !this.wasFiring && player.alive && (player.batteryFlat || (batteryCost(weapon) * player.bonus.battery * (heldDown ? 0.1 : 1)) / player.batteryCap > player.ammo)) this.sfx.dryFire();
     this.wasFiring = wantsToFire;
   }
 
