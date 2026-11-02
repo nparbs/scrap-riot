@@ -115,12 +115,12 @@ export function retireGuns<T extends { money: number; owned: Save['owned']; load
 const OLD_PART_PRICES: Record<string, Record<string, number>> = {
   tower: { small: 100, medium: 0, large: 400 },
   melee: { shell: 1000, eggbeater: 500 },
-  defense: { regen: 700 },
+  defense: { regen: 700, blades: 500, cutter: 500, nails: 300 },
 };
 
 /**
- * Towers became part of the chassis, and the Ring Spinner, Eggbeater and Armor Regenerator went,
- * so anyone who bought one gets the money back. Points replaced room, so a robot that doesn't fit any more is cut down to fit.
+ * Towers became part of the chassis, and some weapons went, so anyone who bought one gets the money
+ * back. That includes the Nail Spreader, as the Spike Strip that replaced it is a different part. Points replaced room, so a robot that doesn't fit any more is cut down to fit.
  */
 export function retireParts<T extends { money: number; owned: Save['owned']; loadout: Loadout }>(save: T): T {
   const owned = save.owned as unknown as Record<string, string[] | undefined>;

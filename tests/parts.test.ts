@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buyOrEquip, loadSave, makeRivals, newSave, partFits, partProblem, retireParts, sellPart, setArmour } from '../src/game/progress';
 import { ARENAS } from '../src/sim/arena';
-import { ARMOUR, ARMOUR_REGEN_DELAY, MOVING_TARGET_SPEED, batteryCost, BATTERY_RESTART, buildProblem, buildStats, CHASSIS, classBonus, CLASSES, classFor, DEFENSES, ENGINES, fillBuild, fitToLimits, MELEE, payloadUsed, POINT_BUDGET, pointsUsed, NO_BONUS, POWER_SOURCES, REWARD, WHEELS, withoutUpgrades, type ChassisId, type MeleeId } from '../src/sim/data';
+import { ARMOUR, ARMOUR_REGEN_DELAY, MOVING_TARGET_SPEED, TIRE_POP_TIME, batteryCost, BATTERY_RESTART, buildProblem, buildStats, CHASSIS, classBonus, CLASSES, classFor, DEFENSES, ENGINES, fillBuild, fitToLimits, MELEE, payloadUsed, POINT_BUDGET, pointsUsed, NO_BONUS, POWER_SOURCES, REWARD, WHEELS, withoutUpgrades, type ChassisId, type MeleeId } from '../src/sim/data';
 import { onlineLoadout } from '../src/net/protocol';
 import { makeRng } from '../src/sim/rng';
 import { Match, type BotSetup, type Loadout } from '../src/sim/match';
@@ -363,6 +363,127 @@ describe('the battery', () => {
   });
 });
 
+describe('a spike strip', () => {
+  /** A has just laid one behind it, and B is heading for it. */
+  const laid = (over: Partial<Loadout> = {}) => {
+    const match = open({ defense: 'spikes', armour: 0 }, { armour: 0, ...over });
+    const [a, b] = match.bots;
+    b.z = a.z + 30;
+    a.input.defense = true;
+    match.step();
+    a.input.defense = false;
+    const [strip] = match.oil;
+    expect(strip.kind).toBe('spikes');
+    return { match, a, b, strip };
+  };
+  const seconds = (match: Match, s: number) => {
+    for (let i = 0; i < s * 60; i++) match.step();
+  };
+
+  it('stops whoever rolls over it for a moment, and is used up', () => {
+    const { match, b, strip } = laid();
+    b.x = strip.x;
+    b.z = strip.z;
+    b.vz = 8;
+    match.step();
+    expect(b.poppedT).toBeCloseTo(TIRE_POP_TIME, 1);
+    expect(match.oil).toHaveLength(0);
+    expect(b.hp).toBeLessThan(b.maxHp);
+    b.input.throttle = 1;
+    seconds(match, 1);
+    const held = { x: b.x, z: b.z };
+    seconds(match, 0.5);
+    expect(Math.hypot(b.x - held.x, b.z - held.z)).toBeLessThan(0.5);
+    seconds(match, TIRE_POP_TIME);
+    const free = { x: b.x, z: b.z };
+    seconds(match, 0.5);
+    expect(Math.hypot(b.x - free.x, b.z - free.z)).toBeGreaterThan(0.5);
+  });
+
+  it('leaves weapons working while the tires are flat', () => {
+    const { match, a, b, strip } = laid({ melee: 'chainsaw' });
+    b.x = strip.x;
+    b.z = strip.z;
+    match.step();
+    expect(b.poppedT).toBeGreaterThan(0);
+    a.x = b.x;
+    a.z = b.z - 3;
+    a.heading = 0;
+    const before = a.hp;
+    b.heading = Math.PI;
+    b.input.melee = true;
+    seconds(match, 0.5);
+    expect(a.hp).toBeLessThan(before);
+  });
+
+  it('only works across its length', () => {
+    const { match, b, strip } = laid();
+    const acrossX = Math.cos(strip.angle);
+    const acrossZ = -Math.sin(strip.angle);
+    b.x = strip.x + acrossX * (strip.r - 0.2);
+    b.z = strip.z + acrossZ * (strip.r - 0.2);
+    match.step();
+    expect(b.poppedT).toBeGreaterThan(0);
+
+    const missed = laid();
+    missed.b.x = missed.strip.x + Math.sin(missed.strip.angle) * 3;
+    missed.b.z = missed.strip.z + Math.cos(missed.strip.angle) * 3;
+    missed.match.step();
+    expect(missed.b.poppedT).toBe(0);
+    expect(missed.match.oil).toHaveLength(1);
+  });
+
+  it('does nothing to its owner, or to a robot in the air', () => {
+    const { match, a, strip } = laid();
+    a.x = strip.x;
+    a.z = strip.z;
+    match.step();
+    expect(a.poppedT).toBe(0);
+
+    const flying = laid();
+    flying.b.x = flying.strip.x;
+    flying.b.z = flying.strip.z;
+    flying.b.airT = 1;
+    flying.match.step();
+    expect(flying.b.poppedT).toBe(0);
+  });
+
+  it('cannot hold a robot down with strip after strip', () => {
+    const { match, a, b, strip } = laid();
+    b.x = strip.x;
+    b.z = strip.z;
+    match.step();
+    expect(b.popGuardT).toBeGreaterThan(b.poppedT);
+    a.defenseCd = 0;
+    a.input.defense = true;
+    match.step();
+    a.input.defense = false;
+    const [next] = match.oil;
+    b.x = next.x;
+    b.z = next.z;
+    const popped = b.poppedT;
+    match.step();
+    expect(b.poppedT).toBeLessThanOrEqual(popped);
+    expect(match.oil).toHaveLength(1);
+  });
+
+  it('is cleared by a plow', () => {
+    const match = open({ defense: 'spikes', armour: 0 }, { defense: 'plow', armour: 0 });
+    const [a, b] = match.bots;
+    b.z = a.z + 30;
+    a.input.defense = true;
+    match.step();
+    a.input.defense = false;
+    const [strip] = match.oil;
+    // The plow is on the back of a robot that has its weapon in front.
+    b.heading = 0;
+    b.x = strip.x;
+    b.z = strip.z + b.radius + 0.5;
+    match.step();
+    expect(match.oil.length + b.poppedT).toBeLessThanOrEqual(TIRE_POP_TIME);
+  });
+});
+
 describe('passives', () => {
   it('lets a Whippet at speed shrug off some of a hit, and only at speed', () => {
     const hurt = (chassis: ChassisId, speed: number) => {
@@ -717,17 +838,17 @@ describe('classes', () => {
 describe('saves from before points', () => {
   const old = () => {
     const save = newSave();
-    return { ...save, money: 0, owned: { ...save.owned, tower: ['medium', 'small', 'large'], melee: ['chainsaw', 'shell', 'eggbeater', 'axe'], defense: ['shield', 'regen'] } } as typeof save;
+    return { ...save, money: 0, owned: { ...save.owned, tower: ['medium', 'small', 'large'], melee: ['chainsaw', 'shell', 'eggbeater', 'axe'], defense: ['shield', 'regen', 'blades', 'cutter', 'nails'] } } as typeof save;
   };
 
-  it('pays back towers, the Ring Spinner, the Eggbeater and the Armor Regenerator, once', () => {
+  it('pays back towers and every weapon that has gone, once', () => {
     const save = retireParts(old());
-    expect(save.money).toBe(100 + 400 + 1000 + 500 + 700);
+    expect(save.money).toBe(100 + 400 + 1000 + 500 + 700 + 500 + 500 + 300);
     expect(save.owned.defense).toEqual(['shield']);
     expect(save.owned).not.toHaveProperty('tower');
     expect(save.owned.melee).toEqual(['chainsaw', 'axe']);
     retireParts(save);
-    expect(save.money).toBe(100 + 400 + 1000 + 500 + 700);
+    expect(save.money).toBe(100 + 400 + 1000 + 500 + 700 + 500 + 500 + 300);
   });
 
   it('takes a removed weapon off the robot', () => {

@@ -1141,6 +1141,9 @@ class Game {
           }
         }
         break;
+      case 'pop':
+        this.sfx.tirePop(near(event.x, event.z));
+        break;
       case 'explosion':
         this.sfx.explosion(near(event.x, event.z));
         break;

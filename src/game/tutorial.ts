@@ -39,8 +39,8 @@ const STEPS: Step[] = [
     done: (input) => input.melee,
   },
   {
-    prompt: (b) => `Press ${k(b.defense)} or the right mouse button for your defense`,
-    touch: 'Tap Defense',
+    prompt: (b) => `Press ${k(b.defense)} or the right mouse button for your secondary weapon`,
+    touch: 'Tap Secondary',
     hold: 0,
     done: (input) => input.defense,
   },

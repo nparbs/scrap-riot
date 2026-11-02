@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ARENAS, hammerClock, onDeck, sawPos, shockerActive, solidGround, TRAP_NAMES, ventHeat, type ArenaId } from '../sim/arena';
-import { BOOST_SPEED, legibleColor, MATCH, MELEE, TRAP } from '../sim/data';
+import { BOOST_SPEED, legibleColor, MATCH, MELEE, SPIKE_STRIP_DEPTH, TRAP } from '../sim/data';
 import { lerpAngle, type Bot, type GameEvent, type Match, type Trap } from '../sim/match';
 import { buildArena, type ArenaScene } from './arenaScene';
 import { ArcBolts, Particles } from './fx';
@@ -28,6 +28,7 @@ const DROP_HEIGHT = 34;
 /** A hit this hard gets the big sparks and a kick of the camera. */
 const BIG_HIT = 12;
 /** How far a spear fires out, and how quickly it comes back. */
+const FLAT_TIRE_DROP = 0.09;
 /** How long a flipped robot takes to roll onto its back, and to roll back onto its wheels. */
 const ROLL_OVER_TIME = 0.4;
 const RIGHTING_TIME = 0.5;
@@ -471,6 +472,11 @@ export class MatchView {
         this.particles.burst(bot.x, bot.z, { count: 20, color, speed: 9, size: 0.2, life: 0.5, gravity: 0, spread: 1 });
         break;
       }
+      case 'pop':
+        // Bits of rubber, low to the floor.
+        this.particles.burst(event.x, event.z, { count: 18, color: 0x1a1b1e, speed: 9, size: 0.2, life: 0.5, y: 0.25 });
+        this.particles.burst(event.x, event.z, { count: 8, color: 0xdfe5ea, speed: 6, size: 0.1, life: 0.3, y: 0.2 });
+        break;
       case 'pulse':
         this.addPulse(event.x, event.z, event.radius, event.color);
         break;
@@ -575,7 +581,8 @@ export class MatchView {
     }
     v.roll += (rollTo - v.roll) * Math.min(1, dt * 14);
     if (bot.flipT <= 0 && v.roll > Math.PI * 1.98) v.roll = 0;
-    model.root.position.set(x, THROW_HEIGHT * flight + model.rollHeight * Math.sin(v.roll / 2), z);
+    // Flat tires let it down onto its rims.
+    model.root.position.set(x, THROW_HEIGHT * flight + model.rollHeight * Math.sin(v.roll / 2) - (bot.poppedT > 0 ? FLAT_TIRE_DROP : 0), z);
     model.root.rotation.z = v.roll;
     model.root.rotation.y = lerpAngle(bot.prevHeading, bot.heading, alpha);
     model.root.rotation.x = -0.5 * flight;
@@ -599,9 +606,8 @@ export class MatchView {
       v.chainTravel += (bot.meleeActive ? 9 : 1) * dt;
       model.chain(v.chainTravel);
     }
-    if (model.blades && bot.bladesT > 0) {
-      for (const disc of model.blades.children) disc.rotation.x += 30 * dt;
-      this.particles.burst(bot.x, bot.z, { count: 1, color: 0xffc860, speed: 8, size: 0.08, life: 0.2, y: 0.6 });
+    if (bot.poppedT > 0 && Math.random() < 0.25) {
+      this.particles.burst(bot.x, bot.z, { count: 1, color: 0x2b2d30, speed: 2, size: 0.28, life: 0.5, y: 0.25, gravity: -2 });
     }
     if (bot.meleeActive && melee.burns) {
       const toward = bot.loadout.rearMelee ? bot.heading + Math.PI : bot.heading;
@@ -887,22 +893,22 @@ export class MatchView {
         const looks = {
           oil: { color: 0x07070a, metalness: 0.9, roughness: 0.15 },
           glue: { color: 0xc99a2e, metalness: 0.1, roughness: 0.3 },
-          nails: { color: 0x2b2d30, metalness: 0.3, roughness: 0.9 },
+          spikes: { color: 0x9aa2aa, metalness: 0.6, roughness: 0.45 },
         }[p.kind];
         mesh = new THREE.Mesh(
-          new THREE.CircleGeometry(p.r, 24),
+          p.kind === 'spikes' ? new THREE.PlaneGeometry(p.r * 2, SPIKE_STRIP_DEPTH * 2) : new THREE.CircleGeometry(p.r, 24),
           new THREE.MeshStandardMaterial({ ...looks, transparent: true, opacity: 0.85 }),
         );
         mesh.rotation.x = -Math.PI / 2;
-        if (p.kind === 'nails') {
-          // Evenly spaced by the golden angle, so it looks scattered without being random.
-          for (let i = 0; i < 26; i++) {
-            const a = i * 2.4;
-            const r = p.r * 0.92 * Math.sqrt(i / 26);
-            const nail = new THREE.Mesh(this.nailGeo, this.nailMat);
-            nail.rotation.x = Math.PI / 2;
-            nail.position.set(Math.cos(a) * r, Math.sin(a) * r, 0.14);
-            mesh.add(nail);
+        if (p.kind === 'spikes') {
+          // A flat band across the way its owner was facing, with two staggered rows of spikes standing up from it.
+          mesh.rotation.z = p.angle;
+          const count = Math.floor((p.r * 2) / 0.26);
+          for (let i = 0; i < count; i++) {
+            const spike = new THREE.Mesh(this.nailGeo, this.nailMat);
+            spike.rotation.x = Math.PI / 2;
+            spike.position.set((i + 0.5 - count / 2) * 0.26, i % 2 ? 0.14 : -0.14, 0.14);
+            mesh.add(spike);
           }
         }
         // Each patch gets its own height, so overlapping ones don't flicker.

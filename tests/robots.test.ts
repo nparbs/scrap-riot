@@ -24,10 +24,12 @@ describe('defense gear', () => {
   /** Where each piece sits along the robot, front to back. */
   const pieces = (defense: DefenseId, rearMelee: boolean) => {
     const centers: number[] = [];
-    const { root } = buildRobot({ ...build('brawler', 'wedge', defense), melee: 'hammer', rearMelee });
+    const { root, frame, nose } = buildRobot({ ...build('brawler', 'wedge', defense), melee: 'hammer', rearMelee });
     root.updateMatrixWorld(true);
     root.traverse((node) => {
-      if (node instanceof THREE.Mesh) centers.push(new THREE.Box3().setFromObject(node).getCenter(new THREE.Vector3()).z);
+      // The frame is one big mesh, and it moves a little when a bumper comes off to make way.
+      if (!(node instanceof THREE.Mesh) || node.parent === frame || node.parent === nose) return;
+      centers.push(new THREE.Box3().setFromObject(node).getCenter(new THREE.Vector3()).z);
     });
     return centers;
   };
@@ -71,7 +73,7 @@ describe('defense gear on show', () => {
     for (const defense of ALL) expect(look(defense).length, defense).toBeGreaterThan(bare);
   });
 
-  it.each(['oil', 'glue', 'nails', 'mines', 'emp', 'minibot', 'remote', 'kamikaze'] as const)('the %s rides behind the hull, opposite the main weapon', (defense) => {
+  it.each(['oil', 'glue', 'spikes', 'mines', 'emp', 'minibot', 'remote', 'kamikaze'] as const)('the %s rides behind the hull, opposite the main weapon', (defense) => {
     const shelfEnd = (rearMelee: boolean) => {
       const model = buildRobot({ ...build('brawler', 'wedge', defense), melee: 'hammer', rearMelee });
       model.root.updateMatrixWorld(true);
@@ -184,6 +186,85 @@ describe('how robots are held together', () => {
     const width = (chassis: ChassisId) => bounds(buildRobot(build(chassis, 'wedge')).tower).getSize(new THREE.Vector3()).x;
     expect(width('juggernaut')).toBeGreaterThan(width('brawler'));
     expect(width('brawler')).toBeGreaterThan(width('scout'));
+  });
+});
+
+describe('keeping parts out of each other', () => {
+  const WEAPONS = Object.keys(MELEE) as MeleeId[];
+  /** The corners of everything a weapon sweeps through, in the robot's own space. */
+  const weaponPoints = (model: RobotModel) => {
+    const points: THREE.Vector3[] = [];
+    const turns = model.spinner ? 8 : 1;
+    for (let turn = 0; turn < turns; turn++) {
+      if (model.spinner) model.spinner.rotation[model.spinAxis] = (turn / turns) * Math.PI * 2;
+      model.root.updateMatrixWorld(true);
+      model.meleePivot.traverse((node) => {
+        if (!(node instanceof THREE.Mesh) || node instanceof THREE.InstancedMesh || !node.visible) return;
+        const position = node.geometry.getAttribute('position');
+        for (let i = 0; i < position.count; i++) points.push(new THREE.Vector3().fromBufferAttribute(position, i).applyMatrix4(node.matrixWorld));
+      });
+    }
+    return points;
+  };
+
+  it.each(CHASSIS_IDS)('keeps every main weapon clear of the bumper on the %s', (chassis) => {
+    for (const melee of WEAPONS) {
+      const model = buildRobot({ ...build(chassis, 'wedge'), melee });
+      expect(model.nose, melee).not.toBeNull();
+      model.root.updateMatrixWorld(true);
+      const bumper = new THREE.Box3().setFromObject(model.nose!);
+      expect(weaponPoints(model).filter((p) => bumper.containsPoint(p)).length, melee).toBe(0);
+    }
+  }, 30_000);
+
+  it.each(CHASSIS_IDS)('stands the bumper clear of the weapon mount on the %s', (chassis) => {
+    for (const melee of WEAPONS.filter((id) => !MELEE[id].onTower)) {
+      const model = buildRobot({ ...build(chassis, 'wedge'), melee });
+      model.root.updateMatrixWorld(true);
+      const cheeks = new THREE.Box3().setFromObject(model.weaponMount!).max.z - 0.02;
+      const point = new THREE.Vector3();
+      model.nose!.traverse((node) => {
+        if (!(node instanceof THREE.Mesh)) return;
+        const position = node.geometry.getAttribute('position');
+        for (let i = 0; i < position.count; i++) {
+          point.fromBufferAttribute(position, i).applyMatrix4(node.matrixWorld);
+          // Only what's as narrow as the mount's cheeks has to stand off in front of it. The posts stand to the sides.
+          if (Math.abs(point.x) < 0.3) expect(point.z, melee).toBeGreaterThan(cheeks);
+        }
+      });
+    }
+  }, 30_000);
+
+  it('has nothing reaching out in front of a chassis, as a horn or teeth would', () => {
+    for (const chassis of CHASSIS_IDS) {
+      const model = buildRobot(build(chassis, 'wedge'));
+      const hull = hullBox(model);
+      expect(new THREE.Box3().setFromObject(model.nose!).max.z - hull.max.z, chassis).toBeLessThan(0.7);
+    }
+  });
+
+  it('leaves the bumper off whichever end the secondary weapon or main weapon is on', () => {
+    const shelf: DefenseId = 'mines';
+    expect(buildRobot({ ...build('brawler', 'wedge', shelf), melee: 'hammer', rearMelee: false }).nose).not.toBeNull();
+    expect(buildRobot({ ...build('brawler', 'wedge', shelf), melee: 'hammer', rearMelee: true }).nose).toBeNull();
+    expect(buildRobot({ ...build('brawler', 'wedge', 'shield'), melee: 'hammer', rearMelee: true }).nose).not.toBeNull();
+  });
+
+  it('keeps main and secondary weapons at opposite ends', () => {
+    for (const defense of ['mines', 'oil', 'spikes', 'steelram', 'plow', 'kamikaze'] as DefenseId[]) {
+      for (const rearMelee of [false, true]) {
+        const model = buildRobot({ ...build('brawler', 'wedge', defense), melee: 'chainsaw', rearMelee });
+        model.root.updateMatrixWorld(true);
+        const weapon = new THREE.Box3().setFromObject(model.meleePivot);
+        const atEnd = new THREE.Box3();
+        model.root.traverse((node) => {
+          let skip = false;
+          for (let up: THREE.Object3D | null = node; up; up = up.parent) skip ||= up === model.meleePivot || up === model.shield || up === model.frame || up === model.tower || up === model.weaponMount || up === model.nose || model.wheels.includes(up as THREE.Mesh);
+          if (node instanceof THREE.Mesh && !skip && node.material !== model.hullMaterial && !model.plates.includes(node)) atEnd.expandByObject(node);
+        });
+        expect(weapon.intersectsBox(atEnd), `${defense} ${rearMelee}`).toBe(false);
+      }
+    }
   });
 });
 

@@ -402,7 +402,7 @@ describe('arsenal', () => {
     expect(rammed(true)).toBeCloseTo(rammed(false) * 1.3, 1);
   });
 
-  it.each(['mines', 'oil', 'glue', 'nails', 'minibot', 'remote'] as const)('%s comes out opposite the main weapon', (defense) => {
+  it.each(['mines', 'oil', 'glue', 'spikes', 'minibot', 'remote'] as const)('%s comes out opposite the main weapon', (defense) => {
     const dropped = (rearMelee: boolean) => {
       const match = fight('foundry', { defense, rearMelee });
       const [a] = faceOff(match, 30);

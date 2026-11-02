@@ -6,7 +6,7 @@ import type { SnapshotMessage } from './protocol';
 const MOTION = ['x', 'z', 'heading', 'vx', 'vz'] as const;
 const STATE = [
   'hp', 'armour', 'respawnT', 'meleeCd', 'defenseCd', 'shieldT', 'megaT', 'boostT', 'rageT', 'stunT',
-  'invulnT', 'flashT', 'burnT', 'slowT', 'blindT', 'cloakT', 'xrayT', 'bladesT', 'kamikazeT',
+  'invulnT', 'flashT', 'burnT', 'slowT', 'blindT', 'cloakT', 'xrayT', 'poppedT', 'kamikazeT',
   'meleeWindup', 'meleeSwing', 'lungeT', 'ammo', 'trapX', 'trapZ', 'strikeCd', 'slickCd', 'pullCd', 'airT', 'flipT', 'meleeCharge', 'hillScore', 'kills', 'assists', 'deaths', 'damageDealt', 'earned', 'eliminatedAt',
 ] as const;
 const FLAGS = ['alive', 'out', 'forfeited', 'meleeActive', 'oiled', 'glued', 'batteryFlat', 'rebuilding'] as const;
@@ -14,7 +14,7 @@ const FLAGS = ['alive', 'out', 'forfeited', 'meleeActive', 'oiled', 'glued', 'ba
 const FLAGS_AT = MOTION.length + STATE.length;
 const POWERUPS_AT = FLAGS_AT + 1;
 
-const PATCH_KINDS: PatchKind[] = ['oil', 'glue', 'nails'];
+const PATCH_KINDS: PatchKind[] = ['oil', 'glue', 'spikes'];
 const MINE_KINDS: MineKind[] = ['mine', 'charge'];
 const TRAP_KINDS: Trap['kind'][] = ['strike', 'pull'];
 const KIND_REPAIR = 0;
@@ -74,7 +74,7 @@ export function encodeSnapshot(match: Match, events: GameEvent[]): Omit<Snapshot
       ];
     }),
     mines: match.mines.map((m) => [m.id, m.owner, round(m.x), round(m.z), round(m.armT), MINE_KINDS.indexOf(m.kind)]),
-    oil: match.oil.map((p) => [p.id, p.owner, round(p.x), round(p.z), p.r, round(p.life), PATCH_KINDS.indexOf(p.kind)]),
+    oil: match.oil.map((p) => [p.id, p.owner, round(p.x), round(p.z), p.r, round(p.life), PATCH_KINDS.indexOf(p.kind), roundAngle(p.angle)]),
     traps: match.traps.map((t) => [t.id, t.owner, TRAP_KINDS.indexOf(t.kind), round(t.x), round(t.z), round(t.t)]),
     drones: match.drones.map((d) => [d.id, d.owner, round(d.x), round(d.z), round(d.heading)]),
     pickups: match.pickups.map((p) => [p.id, p.kind === 'scrap' ? KIND_SCRAP : KIND_REPAIR, round(p.x), round(p.z), p.spot]),
@@ -110,8 +110,8 @@ export function applyWorldState(match: Match, snap: SnapshotMessage, ahead: numb
     match.mines.push({ id, owner, kind: MINE_KINDS[kind], x, z, armT, life: 1, damage: 0, radius: 0 });
   }
   match.oil.length = 0;
-  for (const [id, owner, x, z, r, life, kind] of snap.oil) {
-    match.oil.push({ id, owner, kind: PATCH_KINDS[kind], x, z, r, life, damage: 0 });
+  for (const [id, owner, x, z, r, life, kind, angle] of snap.oil) {
+    match.oil.push({ id, owner, kind: PATCH_KINDS[kind], x, z, r, life, damage: 0, angle });
   }
   match.traps.length = 0;
   for (const [id, owner, kind, x, z, t] of snap.traps) {
