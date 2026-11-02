@@ -2678,6 +2678,18 @@ button.part-card-about {
   cursor: pointer;
 }
 
+.class-note {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.class-note b {
+  color: var(--good, #7ddba8);
+  font-weight: 600;
+}
+
 .card-type {
   color: var(--accent) !important;
   font: 700 10px var(--body);

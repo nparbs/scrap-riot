@@ -127,6 +127,14 @@ export class Accounts {
     return toProfile(row);
   }
 
+  /** Notes that this account is around, and says which account that is. */
+  async heartbeat(token: unknown): Promise<string | null> {
+    const row = await this.playerForToken(this.db, token);
+    if (!row) return null;
+    await this.db.query('UPDATE players SET last_seen = now() WHERE id = $1', [row.id]);
+    return row.id;
+  }
+
   /** What the game server needs to put this account into a match. */
   async forMatch(token: unknown): Promise<{ accountId: string; save: Save } | null> {
     const row = await this.playerForToken(this.db, token);

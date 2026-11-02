@@ -23,7 +23,7 @@ import type { BotSetup, GameEvent, Loadout } from '../sim/match';
 import type { Save } from '../game/progress';
 import { decodeSkin } from '../game/skin';
 
-export const PROTOCOL_VERSION = 13;
+export const PROTOCOL_VERSION = 14;
 /** The most a browser can bank for a match it ran itself. */
 export const OFFLINE_PAYOUT_MAX = 10_000;
 export const NAME_MAX = 16;
@@ -34,7 +34,21 @@ export const INPUT_STEPS = 2;
 /** The server sends a snapshot every this many sim steps (20 Hz). */
 export const SNAPSHOT_STEPS = 3;
 /** Chat is picked from this list, so strangers can't send each other anything worse. */
-export const QUICK_CHAT = ['Good luck!', 'Nice hit!', 'Come here!', 'Oops!', 'Good game.', 'Rematch?'];
+const FRIENDLY_CHAT = ['Good luck!', 'Nice hit!', 'Come here!', 'Oops!', 'Good game.', 'Rematch?'];
+/** Breaking Bad–flavoured taunts. Bots fire these off now and then, and players can pick them too. */
+const TAUNTS = [
+  'Welcome to my territory.',
+  'Class dismissed.',
+  "You're all out of options, kid.",
+  'Should have stayed in the garage.',
+  'Another one for the scrapheap.',
+  'I run this yard now.',
+  "Cook's finished — so are you.",
+  'Nothing personal. Just business.',
+];
+export const QUICK_CHAT = [...FRIENDLY_CHAT, ...TAUNTS];
+/** The indices within QUICK_CHAT that are taunts, for bots to pick from. */
+export const TAUNT_IDS = TAUNTS.map((_, i) => FRIENDLY_CHAT.length + i);
 
 /** The online matches a player can queue for. */
 export type OnlineQueue = 'duel' | 'brawl';
@@ -207,6 +221,8 @@ export interface OnlineStatus {
   queues: Record<OnlineQueue, number>;
   /** People in a match right now. */
   playing: number;
+  /** Everyone around right now: those two, plus anyone anywhere in the game who has touched the controls lately. */
+  active?: number;
   recent: { name: string; lastSeen: string }[];
 }
 

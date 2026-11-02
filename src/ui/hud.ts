@@ -4,7 +4,7 @@ import { keyLabel, type Action, type Bindings } from '../game/settings';
 import { isTouchDevice } from './touch';
 import { QUICK_CHAT, type OnlineQueue } from '../net/protocol';
 import { CLOAK_TIME, COUNTDOWN, DEFENSES, fittedPowerups, leaveWait, legibleColor, MATCH, MEGA_TIME, MELEE, MODES, POWERUPS, RAGDOLL_TIME, RAGE_TIME, SPECTATE, TRAP, UPGRADES, XRAY_TIME, type PowerupId } from '../sim/data';
-import { relativeBearing, type Bot, type GameEvent, type Match } from '../sim/match';
+import { isMovingTarget, relativeBearing, type Bot, type GameEvent, type Match } from '../sim/match';
 
 const POWER_ACTIONS: Action[] = ['power1', 'power2', 'power3'];
 type TrapId = keyof typeof TRAP;
@@ -450,7 +450,7 @@ export class Hud {
     const fraction = (left: number, total: number) => (total > 0 ? left / total : 0);
     // A spinner fills up as it reaches speed, so the bar shows how much is still to come.
     const meleeDef = MELEE[loadout.melee];
-    this.setCooldown('melee', meleeDef.kind === 'spinner' && player.meleeCd <= 0 ? 1 - player.meleeCharge : fraction(player.meleeCd, meleeDef.cooldown));
+    this.setCooldown('melee', meleeDef.kind === 'spinner' && player.meleeCd <= 0 ? 1 - player.meleeCharge : fraction(player.meleeCd, meleeDef.cooldown * player.bonus.reload));
     this.setCooldown('defense', fraction(player.defenseCd, DEFENSES[loadout.defense].cooldown));
     this.battery.style.height = `${Math.max(0, player.ammo) * 100}%`;
     this.battery.style.background = player.batteryFlat || player.ammo < BATTERY_LOW ? '#e8483a' : '#8fc1dc';
@@ -461,6 +461,7 @@ export class Hud {
 
     const tags: string[] = [];
     if (player.batteryFlat) tags.push('BATTERY FLAT');
+    if (player.alive && isMovingTarget(player)) tags.push('MOVING TARGET');
     if (player.boostT > 0) tags.push('BOOST');
     if (player.airT > 0) tags.push('AIRBORNE');
     if (player.rageT > 0) tags.push('RAGE');
@@ -468,7 +469,7 @@ export class Hud {
     if (player.megaT > 0) tags.push('MEGA SHIELD');
     if (player.cloakT > 0) tags.push('CLOAKED');
     if (player.xrayT > 0) tags.push('X-RAY');
-    if (player.regenT > 0) tags.push('REPAIRING');
+    if (player.rebuilding) tags.push('REBUILDING ARMOR');
     if (player.flipT > 0) tags.push('UPSIDE DOWN');
     else if (player.stunT > 0) tags.push('STUNNED');
     if (player.blindT > 0) tags.push('BLINDED');

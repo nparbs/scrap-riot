@@ -6,7 +6,7 @@ import { cpus, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ARENA_ORDER, type ArenaId } from '../src/sim/arena';
-import { ARMOUR, buildStats, CHASSIS, DEFENSES, ENGINES, fillBuild, MELEE, POWER_SOURCES, WHEELS, installedParts, payloadUsed, pointsUsed, buildProblem, type ModeId, type PartsChoice } from '../src/sim/data';
+import { ARMOUR, buildStats, CHASSIS, classFor, CLASSES, DEFENSES, ENGINES, fillBuild, MELEE, POWER_SOURCES, WHEELS, installedParts, payloadUsed, pointsUsed, buildProblem, type ModeId, type PartsChoice } from '../src/sim/data';
 import { Match, type BotSetup, type Loadout } from '../src/sim/match';
 import { makeRng, type Rng } from '../src/sim/rng';
 
@@ -16,7 +16,9 @@ const DUEL_SKILL = Number(process.env.BALANCE_SKILL ?? 0.7);
 
 function randomBuild(rng: Rng): PartsChoice {
   const pick = <T>(list: T[]): T => list[Math.floor(rng() * list.length)];
-  return fillBuild({ chassis: pick(keys(CHASSIS)), melee: pick(keys(MELEE)), defense: pick(keys(DEFENSES)) }, rng);
+  const melee = pick(keys(MELEE));
+  // Half pick the chassis their weapon belongs on, as a player soon would.
+  return fillBuild({ chassis: rng() < 0.5 ? classFor(melee) : pick(keys(CHASSIS)), melee, defense: pick(keys(DEFENSES)) }, rng);
 }
 
 const fighter = (name: string, build: PartsChoice, skill: number): BotSetup => ({
@@ -209,6 +211,21 @@ function report(duels: DuelRow[], brawls: BrawlRow[]): void {
   for (const id of keys(CHASSIS)) {
     const mine = robots.filter((r) => r.build.chassis === id);
     console.log(`${id.padEnd(14)} ${average(mine.map((r) => buildStats(r.build).speed)).toFixed(1).padStart(6)} ${average(mine.map((r) => buildStats(r.build).weight)).toFixed(0).padStart(6)} ${average(mine.map((r) => payloadUsed(r.build))).toFixed(0).padStart(9)} ${average(mine.map((r) => installedParts(r.build).armour)).toFixed(0).padStart(6)} ${average(mine.map((r) => r.dps)).toFixed(1).padStart(6)}`);
+  }
+
+  // Does fitting a weapon to its class pay off?
+  const inClass = (r: { build: PartsChoice }) => CLASSES[r.build.chassis].weapons.includes(r.build.melee);
+  const winsOf = (list: { won: boolean }[]) => average(list.map((r) => (r.won ? 1 : 0)));
+  console.log(`\nin its class: ${percent(winsOf(robots.filter(inClass)))} wins, out of it: ${percent(winsOf(robots.filter((r) => !inClass(r))))}`);
+  console.log('chassis         role        in class  out of class');
+  for (const id of keys(CHASSIS)) {
+    const mine = robots.filter((r) => r.build.chassis === id);
+    console.log(`${id.padEnd(14)} ${CLASSES[id].role.padEnd(11)} ${percent(winsOf(mine.filter(inClass))).padStart(8)} ${percent(winsOf(mine.filter((r) => !inClass(r)))).padStart(13)}`);
+  }
+  console.log('weapon         on its class  elsewhere');
+  for (const id of keys(MELEE)) {
+    const mine = robots.filter((r) => r.build.melee === id);
+    console.log(`${(id as string).padEnd(14)} ${percent(winsOf(mine.filter(inClass))).padStart(12)} ${percent(winsOf(mine.filter((r) => !inClass(r)))).padStart(10)}`);
   }
 
   // What each chassis can really bring to a fight: the hardest hitter it can lift, and how fast it then goes.

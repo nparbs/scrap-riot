@@ -7,6 +7,9 @@ import type { Accounts } from './accounts';
 import { createApi } from './api';
 import { BRAWL_ROOM_OPTIONS, DEFAULT_ROOM_OPTIONS, Room, type Conn, type Player, type RoomOptions } from './room';
 
+/** How long word from someone at the controls counts. Browsers send it every 30 seconds, so this allows for one being a bit late. */
+export const ACTIVE_FOR_MS = 45_000;
+
 export interface GameServerOptions {
   port: number;
   host?: string;
@@ -73,7 +76,20 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
   /** Which player each account is, so one account can't enter a match twice. */
   const accountPlayers = new Map<string, { room: Room; player: Player }>();
   const addressOf = (req: IncomingMessage) => clientAddress(req, options.clientIpHeader);
+  /** When each account last sent word that it's at the controls. Kept only in memory. */
+  const lastActive = new Map<string, number>();
+  const markActive = (accountId: string, now: number) => lastActive.set(accountId, now);
   const presence = () => {
+    const now = Date.now();
+    // By account, so someone playing online with two tabs open, or sending word as well, only counts once.
+    const around = new Set<string>();
+    for (const [accountId, at] of lastActive) {
+      if (now - at > ACTIVE_FOR_MS) lastActive.delete(accountId);
+      else around.add(accountId);
+    }
+    for (const [accountId, { room, player }] of accountPlayers) {
+      if (!room.finished && !player.left && player.conn) around.add(accountId);
+    }
     const queues: Record<OnlineQueue, number> = { duel: 0, brawl: 0 };
     let playing = 0;
     for (const room of rooms) {
@@ -81,10 +97,10 @@ export function startGameServer(options: GameServerOptions): Promise<GameServer>
       if (room.match) playing += room.connected;
       else queues[room.queue] += room.players.size;
     }
-    return { queued: queues.duel + queues.brawl, queues, playing };
+    return { queued: queues.duel + queues.brawl, queues, playing, active: around.size };
   };
   const api = accounts
-    ? createApi({ accounts, allowedOrigins: allowed, googleClientId: options.googleClientId ?? null, clientAddress: addressOf, presence })
+    ? createApi({ accounts, allowedOrigins: allowed, googleClientId: options.googleClientId ?? null, clientAddress: addressOf, presence, markActive })
     : null;
 
   const http: Server = createServer((req, res) => {

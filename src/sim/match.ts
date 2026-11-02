@@ -44,9 +44,9 @@ import {
 import { BotBrain } from './ai';
 import {
   ARMOUR,
+  ARMOUR_REGEN_DELAY,
   BATTERY_REGEN,
   BATTERY_PER_POWER,
-  BATTERY_RESTART,
   batteryCost,
   BOOST_ACCEL,
   BOOST_DRAIN,
@@ -56,6 +56,8 @@ import {
   buildStats,
   CHASSIS,
   carriedPowerups,
+  classBonus,
+  CLASSES,
   CLOAK_TIME,
   CROWD_SPLASH,
   DEFENSES,
@@ -70,6 +72,7 @@ import {
   MEGA_ABSORB,
   MEGA_TIME,
   MELEE,
+  MOVING_TARGET_SPEED,
   MODES,
   RAGE_MULT,
   RAGE_TIME,
@@ -85,10 +88,12 @@ import {
   UPGRADES,
   XRAY_TIME,
   type ChassisDef,
+  type ClassBonus,
   type ChassisId,
   type DefenseId,
   type EngineId,
   type MeleeId,
+  type MeleeDef,
   type ModeId,
   type Paint,
   type PowerId,
@@ -161,13 +166,23 @@ export interface Bot {
   /** Worn away by hits before they reach health. */
   armour: number;
   maxArmour: number;
+  /** Armor it rebuilds each second out of combat, if its class can. */
+  armourRegen: number;
+  /** When it last hurt something or was hurt. */
+  lastFightT: number;
+  /** Rebuilding armor right now. */
+  rebuilding: boolean;
   speedMult: number;
   damageMult: number;
   /** How much harder its main weapon hits for the weight behind it. */
   punch: number;
+  /** What its class does for this weapon. */
+  bonus: ClassBonus;
   /** From the power source. */
   batteryRegen: number;
   batteryCap: number;
+  /** How far a flat battery recharges before things work again. */
+  batteryRestart: number;
   /** Ran out, and cut out until it has recharged a little. */
   batteryFlat: boolean;
   radius: number;
@@ -224,7 +239,6 @@ export interface Bot {
   blindT: number;
   cloakT: number;
   xrayT: number;
-  regenT: number;
   bladesT: number;
   kamikazeT: number;
   lastHitT: number;
@@ -363,6 +377,12 @@ export function relativeBearing(x: number, z: number, heading: number, toX: numb
   return wrapAngle(bearing(x, z, toX, toZ) - heading);
 }
 
+/** Is this a chassis that's harder to hit at speed, doing enough of it? It has to be on the ground and driving, not thrown. */
+export function isMovingTarget(bot: Bot): boolean {
+  if (!CLASSES[bot.loadout.chassis].movingTarget || bot.airT > 0) return false;
+  return Math.hypot(bot.vx, bot.vz) >= bot.chassis.speed * bot.speedMult * MOVING_TARGET_SPEED;
+}
+
 /** How much of a robot is left, armour and health together, from 0 to 1. */
 export function condition(bot: Bot): number {
   return (bot.hp + bot.armour) / (bot.maxHp + bot.maxArmour);
@@ -438,11 +458,16 @@ export class Match {
       maxHp,
       armour: stats.armour,
       maxArmour: stats.armour,
+      armourRegen: CLASSES[setup.loadout.chassis].armourRegen ?? 0,
+      lastFightT: 0,
+      rebuilding: false,
       speedMult: 1 + UPGRADES.engine.perLevel * up.engine,
       damageMult: 1 + UPGRADES.weapons.perLevel * up.weapons,
       punch: stats.punch,
+      bonus: classBonus(setup.loadout.chassis, setup.loadout.melee),
       batteryRegen: stats.regen,
       batteryCap: stats.capacity,
+      batteryRestart: stats.restart,
       batteryFlat: false,
       radius: chassis.radius * size,
       mass: chassis.mass * size,
@@ -452,7 +477,7 @@ export class Match {
       shieldT: 0, megaT: 0, boostT: 0, rageT: 0, stunT: 0, stunGuardT: 0,
       invulnT: MATCH.spawnInvuln,
       ramCd: 0, pistonCd: 0, flashT: 0, burnT: 0, burnSource: -1, slowT: 0, blindT: 0,
-      cloakT: 0, xrayT: 0, regenT: 0, bladesT: 0, kamikazeT: 0,
+      cloakT: 0, xrayT: 0, bladesT: 0, kamikazeT: 0,
       lastHitT: -99, lastAttacker: -1, oiled: false, glued: false, hillScore: 0,
       powerups: carriedPowerups(setup.loadout),
       kills: 0, assists: 0, deaths: 0, damageDealt: 0, earned: 0,
@@ -625,20 +650,15 @@ export class Match {
     } else {
       bot.ammo = Math.min(1, bot.ammo + BATTERY_REGEN * bot.batteryRegen * dt);
     }
-    if (bot.batteryFlat && bot.ammo >= BATTERY_RESTART) bot.batteryFlat = false;
+    if (bot.batteryFlat && bot.ammo >= bot.batteryRestart) bot.batteryFlat = false;
 
     if (bot.burnT > 0) {
       bot.burnT = down(bot.burnT);
       this.damage(bot, BURN_DPS * dt, bot.burnSource, 1);
     }
-    if (bot.regenT > 0) {
-      bot.regenT = down(bot.regenT);
-      // Armour first, and anything left over goes to health.
-      const rebuilt = DEFENSES.regen.damage * dt;
-      const toArmour = Math.min(rebuilt, bot.maxArmour - bot.armour);
-      bot.armour += toArmour;
-      bot.hp = Math.min(bot.maxHp, bot.hp + rebuilt - toArmour);
-    }
+    // A quiet moment lets a chassis that can rebuild its armor.
+    bot.rebuilding = bot.armourRegen > 0 && bot.armour < bot.maxArmour && this.time - bot.lastFightT >= ARMOUR_REGEN_DELAY;
+    if (bot.rebuilding) bot.armour = Math.min(bot.maxArmour, bot.armour + bot.armourRegen * dt);
   }
 
   private usePowerup(bot: Bot): void {
@@ -740,7 +760,7 @@ export class Match {
 
   /** The main weapon has the robot's weight behind it. Anything else it has, such as a mine, doesn't. */
   private hitOutput(bot: Bot): number {
-    return this.damageOutput(bot) * bot.punch;
+    return this.damageOutput(bot) * bot.punch * bot.bonus.damage;
   }
 
   /** Reach is measured for a mid-sized hull, and a weapon sits out at the end of whichever hull carries it. */
@@ -762,7 +782,7 @@ export class Match {
     if (bot.batteryFlat) return false;
     const share = cost / bot.batteryCap;
     if (bot.ammo < share) {
-      if (bot.ammo < BATTERY_RESTART) bot.batteryFlat = true;
+      if (bot.ammo < bot.batteryRestart) bot.batteryFlat = true;
       return false;
     }
     bot.ammo -= share;
@@ -790,6 +810,11 @@ export class Match {
     return wrapAngle(this.meleeAngle(bot) + Math.PI);
   }
 
+  /** What the main weapon takes from the battery, for one hit or one second. */
+  private weaponCost(bot: Bot, def: MeleeDef): number {
+    return batteryCost(def) * bot.bonus.battery;
+  }
+
   private updateMelee(bot: Bot, dt: number): void {
     const facing = this.meleeAngle(bot);
     const id = bot.loadout.melee;
@@ -805,18 +830,18 @@ export class Match {
         }
         if (bot.meleeCd > 0) return;
         // Cutting takes full power, and running with nothing to cut only a little.
-        if (!this.spend(bot, batteryCost(def) * dt * (this.enemies(bot).some((other) => this.inCone(bot, other, facing, def.range, def.arc)) ? 1 : IDLE_DRAW))) return;
+        if (!this.spend(bot, this.weaponCost(bot, def) * dt * (this.enemies(bot).some((other) => this.inCone(bot, other, facing, def.range * bot.bonus.reach, def.arc)) ? 1 : IDLE_DRAW))) return;
         if (def.runTime) {
           bot.heldT += dt;
           if (bot.heldT >= def.runTime) {
             bot.heldT = 0;
-            bot.meleeCd = def.cooldown;
+            bot.meleeCd = def.cooldown * bot.bonus.reload;
             return;
           }
         }
         bot.meleeActive = true;
         for (const other of this.enemies(bot)) {
-          if (!this.inCone(bot, other, facing, def.range, def.arc)) continue;
+          if (!this.inCone(bot, other, facing, def.range * bot.bonus.reach, def.arc)) continue;
           this.damage(other, def.damage * this.hitOutput(bot) * dt, bot.id, def.pierce);
           if (def.slow) other.slowT = Math.max(other.slowT, def.slow);
           if (def.burns) {
@@ -826,8 +851,8 @@ export class Match {
         }
         return;
       case 'ram':
-        if (pressed && bot.meleeCd <= 0 && this.spend(bot, batteryCost(def))) {
-          bot.meleeCd = def.cooldown;
+        if (pressed && bot.meleeCd <= 0 && this.spend(bot, this.weaponCost(bot, def))) {
+          bot.meleeCd = def.cooldown * bot.bonus.reload;
           bot.lungeT = 0.35;
           bot.meleeSwing = 0;
           bot.vx += Math.sin(facing) * def.knockback;
@@ -842,21 +867,21 @@ export class Match {
         this.updateSpinner(bot, pressed, dt);
         return;
       case 'magnet':
-        if (!pressed || !this.spend(bot, batteryCost(def) * dt * IDLE_DRAW)) return;
+        if (!pressed || !this.spend(bot, this.weaponCost(bot, def) * dt * IDLE_DRAW)) return;
         bot.meleeActive = true;
         {
           // It grabs one robot at a time, the nearest, so it can't farm a whole crowd.
           let other: Bot | null = null;
           let dist = Infinity;
           for (const candidate of this.enemies(bot)) {
-            if (!this.canSee(bot, candidate) || !this.inCone(bot, candidate, facing, def.range, def.arc)) continue;
+            if (!this.canSee(bot, candidate) || !this.inCone(bot, candidate, facing, def.range * bot.bonus.reach, def.arc)) continue;
             const gap = Math.hypot(candidate.x - bot.x, candidate.z - bot.z) || 1;
             if (gap < dist) {
               dist = gap;
               other = candidate;
             }
           }
-          if (!other || !this.spend(bot, batteryCost(def) * dt * (1 - IDLE_DRAW))) return;
+          if (!other || !this.spend(bot, this.weaponCost(bot, def) * dt * (1 - IDLE_DRAW))) return;
           // Dragged no faster than a crawl, or arriving would count as being rammed by it.
           const towardX = (bot.x - other.x) / dist;
           const towardZ = (bot.z - other.z) / dist;
@@ -872,10 +897,10 @@ export class Match {
         break;
     }
 
-    if (def.saw && pressed && this.spend(bot, def.saw * BATTERY_PER_POWER * dt * IDLE_DRAW)) {
+    if (def.saw && pressed && this.spend(bot, def.saw * BATTERY_PER_POWER * bot.bonus.battery * dt * IDLE_DRAW)) {
       bot.meleeActive = true;
       for (const other of this.enemies(bot)) {
-        if (this.inCone(bot, other, facing, def.range, def.arc) && this.spend(bot, def.saw * BATTERY_PER_POWER * dt * (1 - IDLE_DRAW))) this.damage(other, def.saw * this.hitOutput(bot) * dt, bot.id, def.pierce);
+        if (this.inCone(bot, other, facing, def.range * bot.bonus.reach, def.arc) && this.spend(bot, def.saw * BATTERY_PER_POWER * bot.bonus.battery * dt * (1 - IDLE_DRAW))) this.damage(other, def.saw * this.hitOutput(bot) * dt, bot.id, def.pierce);
       }
     }
 
@@ -888,7 +913,7 @@ export class Match {
         this.events.push({ type: 'strike', x: bot.x + fx * (bot.radius + 1.5), z: bot.z + fz * (bot.radius + 1.5), owner: bot.id });
         const struck: Bot[] = [];
         for (const other of this.enemies(bot)) {
-          if (!this.inCone(bot, other, facing, def.range, def.arc)) continue;
+          if (!this.inCone(bot, other, facing, def.range * bot.bonus.reach, def.arc)) continue;
           struck.push(other);
           this.damage(other, def.damage * this.hitOutput(bot), bot.id, def.pierce);
           this.stun(other, def.stun);
@@ -902,10 +927,12 @@ export class Match {
             }
           }
         }
+        // A clean miss doesn't cost the whole reload on the weapons where that would be cruel.
+        if (struck.length === 0 && def.missReload) bot.meleeCd = Math.min(bot.meleeCd, def.missReload * bot.bonus.reload);
         if (def.chain) this.chainStrike(bot, struck, def.chain, def.damage * this.hitOutput(bot) * 0.5, def.stun);
       }
-    } else if (pressed && bot.meleeCd <= 0 && this.spend(bot, batteryCost(def))) {
-      bot.meleeCd = def.cooldown;
+    } else if (pressed && bot.meleeCd <= 0 && this.spend(bot, this.weaponCost(bot, def))) {
+      bot.meleeCd = def.cooldown * bot.bonus.reload;
       bot.meleeWindup = def.windup;
     }
   }
@@ -915,7 +942,7 @@ export class Match {
     const facing = this.meleeAngle(bot);
     const muzzle = { x: bot.x + Math.sin(facing) * (bot.radius + 0.4), z: bot.z + Math.cos(facing) * (bot.radius + 0.4) };
     if (struck.length === 0) {
-      const range = MELEE[bot.loadout.melee].range;
+      const range = MELEE[bot.loadout.melee].range * bot.bonus.reach;
       this.events.push({ type: 'arc', points: [muzzle, { x: muzzle.x + Math.sin(facing) * range, z: muzzle.z + Math.cos(facing) * range }], owner: bot.id });
       return;
     }
@@ -933,16 +960,17 @@ export class Match {
   /** Holding the key stores energy, and a hit spends most of it, throwing both robots apart. */
   private updateSpinner(bot: Bot, pressed: boolean, dt: number): void {
     const def = MELEE[bot.loadout.melee];
+    const spinUp = def.windup * bot.bonus.reload;
     // It can't be spun back up until the cooldown from its last hit is over. Most of the battery
     // goes on the speed going in, and it takes a little more to stay there waiting for a hit.
-    const draw = bot.meleeCharge >= 1 ? batteryCost(def) * SPIN_HOLD_DRAW * dt : (batteryCost(def) * dt) / def.windup;
+    const draw = bot.meleeCharge >= 1 ? this.weaponCost(bot, def) * SPIN_HOLD_DRAW * dt : (this.weaponCost(bot, def) * dt) / spinUp;
     const spinning = pressed && bot.meleeCd <= 0 && this.spend(bot, draw);
-    const change = spinning ? dt / def.windup : -dt / (def.windup * 2);
+    const change = spinning ? dt / spinUp : -dt / (spinUp * 2);
     bot.meleeCharge = Math.max(0, Math.min(1, bot.meleeCharge + change));
     bot.meleeActive = spinning;
     if (bot.meleeCharge < SPINNER_MIN_SPEED || bot.meleeCd > 0) return;
     const facing = this.meleeAngle(bot);
-    const target = this.enemies(bot).find((other) => other.invulnT <= 0 && this.inCone(bot, other, facing, def.range, def.arc));
+    const target = this.enemies(bot).find((other) => other.invulnT <= 0 && this.inCone(bot, other, facing, def.range * bot.bonus.reach, def.arc));
     if (!target) return;
     const speed = bot.meleeCharge;
     const dist = Math.hypot(target.x - bot.x, target.z - bot.z) || 1;
@@ -959,7 +987,7 @@ export class Match {
     bot.vx -= (nx * throwForce * SPINNER_RECOIL) / bot.mass;
     bot.vz -= (nz * throwForce * SPINNER_RECOIL) / bot.mass;
     bot.meleeCharge = speed * SPINNER_KEPT_SPEED;
-    bot.meleeCd = def.cooldown;
+    bot.meleeCd = def.cooldown * bot.bonus.reload;
     bot.meleeSwing = 0;
     this.events.push({ type: 'strike', x: target.x, z: target.z, owner: bot.id });
   }
@@ -971,9 +999,9 @@ export class Match {
     if (holding) {
       bot.clawT -= dt;
       // Letting go when the battery gives out, the same as when the key comes up.
-      if (!pressed || !holding.alive || bot.clawT <= 0 || !this.spend(bot, batteryCost(def) * dt)) {
+      if (!pressed || !holding.alive || bot.clawT <= 0 || !this.spend(bot, this.weaponCost(bot, def) * dt)) {
         bot.clawTarget = -1;
-        bot.meleeCd = def.cooldown;
+        bot.meleeCd = def.cooldown * bot.bonus.reload;
         return;
       }
       bot.meleeActive = true;
@@ -982,16 +1010,18 @@ export class Match {
       holding.z = bot.z + Math.cos(facing) * reach;
       holding.vx = bot.vx;
       holding.vz = bot.vz;
+      // Held against a wall, it stays this side of it.
+      this.collideBotWithWorld(holding);
       holding.stunT = Math.max(holding.stunT, 0.1);
       this.damage(holding, def.damage * this.hitOutput(bot) * dt, bot.id, def.pierce);
       return;
     }
     if (!pressed || bot.meleeCd > 0) return;
-    const target = this.enemies(bot).find((other) => this.inCone(bot, other, facing, def.range, def.arc));
+    const target = this.enemies(bot).find((other) => this.inCone(bot, other, facing, def.range * bot.bonus.reach, def.arc));
     if (target && target.invulnT <= 0) {
       bot.clawTarget = target.id;
       // The def's windup field holds the maximum grip time for this weapon.
-      bot.clawT = def.windup;
+      bot.clawT = def.windup * bot.bonus.grip;
       bot.meleeSwing = 0;
       target.lastAttacker = bot.id;
       this.events.push({ type: 'strike', x: target.x, z: target.z, owner: bot.id });
@@ -1079,9 +1109,6 @@ export class Match {
           other.slowT = Math.max(other.slowT, def.duration);
         }
         this.events.push({ type: 'pulse', x: bot.x, z: bot.z, radius: def.radius, color: 0xffffff });
-        break;
-      case 'regen':
-        bot.regenT = def.duration;
         break;
       case 'cloak':
         bot.cloakT = def.duration;
@@ -1176,6 +1203,7 @@ export class Match {
       if (facing < 0.9) taken *= DEFENSES.plow.damage;
     }
     const shielded = taken < amount;
+    if (isMovingTarget(target)) taken *= 1 - (CLASSES[target.loadout.chassis].movingTarget ?? 0);
     // The armour takes what doesn't pierce it, for as long as there's any left.
     const soaked = Math.min(target.armour / ARMOUR.wear, taken * (1 - pierce));
     target.armour = Math.max(0, target.armour - soaked * ARMOUR.wear);
@@ -1184,8 +1212,10 @@ export class Match {
     const dealt = soaked + toHealth;
     target.flashT = 0.12;
     target.lastHitT = this.time;
+    target.lastFightT = this.time;
     if (attacker && attacker !== target) {
       target.lastAttacker = source;
+      attacker.lastFightT = this.time;
       attacker.damageDealt += dealt;
       attacker.earned += dealt * REWARD.damage;
       // Protection and invisibility are for getting into a fight, not for having one.
@@ -1265,7 +1295,9 @@ export class Match {
     bot.invulnT = MATCH.spawnInvuln;
     bot.lastAttacker = -1;
     bot.stunT = bot.stunGuardT = bot.boostT = bot.rageT = bot.shieldT = bot.megaT = bot.airT = bot.flipT = bot.meleeCharge = 0;
-    bot.slowT = bot.blindT = bot.cloakT = bot.bladesT = bot.regenT = 0;
+    bot.slowT = bot.blindT = bot.cloakT = bot.bladesT = 0;
+    bot.lastFightT = this.time;
+    bot.rebuilding = false;
     bot.ammo = 1;
     bot.batteryFlat = false;
     bot.heldT = 0;
@@ -1326,7 +1358,8 @@ export class Match {
     const spike = attacker.loadout.melee === 'ram' ? MATCH.spikeRamMult : 1;
     // Only a plate on the nose is leading the charge.
     const plate = attacker.loadout.defense === 'steelram' && attacker.loadout.rearMelee ? 1.3 : 1;
-    const amount = speed * MATCH.ramDamage * attacker.mass * spike * plate * this.damageOutput(attacker);
+    const special = attacker.loadout.melee === 'ram' ? attacker.bonus.damage : 1;
+    const amount = speed * MATCH.ramDamage * attacker.mass * spike * plate * special * this.damageOutput(attacker);
     this.damage(victim, amount, attacker.id);
   }
 

@@ -114,7 +114,7 @@ export class BotBrain {
     const { bot, match, tactics } = this;
     const def = MELEE[bot.loadout.melee];
     const dist = Math.hypot(target.x - bot.x, target.z - bot.z) || 1;
-    const reach = match.reachTo(bot, target, def.range);
+    const reach = match.reachTo(bot, target, def.range * bot.bonus.reach);
     this.upClose = dist < reach + CLOSE_GAP;
     this.pushing = bot.clawTarget < 0 && this.nearDrop(target, dist);
     if (this.pushing || bot.clawTarget >= 0) {
@@ -122,7 +122,7 @@ export class BotBrain {
       this.setGoal(target.x, target.z);
       return;
     }
-    const reload = def.cooldown > 0 ? bot.meleeCd / def.cooldown : 0;
+    const reload = def.cooldown > 0 ? bot.meleeCd / (def.cooldown * bot.bonus.reload) : 0;
     const outpaces = bot.chassis.speed * bot.speedMult > target.chassis.speed * target.speedMult * tactics.kiteSpeed;
     // Nothing works on a flat battery, so that's always worth getting away from.
     const notReady = bot.batteryFlat || (reload > tactics.kiteReload && outpaces);
@@ -450,17 +450,17 @@ export class BotBrain {
         bot.input.melee = dist < tactics.engage && angle < 0.25;
         break;
       case 'magnet':
-        bot.input.melee = dist < Math.min(melee.range, tactics.engage) && angle < melee.arc;
+        bot.input.melee = dist < Math.min(melee.range * bot.bonus.reach, tactics.engage) && angle < melee.arc;
         break;
       case 'spinner':
         // Spin up on the way in, so the weapon is at speed when it arrives, unless the battery's better saved.
-        bot.input.melee = dist < tactics.engage && (bot.ammo > tactics.saveBattery || dist < this.match.reachTo(bot, target, melee.range));
+        bot.input.melee = dist < tactics.engage && (bot.ammo > tactics.saveBattery || dist < this.match.reachTo(bot, target, melee.range * bot.bonus.reach));
         break;
       default: {
         // Judged a moment ahead if they're closing. The less skilled swing a bit early and wide, and pay for it in battery.
         const closing = ((bot.vx - target.vx) * (target.x - bot.x) + (bot.vz - target.vz) * (target.z - bot.z)) / (dist || 1);
         const ahead = Math.max(0, closing) * tactics.lead;
-        bot.input.melee = this.match.inCone(bot, target, bot.heading, melee.range + ahead + (1 - this.skill) * 3, melee.arc + (1 - this.skill) * 0.6);
+        bot.input.melee = this.match.inCone(bot, target, bot.heading, melee.range * bot.bonus.reach + ahead + (1 - this.skill) * 3, melee.arc + (1 - this.skill) * 0.6);
       }
     }
 
@@ -491,8 +491,6 @@ export class BotBrain {
       case 'flash':
       case 'emp':
         return dist < range;
-      case 'regen':
-        return bot.armour < bot.maxArmour * (wornTo - 0.1) || bot.hp < bot.maxHp * (wornTo + 0.1);
       case 'cloak':
         return health < wornTo && recentlyHit && dist < range;
       case 'minibot':

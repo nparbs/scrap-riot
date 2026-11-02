@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buyOrEquip, loadSave, makeRivals, newSave, partFits, partProblem, retireParts, sellPart, setArmour } from '../src/game/progress';
 import { ARENAS } from '../src/sim/arena';
-import { ARMOUR, batteryCost, BATTERY_RESTART, buildProblem, buildStats, CHASSIS, DEFENSES, ENGINES, fillBuild, fitToLimits, MELEE, payloadUsed, POINT_BUDGET, pointsUsed, POWER_SOURCES, REWARD, WHEELS, withoutUpgrades, type ChassisId, type MeleeId } from '../src/sim/data';
+import { ARMOUR, ARMOUR_REGEN_DELAY, MOVING_TARGET_SPEED, batteryCost, BATTERY_RESTART, buildProblem, buildStats, CHASSIS, classBonus, CLASSES, classFor, DEFENSES, ENGINES, fillBuild, fitToLimits, MELEE, payloadUsed, POINT_BUDGET, pointsUsed, NO_BONUS, POWER_SOURCES, REWARD, WHEELS, withoutUpgrades, type ChassisId, type MeleeId } from '../src/sim/data';
 import { onlineLoadout } from '../src/net/protocol';
 import { makeRng } from '../src/sim/rng';
 import { Match, type BotSetup, type Loadout } from '../src/sim/match';
@@ -250,19 +250,25 @@ describe('armour', () => {
     expect(MELEE.tesla.pierce).toBe(1);
   });
 
-  it('is not mended by a repair, but is by the regenerator, and comes back with a respawn', () => {
-    const { match, a, b } = ready({}, { armour: 100, defense: 'regen', powerups: { ...newSave().loadout.powerups, repair: 1 }, powerupSlots: ['repair'] });
+  it('is not mended by a repair', () => {
+    const { match, a, b } = ready({}, { armour: 100, powerups: { ...newSave().loadout.powerups, repair: 1 }, powerupSlots: ['repair'] });
     match.damage(b, 200, a.id);
     const armourBefore = b.armour;
+    const healthBefore = b.hp;
     b.input.powerup = 'repair';
     match.step();
     expect(b.armour).toBe(armourBefore);
-    expect(b.hp).toBeGreaterThan(b.maxHp - 200 + 100 * 0);
-    b.input.defense = true;
-    match.step();
-    b.input.defense = false;
-    for (let i = 0; i < 60; i++) match.step();
-    expect(b.armour).toBeGreaterThan(armourBefore);
+    expect(b.hp).toBeGreaterThan(healthBefore);
+  });
+
+  it('comes back with a respawn', () => {
+    const match = open({}, { armour: 100 });
+    const [a, b] = match.bots;
+    match.damage(b, 9999, a.id);
+    expect(b.armour).toBe(0);
+    for (let i = 0; i < 300 && !b.alive; i++) match.step();
+    expect(b.alive).toBe(true);
+    expect(b.armour).toBe(100);
   });
 
   it('counts toward who wins a duel that runs out of time', () => {
@@ -357,6 +363,135 @@ describe('the battery', () => {
   });
 });
 
+describe('passives', () => {
+  it('lets a Whippet at speed shrug off some of a hit, and only at speed', () => {
+    const hurt = (chassis: ChassisId, speed: number) => {
+      const match = open({ chassis, armour: 0 }, { armour: 0 });
+      const [a, b] = match.bots;
+      const top = a.chassis.speed * a.speedMult;
+      a.vz = top * speed;
+      match.damage(a, 40, b.id);
+      return a.maxHp - a.hp;
+    };
+    expect(hurt('scout', 1)).toBeCloseTo(40 * (1 - CLASSES.scout.movingTarget!));
+    expect(hurt('scout', MOVING_TARGET_SPEED + 0.05)).toBeLessThan(40);
+    expect(hurt('scout', MOVING_TARGET_SPEED - 0.05)).toBeCloseTo(40);
+    expect(hurt('scout', 0)).toBeCloseTo(40);
+    expect(hurt('brawler', 1)).toBeCloseTo(40);
+  });
+
+  it('gives nothing to a Whippet thrown through the air', () => {
+    const match = open({ chassis: 'scout', armour: 0 }, { armour: 0 });
+    const [a, b] = match.bots;
+    a.vz = a.chassis.speed;
+    a.airT = 1;
+    match.damage(a, 40, b.id);
+    expect(a.maxHp - a.hp).toBeCloseTo(40);
+  });
+
+  it('lets a Wraith reach further with its own weapons, and not with others', () => {
+    const lands = (chassis: ChassisId, melee: MeleeId) => {
+      const match = open({ chassis, melee, armour: 0 }, { armour: 0 });
+      const [a, b] = match.bots;
+      // Just past where a hull this size normally reaches.
+      b.z = a.z + MELEE[melee].range + a.radius - CHASSIS.brawler.radius + b.radius + 0.3;
+      a.input.melee = true;
+      for (let i = 0; i < 10; i++) match.step();
+      return b.hp < b.maxHp;
+    };
+    expect(lands('ghost', 'tesla')).toBe(true);
+    expect(lands('ghost', 'chainsaw')).toBe(false);
+    expect(lands('brawler', 'tesla')).toBe(false);
+  });
+
+  it('brings a flat Alkaline back sooner than anything else', () => {
+    const backAt = (power: 'alkaline' | 'lithium') => {
+      const match = open({ power, melee: 'dagger', armour: 0 });
+      const [a] = match.bots;
+      a.batteryFlat = true;
+      a.ammo = 0;
+      a.batteryRegen = 1;
+      let frames = 0;
+      while (a.batteryFlat && frames < 2000) {
+        match.step();
+        frames++;
+      }
+      return frames;
+    };
+    expect(POWER_SOURCES.alkaline.restart).toBeLessThan(BATTERY_RESTART);
+    expect(backAt('alkaline')).toBeLessThan(backAt('lithium'));
+  });
+
+  it('reloads a Flipper quickly after a miss, and fully after a hit', () => {
+    const reload = (gap: number) => {
+      const match = open({ melee: 'flipper', armour: 0 }, { armour: 0 });
+      const [a, b] = match.bots;
+      b.z = a.z + gap;
+      a.input.melee = true;
+      for (let i = 0; i < 6; i++) match.step();
+      return a.meleeCd;
+    };
+    expect(reload(25)).toBeLessThanOrEqual(MELEE.flipper.missReload!);
+    expect(reload(3)).toBeGreaterThan(MELEE.flipper.missReload!);
+  });
+});
+
+describe('a Whippet rebuilding its armor', () => {
+  const worn = (chassis: ChassisId) => {
+    const match = open({ chassis, melee: 'dagger', armour: 25 }, { armour: 0 });
+    const [a, b] = match.bots;
+    b.x = a.x + 30;
+    match.damage(a, 20, b.id);
+    return { match, a, b, left: a.armour };
+  };
+  const seconds = (match: Match, s: number) => {
+    for (let i = 0; i < s * 60; i++) match.step();
+  };
+
+  it('waits until it has been out of combat long enough, then fills back up and stops', () => {
+    const { match, a, left } = worn('scout');
+    expect(left).toBeLessThan(a.maxArmour);
+    seconds(match, ARMOUR_REGEN_DELAY - 0.2);
+    expect(a.armour).toBe(left);
+    expect(a.rebuilding).toBe(false);
+    seconds(match, 0.5);
+    expect(a.armour).toBeGreaterThan(left);
+    expect(a.rebuilding).toBe(true);
+    seconds(match, 10);
+    expect(a.armour).toBe(a.maxArmour);
+    expect(a.rebuilding).toBe(false);
+  });
+
+  it('starts the wait again on being hit, or on hitting something', () => {
+    const hit = worn('scout');
+    seconds(hit.match, ARMOUR_REGEN_DELAY - 0.5);
+    hit.match.damage(hit.a, 1, hit.b.id);
+    const after = hit.a.armour;
+    seconds(hit.match, 1);
+    expect(hit.a.armour).toBe(after);
+
+    const hitting = worn('scout');
+    seconds(hitting.match, ARMOUR_REGEN_DELAY - 0.5);
+    hitting.match.damage(hitting.b, 1, hitting.a.id);
+    seconds(hitting.match, 1);
+    expect(hitting.a.armour).toBe(hitting.left);
+  });
+
+  it('never mends health, and no other chassis does it', () => {
+    const { match, a, b } = worn('scout');
+    match.damage(a, 60, b.id);
+    const health = a.hp;
+    expect(health).toBeLessThan(a.maxHp);
+    seconds(match, ARMOUR_REGEN_DELAY + 5);
+    expect(a.hp).toBe(health);
+    for (const chassis of ['ghost', 'brawler', 'rhino', 'juggernaut'] as const) {
+      const other = worn(chassis);
+      seconds(other.match, ARMOUR_REGEN_DELAY + 2);
+      expect(other.a.armour, chassis).toBe(other.left);
+    }
+  });
+});
+
 describe('a flat battery', () => {
   const flat = (over: Partial<Loadout> = {}) => {
     const match = open({ armour: 0, ...over }, { armour: 0 });
@@ -375,7 +510,7 @@ describe('a flat battery', () => {
     expect(b.hp).toBe(hurt);
     let frames = 0;
     while (a.batteryFlat && frames++ < 600) match.step();
-    expect(a.ammo).toBeGreaterThanOrEqual(BATTERY_RESTART - 0.01);
+    expect(a.ammo).toBeGreaterThanOrEqual(a.batteryRestart - 0.01);
     expect(frames).toBeLessThan(600);
   });
 
@@ -490,27 +625,119 @@ describe('a bigger robot', () => {
   });
 });
 
+describe('classes', () => {
+  const chassisIds = Object.keys(CHASSIS) as ChassisId[];
+  const weaponIds = Object.keys(MELEE) as MeleeId[];
+  const inClass = (chassis: ChassisId, melee: MeleeId, over: Partial<Loadout> = {}) => open({ chassis, melee, armour: 0, ...over }, { armour: 0 });
+
+  it('give every weapon exactly one home, on a chassis that can carry it', () => {
+    for (const melee of weaponIds) {
+      const homes = chassisIds.filter((id) => CLASSES[id].weapons.includes(melee));
+      expect(homes, melee).toHaveLength(1);
+      expect(classFor(melee)).toBe(homes[0]);
+      expect(buildProblem({ chassis: homes[0], melee, defense: 'shield', engine: 'small', wheels: 'small4', power: 'alkaline', armour: 0 }), melee).toBeNull();
+    }
+  });
+
+  it('only help the weapons the class was built around', () => {
+    expect(classBonus('brawler', 'chainsaw').damage).toBeGreaterThan(1);
+    expect(classBonus('juggernaut', 'chainsaw')).toEqual(NO_BONUS);
+    expect(classBonus('scout', 'vertbar')).toEqual(NO_BONUS);
+  });
+
+  it('hit harder on their own chassis, for the same weight', () => {
+    const hit = (chassis: ChassisId) => {
+      const match = inClass(chassis, 'chainsaw');
+      const [a, b] = match.bots;
+      a.input.melee = true;
+      match.step();
+      return (b.maxHp - b.hp) / a.punch;
+    };
+    expect(hit('brawler') / hit('rhino')).toBeCloseTo(CLASSES.brawler.bonus.damage);
+  });
+
+  it('reload faster, for those that do', () => {
+    const swing = (chassis: ChassisId) => {
+      const match = inClass(chassis, 'axe');
+      const [a] = match.bots;
+      a.input.melee = true;
+      match.step();
+      return a.meleeCd;
+    };
+    expect(swing('scout')).toBeLessThan(swing('brawler'));
+  });
+
+  it('spin up faster on the Titan', () => {
+    const charge = (chassis: ChassisId) => {
+      const match = inClass(chassis, 'vertdisc');
+      const [a, b] = match.bots;
+      b.z = a.z + 25;
+      a.input.melee = true;
+      for (let i = 0; i < 12; i++) match.step();
+      return a.meleeCharge;
+    };
+    expect(charge('juggernaut')).toBeGreaterThan(charge('brawler'));
+  });
+
+  it('use less battery on the Lancer', () => {
+    const shot = (chassis: ChassisId) => {
+      const match = inClass(chassis, 'tesla');
+      const [a] = match.bots;
+      a.input.melee = true;
+      match.step();
+      return 1 - a.ammo;
+    };
+    expect(shot('ghost')).toBeCloseTo(shot('brawler') * CLASSES.ghost.bonus.battery, 3);
+  });
+
+  it('hold on longer on the Bulldozer', () => {
+    const grip = (chassis: ChassisId) => {
+      const match = inClass(chassis, 'claw');
+      const [a] = match.bots;
+      a.input.melee = true;
+      match.step();
+      return a.clawT;
+    };
+    expect(grip('rhino')).toBeCloseTo(grip('brawler') * CLASSES.rhino.bonus.grip, 2);
+  });
+
+  it('mostly pick the right chassis for rivals', () => {
+    let right = 0;
+    let total = 0;
+    for (let seed = 1; seed < 60; seed++) {
+      for (const rival of makeRivals({ wins: 12, loadout: { upgrades: { armor: 0, engine: 0, weapons: 0 } } }, 6, seed)) {
+        total++;
+        if (classFor(rival.loadout.melee) === rival.loadout.chassis) right++;
+      }
+    }
+    expect(right / total).toBeGreaterThan(0.5);
+  });
+});
+
 describe('saves from before points', () => {
   const old = () => {
     const save = newSave();
-    return { ...save, money: 0, owned: { ...save.owned, tower: ['medium', 'small', 'large'], melee: ['chainsaw', 'shell', 'eggbeater', 'axe'] } } as typeof save;
+    return { ...save, money: 0, owned: { ...save.owned, tower: ['medium', 'small', 'large'], melee: ['chainsaw', 'shell', 'eggbeater', 'axe'], defense: ['shield', 'regen'] } } as typeof save;
   };
 
-  it('pays back towers, the Ring Spinner and the Eggbeater, once', () => {
+  it('pays back towers, the Ring Spinner, the Eggbeater and the Armor Regenerator, once', () => {
     const save = retireParts(old());
-    expect(save.money).toBe(100 + 400 + 1000 + 500);
+    expect(save.money).toBe(100 + 400 + 1000 + 500 + 700);
+    expect(save.owned.defense).toEqual(['shield']);
     expect(save.owned).not.toHaveProperty('tower');
     expect(save.owned.melee).toEqual(['chainsaw', 'axe']);
     retireParts(save);
-    expect(save.money).toBe(100 + 400 + 1000 + 500);
+    expect(save.money).toBe(100 + 400 + 1000 + 500 + 700);
   });
 
   it('takes a removed weapon off the robot', () => {
     const save = old();
     (save.loadout as { melee: string }).melee = 'shell';
+    (save.loadout as { defense: string }).defense = 'regen';
     (save.loadout as { tower?: string }).tower = 'large';
     retireParts(save);
     expect(save.loadout.melee).toBe('chainsaw');
+    expect(save.loadout.defense).toBe('shield');
     expect(save.loadout).not.toHaveProperty('tower');
   });
 

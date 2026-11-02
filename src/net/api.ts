@@ -98,7 +98,15 @@ export class Api {
     return (await this.request<{ leaderboard: LeaderboardEntry[] }>('GET', '/api/leaderboard')).leaderboard;
   }
 
-  online(): Promise<OnlineStatus> {
+  /** Who's around. With `active` it also says this player is, unless the server can't take that yet. */
+  async online(active = false): Promise<OnlineStatus> {
+    if (active && this.token) {
+      try {
+        return await this.request<OnlineStatus>('POST', '/api/presence');
+      } catch {
+        // An expired session or an older server, and either can still say who's around.
+      }
+    }
     return this.request<OnlineStatus>('GET', '/api/online');
   }
 

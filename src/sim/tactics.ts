@@ -97,7 +97,6 @@ const PLAIN_HABITS: Record<DefenseId, Habit> = {
   cutter: { range: 4.2, health: 1, reserve: 0 },
   teleport: { range: 18, health: 0.4, reserve: 0 },
   flash: { range: 7, health: 1, reserve: 0 },
-  regen: { range: 40, health: 0.6, reserve: 0 },
   cloak: { range: 40, health: 0.45, reserve: 0 },
   emp: { range: 6.3, health: 1, reserve: 0 },
   minibot: { range: 24, health: 1, reserve: 0 },

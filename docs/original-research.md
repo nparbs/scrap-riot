@@ -54,7 +54,7 @@ Names and broad behavior come from the sources below. **Exact behavior, damage a
 | Cutter | Cutter | RR3 | Named only |
 | Teleport | Teleport | RR3 | Named only |
 | Flash Bomb | Flash Bombs | Rearmed | Blinds opponents briefly |
-| Armor Regenerator | Armour Regenerator | Rearmed | Restores armor, used battery in the original |
+| Armor Regenerator | Armour Regenerator | Rearmed | Restored armor, and used battery in the original. Since removed from Scrap Riot, and the Whippet rebuilds its own armor instead. |
 | Cloaking Device | Cloaking Device | Classic | Named only |
 | EMP | EMP | Classic | Stunned for 10 seconds, so strong that tournaments banned it. Ours lasts 1.5. |
 | Mini-Robot | Mini-Robot | Classic | Named only |

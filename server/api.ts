@@ -63,12 +63,14 @@ export interface ApiOptions {
   clientAddress: (req: IncomingMessage) => string;
   /** How many people are in the queue and in matches right now. */
   presence: () => Omit<OnlineStatus, 'recent'>;
+  /** Someone sent word that they're at the controls. */
+  markActive: (accountId: string, now: number) => void;
 }
 
 export type ApiHandler = ((req: IncomingMessage, res: ServerResponse) => void) & { prune: () => void };
 
 /** The REST API behind the garage, sign-in, match history and leaderboards. */
-export function createApi({ accounts, allowedOrigins, googleClientId, clientAddress, presence }: ApiOptions): ApiHandler {
+export function createApi({ accounts, allowedOrigins, googleClientId, clientAddress, presence, markActive }: ApiOptions): ApiHandler {
   const general = new Limiter(REQUESTS_PER_WINDOW, WINDOW_MS);
   const guests = new Limiter(GUESTS_PER_HOUR, 60 * WINDOW_MS);
   const memberTries = new Limiter(MEMBER_TRIES_PER_HOUR, 60 * WINDOW_MS);
@@ -137,6 +139,12 @@ export function createApi({ accounts, allowedOrigins, googleClientId, clientAddr
           return send(200, { leaderboard: await accounts.leaderboard() });
         case 'GET /api/online':
           return send(200, { ...presence(), recent: await accounts.recentPlayers() });
+        case 'POST /api/presence': {
+          const accountId = await accounts.heartbeat(token);
+          if (!accountId) return send(401, { error: 'session' });
+          markActive(accountId, now);
+          return send(200, { ...presence(), recent: await accounts.recentPlayers() });
+        }
         case 'POST /api/logout':
           await accounts.signOut(token);
           return send(200, {});
