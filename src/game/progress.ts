@@ -310,12 +310,13 @@ export function applyResult(save: Save, payout: number, place: number, remaining
 }
 
 const RIVALS = [
-  { name: 'Rustjaw', color: 0xe0503a },
-  { name: 'Tin Tyrant', color: 0x3aa7e0 },
-  { name: 'Grinder', color: 0xa066e0 },
-  { name: 'Mama Volt', color: 0x4fd18b },
-  { name: 'Sprocket', color: 0xe0c13a },
-  { name: 'Dozer', color: 0xe07ab8 },
+  { name: 'Heisenberg', color: 0xe0503a },
+  { name: 'Gus Fring', color: 0x3aa7e0 },
+  { name: 'Saul Goodman', color: 0xa066e0 },
+  { name: 'Skyler White', color: 0x4fd18b },
+  { name: 'Jesse', color: 0xe0c13a },
+  { name: 'Mike', color: 0xe07ab8 },
+  { name: 'Hank Schrader', color: 0xe08a3a },
 ];
 
 function pick<T>(list: readonly T[], rng: () => number): T {
