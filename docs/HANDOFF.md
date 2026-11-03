@@ -14,12 +14,13 @@ If `git pull --ff-only origin main` fails with "Cannot fast-forward to multiple 
 
 ## Current state
 
-- **Live:** everything through PR #53 is merged and on the page, with the server on protocol 15. A two-browser duel ran on the live page and server on 2 November, from joining the queue through surrender to the results, with no page errors.
+- **Live:** everything through PR #54 is merged and on the page, with the server on protocol 15. A two-browser duel ran on the live page and server on 2 November, from joining the queue through surrender to the results, with no page errors.
 - **Tests:** see `npm test`, which includes the map layout checks.
 - **Not verified yet:** nobody has played the points, weight, armor or battery rules by hand, and no online match has run on them against the real server. The new maps, animations, tracks and window fixes have also only run in a headless browser. Hazard timings and damage are first guesses, tuned against bots only. An account already showing `null/3` hasn't been checked on the real database, only in tests. Nothing since the phone work has run on a real phone. That includes the thumb buttons, the face-off when a phone really rotates or goes full screen, the landscape lock and Add to Home Screen. The join banner and phone counts have only run against a mocked server, not a real queue.
 
 ## Latest work (protocol 15)
 
+- **Build suggestions:** `suggestPart` in `src/game/advice.ts` picks a part for each Workshop list from the class the main weapon belongs to, with the Spike Ram as the one exception, and the battery from what the weapon draws. It only suggests parts that fit, apart from the chassis. These are hand-written rules, not checked against `npm run balance`.
 - **Phone paintshop:** the rules are at the end of `src/style.css`. On a phone the board and tools share the panel, and the colors open as a full-screen sheet from `.paint-color-open` (`palette-open` on the bar). The sheet can't cover the settings and music buttons by z-index, because `#ui` is a fixed stacking context and they sit outside it, so `:has` hides them while it's open.
 - **Name filter:** `isNameAllowed` in `src/game/nameFilter.ts`, called from `sanitizeName`, so the server enforces it on every name. Names already stored are masked as they're read (`toSave`, `leaderboard`, `recentPlayers`) and the table isn't changed. It's a small word list that errs toward letting names through.
 - **Hidden paint:** `settings.hidePaint` leaves `skin` off other robots with `withoutSkin`, in `MatchView.addBot` and the duel face-off. Patterns and colors come from fixed lists, so only drawings need hiding. There's still no report button.

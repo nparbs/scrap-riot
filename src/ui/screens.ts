@@ -1,4 +1,5 @@
 import { ACHIEVEMENTS, CAREER, isUnlocked, type AchievementStats, type CareerProgress, type Fight, type Medal } from '../game/career';
+import { suggestPart, type Suggestion } from '../game/advice';
 import { canSell, CATALOG, CHEAT_MAX, partProblem, previewLoadout, sellPrice, upgradeCost, type PartPreview, type Save, type Slot } from '../game/progress';
 import { ACTIONS, activeLevel, keyLabel, LEVELS, QUALITY, VOLUME_KINDS, type Action, type Bindings, type Quality, type Settings, type VolumeKind } from '../game/settings';
 import { isNameAllowed } from '../game/nameFilter';
@@ -459,7 +460,7 @@ function fittedPart(loadout: Save['loadout'], slot: Slot): string {
 }
 
 /** Every part of one type. Clicking one only tries it on, and nothing is spent without pressing its button. */
-function partCards(save: Save, slot: Slot, preview: PartPreview | null): string {
+function partCards(save: Save, slot: Slot, preview: PartPreview | null, suggestion: Suggestion | null): string {
   const fitted = fittedPart(save.loadout, slot);
   const shown = previewLoadout(save.loadout, preview);
   const owned = save.owned[slot] as string[];
@@ -475,7 +476,8 @@ function partCards(save: Save, slot: Slot, preview: PartPreview | null): string 
       const thumb = slot === 'melee' || slot === 'defense' ? `<img class="card-thumb" src="${import.meta.env.BASE_URL}previews/${slot}-${id}.jpg" alt="" loading="lazy" />` : '';
       const job = slot === 'chassis' ? CLASSES[id as ChassisId] : null;
       const specialty = job ? `<span class="class-note"><b>${bonusText(job.bonus)}</b> with ${job.weapons.map((weapon) => MELEE[weapon].name).join(', ')}${job.movingTarget ? `. <b>${Math.round(job.movingTarget * 100)}% less damage</b> at speed` : ''}${job.armourRegen ? `. <b>Rebuilds armor</b> after ${ARMOUR_REGEN_DELAY} seconds out of combat` : ''}</span>` : '';
-      const about = `${thumb}<strong>${item.name}</strong>${type}<span>${item.blurb}</span>${specialty}<div class="chips">${partChips(slot, id, shown.chassis)}</div>`;
+      const suggested = suggestion?.id === id ? chip('Suggested', 'good') : '';
+      const about = `${thumb}<strong>${item.name}</strong>${type}<span>${item.blurb}</span>${specialty}<div class="chips">${suggested}${partChips(slot, id, shown.chassis)}</div>`;
       const price = has ? '<small class="card-owned">Owned</small>' : `<small class="card-price">$${item.price.toLocaleString()}</small>`;
       const action = has
         ? `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${problem ? 'disabled' : ''}>${problem === 'weight' ? 'Too heavy' : problem === 'points' ? 'Too many points' : 'Fit'}</button>`
@@ -515,6 +517,17 @@ function upgradeCards(save: Save): string {
   }).join('');
 }
 
+/** What the workshop suggests for this slot, given the weapons fitted, with a button to try it on. */
+function suggestionNote(loadout: Save['loadout'], slot: Slot, suggestion: Suggestion): string {
+  const name = partName(slot, suggestion.id);
+  const weapon = MELEE[loadout.melee].name;
+  const fitted = fittedPart(loadout, slot) === suggestion.id;
+  const lead = fitted
+    ? `Your <b>${name}</b> suits your ${weapon}.`
+    : `Suggested with your ${weapon}: <button class="suggest-try" data-preview-slot="${slot}" data-preview-id="${suggestion.id}">${name}</button>.`;
+  return `<p class="suggest-note${fitted ? ' suggest-fitted' : ''}">${lead} ${suggestion.reason}</p>`;
+}
+
 function workshopPanel(save: Save, options: GarageOptions): string {
   const { loadout } = save;
   const preview = options.partPreview;
@@ -547,7 +560,9 @@ function workshopPanel(save: Save, options: GarageOptions): string {
     return `<button class="rail-item${category === id ? ' rail-on' : ''}${preview?.slot === id ? ' part-trying' : ''}" data-buy="${id}"><span>${label}</span>${current}</button>`;
   }).join('')}`).join('');
   const title = SHOP_GROUPS.flatMap(([, items]) => items).find(([id]) => id === category)?.[1] ?? '';
-  const cards = category === 'powerups' ? powerupCards(save, options.keys) : category === 'upgrades' ? upgradeCards(save) : partCards(save, category, preview);
+  // Advice follows the weapons as fitted, so trying parts on doesn't move it.
+  const suggestion = category === 'powerups' || category === 'upgrades' ? null : suggestPart(category, loadout);
+  const cards = category === 'powerups' ? powerupCards(save, options.keys) : category === 'upgrades' ? upgradeCards(save) : partCards(save, category, preview, suggestion);
   const hint = category === 'upgrades'
     ? '<p class="settings-hint"><b>Career only.</b> Upgrades work in Career fights, and nowhere else. Online matches, Offline vs Bots and Training are fought without them.</p>'
     : category === 'powerups'
@@ -569,6 +584,7 @@ function workshopPanel(save: Save, options: GarageOptions): string {
         </div>
         ${weaponRow}
         ${hint}
+        ${suggestion ? suggestionNote(loadout, category as Slot, suggestion) : ''}
         <div class="cards">${cards}</div>
       </div>
     </div>`;
@@ -710,6 +726,7 @@ function helpPanel(keys: Bindings): string {
       `Build a robot in the Workshop. Every robot gets ${POINT_BUDGET} points to spend, and stronger parts cost more of them.`,
       'Everything has a weight too. Big weapons need a big chassis, and the more you carry, the slower you go, unless the engine can keep up.',
       'Each chassis is a class with its own weapons. Fit one of them and it hits harder, reloads faster or uses less battery, depending on the class.',
+      'Not sure what goes with your weapon? Each part list in the Workshop suggests one, and says why.',
       'Armor wears away before health, though some weapons punch through it. Repairs mend health, and armor stays worn until you respawn, unless you drive a Whippet, which rebuilds its own armor when it\'s out of combat.',
       'Weapons and boost run off the battery, and the harder a weapon hits, the more each hit takes.',
       'Tick up to three powerups in the Workshop to take into a match. The rest stay in your garage.',

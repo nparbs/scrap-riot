@@ -2589,6 +2589,34 @@ select:focus-visible {
   color: var(--hazard);
 }
 
+.suggest-note {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--good);
+  border-radius: 4px;
+  background: #15171a;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.suggest-note b,
+.suggest-try {
+  color: var(--good);
+  font-weight: 700;
+}
+
+.suggest-try {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
 .step-btn {
   border-radius: 5px;
 }
@@ -3990,8 +4018,14 @@ html.touch.fighting .settings-button {
   }
 
   .preview-note,
+  .suggest-note,
   .part-row {
     margin-bottom: 6px;
+  }
+
+  .suggest-note {
+    padding: 4px 8px;
+    font-size: 11px;
   }
 
   .garage-notice {
