@@ -2,10 +2,12 @@ import * as THREE from 'three';
 import { ARENAS, hammerClock, onDeck, sawPos, shockerActive, solidGround, TRAP_NAMES, ventHeat, type ArenaId } from '../sim/arena';
 import { BOOST_SPEED, legibleColor, MATCH, MELEE, SPIKE_STRIP_DEPTH, TRAP } from '../sim/data';
 import { lerpAngle, type Bot, type GameEvent, type Match, type Trap } from '../sim/match';
+import type { MeleeId } from '../sim/data';
 import { buildArena, type ArenaScene } from './arenaScene';
 import { ArcBolts, Particles } from './fx';
 import { Ragdoll } from './ragdoll';
-import { buildRobot, disposeRobot, poseWeapon, type RobotModel } from './robots';
+import { buildRobot, disposeRobot, healHullScars, hullFaceHit, poseWeapon, scarHull, withoutSkin, type RobotModel } from './robots';
+import { healthColor, STANDARD_PALETTE, type Palette } from '../game/palette';
 
 const CAM_DISTANCE = 9;
 const CAM_HEIGHT = 4.6;
@@ -27,6 +29,11 @@ const SPECTATE_BACK = 18;
 const DROP_HEIGHT = 34;
 /** A hit this hard gets the big sparks and a kick of the camera. */
 const BIG_HIT = 12;
+/** Besides spinners, the weapons that bite into a robot rather than hit it. */
+const CUTTERS = new Set<MeleeId>(['chainsaw', 'drill', 'hammersaw']);
+const SPARK_GAP = 0.06;
+const SCAR_GAP = 0.3;
+const MAX_SCARS = 14;
 /** How far a spear fires out, and how quickly it comes back. */
 const FLAT_TIRE_DROP = 0.09;
 /** How long a flipped robot takes to roll onto its back, and to roll back onto its wheels. */
@@ -53,6 +60,10 @@ interface BotVisual {
   roll: number;
   /** How many armor plates have come off so far. */
   platesLost: number;
+  /** When it last threw sparks and took a gash, and how many it has. */
+  sparkAt: number;
+  scarAt: number;
+  scars: number;
 }
 
 /** Brief effects such as beams and shockwaves. */
@@ -125,6 +136,11 @@ export class MatchView {
   /** Bot the camera follows. Also the point of reference for shake. */
   followId = 0;
   rearView = false;
+  /** How much of the screen shake to use. */
+  shakeScale = 1;
+  /** Leaves off what other players have drawn on their robots. */
+  hideSkins = false;
+  private palette = STANDARD_PALETTE;
   onEvent: ((event: GameEvent) => void) | null = null;
 
   private match: Match | null = null;
@@ -224,6 +240,41 @@ export class MatchView {
     this.camLook.set(bot.x, 1, bot.z);
   }
 
+  setPalette(palette: Palette): void {
+    this.palette = palette;
+    this.barArmourMat.color.setHex(palette.armour);
+  }
+
+  /** A spinner or saw throws a fan of sparks off the side of the cut, and leaves a gash in the paint. */
+  private cutterHit(event: Extract<GameEvent, { type: 'hit' }>): void {
+    const match = this.match!;
+    const attacker = match.bots[event.source];
+    const target = match.bots[event.target];
+    const v = this.visuals.get(event.target);
+    if (!attacker || !target || !v || attacker === target || event.shielded) return;
+    const weapon = attacker.loadout.melee;
+    if (MELEE[weapon].kind !== 'spinner' && !CUTTERS.has(weapon)) return;
+    const away = Math.hypot(attacker.x - target.x, attacker.z - target.z) || 1;
+    const dx = (attacker.x - target.x) / away;
+    const dz = (attacker.z - target.z) / away;
+    if (match.time - v.sparkAt >= SPARK_GAP) {
+      v.sparkAt = match.time;
+      const x = target.x + dx * target.size;
+      const z = target.z + dz * target.size;
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const dir = { x: -dz * side * 0.85 + dx * 0.4, z: dx * side * 0.85 + dz * 0.4, jitter: 9 };
+      const count = Math.min(24, 6 + event.amount);
+      this.particles.burst(x, z, { count, color: 0xffc23a, speed: 24, size: 0.2, life: 0.42, y: 1, gravity: 22, dir });
+      this.particles.burst(x, z, { count: count * 0.4, color: 0xfff6d8, speed: 30, size: 0.13, life: 0.24, y: 1, gravity: 22, dir });
+    }
+    if (v.scars < MAX_SCARS && match.time - v.scarAt >= SCAR_GAP) {
+      v.scarAt = match.time;
+      v.scars++;
+      // The chase camera mostly sees the deck, so half of them go there.
+      scarHull(v.model, Math.random() < 0.5 ? 'top' : hullFaceHit(dx, dz, target.heading));
+    }
+  }
+
   private keepInsideWalls(position: THREE.Vector3): THREE.Vector3 {
     const { walled, half } = this.arena.def;
     if (!walled) return position;
@@ -235,7 +286,8 @@ export class MatchView {
 
   private addBot(bot: Bot): void {
     const { chassis, melee, defense, paint, rearMelee, wheels } = bot.loadout;
-    const model = buildRobot({ chassis, melee, defense, paint, rearMelee, wheels, color: bot.color });
+    const shown = this.hideSkins && bot.id !== this.followId ? withoutSkin(paint) : paint;
+    const model = buildRobot({ chassis, melee, defense, paint: shown, rearMelee, wheels, color: bot.color });
     model.root.scale.setScalar(bot.size);
     const barBack = new THREE.Mesh(this.barGeo, this.barBackMat);
     const barFront = new THREE.Mesh(
@@ -249,7 +301,7 @@ export class MatchView {
     const label = nameSprite(bot.name, bot.color);
     label.renderOrder = 12;
     this.arena.scene.add(model.root, barBack, barFront, barArmour, label);
-    this.visuals.set(bot.id, { model, barBack, barFront, barArmour, label, smokeT: 0, wheelSpin: 0, airPeak: 0, chainTravel: 0, flipPeak: 0, roll: 0, platesLost: 0 });
+    this.visuals.set(bot.id, { model, barBack, barFront, barArmour, label, smokeT: 0, wheelSpin: 0, airPeak: 0, chainTravel: 0, flipPeak: 0, roll: 0, platesLost: 0, sparkAt: -1, scarAt: -1, scars: 0 });
   }
 
   private clearMatch(): void {
@@ -426,7 +478,16 @@ export class MatchView {
     this.onEvent?.(event);
     const follow = this.match!.bots[this.followId];
     switch (event.type) {
+      case 'spawn': {
+        const v = this.visuals.get(event.bot);
+        if (v?.scars) {
+          healHullScars(v.model);
+          v.scars = 0;
+        }
+        break;
+      }
       case 'hit':
+        if (event.source >= 0) this.cutterHit(event);
         if (event.source < 0) {
           this.particles.burst(event.x, event.z, { count: 2, color: 0xffc040, speed: 10, size: 0.14, life: 0.3 });
         } else if (event.amount >= BIG_HIT) {
@@ -690,8 +751,7 @@ export class MatchView {
     v.barFront.quaternion.copy(this.camera.quaternion);
     v.barFront.scale.x = Math.max(0.001, health);
     v.barFront.translateX(-1.2 * (1 - health));
-    const color = health > 0.5 ? 0x5be36a : health > 0.25 ? 0xf2c037 : 0xe84a3a;
-    (v.barFront.material as THREE.MeshBasicMaterial).color.setHex(color);
+    (v.barFront.material as THREE.MeshBasicMaterial).color.setHex(healthColor(this.palette.bar, health));
     const armour = bot.maxArmour > 0 ? bot.armour / bot.maxArmour : 0;
     v.barArmour.position.set(x, barY, z);
     v.barArmour.quaternion.copy(this.camera.quaternion);
@@ -934,13 +994,13 @@ export class MatchView {
       if (!group) {
         group = new THREE.Group();
         if (p.kind === 'repair') {
-          const mat = new THREE.MeshStandardMaterial({ color: 0x5be36a, emissive: 0x1fbf3a, emissiveIntensity: 1.2 });
+          const mat = new THREE.MeshStandardMaterial({ color: this.palette.repair, emissive: this.palette === STANDARD_PALETTE ? 0x1fbf3a : this.palette.repair, emissiveIntensity: this.palette === STANDARD_PALETTE ? 1.2 : 0.6 });
           group.add(new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.34, 0.34), mat));
           group.add(new THREE.Mesh(new THREE.BoxGeometry(0.34, 1.1, 0.34), mat));
         } else {
           const gear = new THREE.Mesh(
             new THREE.TorusGeometry(0.4, 0.17, 6, 8),
-            new THREE.MeshStandardMaterial({ color: 0xffd24a, emissive: 0xb07a10, metalness: 0.8, roughness: 0.3 }),
+            new THREE.MeshStandardMaterial({ color: this.palette.scrap, emissive: 0xb07a10, metalness: 0.8, roughness: 0.3 }),
           );
           group.add(gear);
         }
@@ -967,7 +1027,7 @@ export class MatchView {
     this.camPos.lerp(target, Math.min(1, dt * 5));
     this.camLook.lerp(new THREE.Vector3(bot.trapX, 0, bot.trapZ + 2), Math.min(1, dt * 7));
     this.shake = Math.max(0, this.shake - dt * 2.4);
-    const kick = this.shake * this.shake * 0.8;
+    const kick = this.shake * this.shake * 0.8 * this.shakeScale;
     this.camera.position.set(this.camPos.x + (Math.random() - 0.5) * kick, this.camPos.y + (Math.random() - 0.5) * kick, this.camPos.z + (Math.random() - 0.5) * kick);
     this.camera.lookAt(this.camLook);
   }
@@ -1009,7 +1069,7 @@ export class MatchView {
     else this.camLook.lerp(new THREE.Vector3(x + fx * 5, 1.6, z + fz * 5), Math.min(1, dt * 12));
 
     this.shake = Math.max(0, this.shake - dt * 2.4);
-    const kick = this.shake * this.shake * 0.8;
+    const kick = this.shake * this.shake * 0.8 * this.shakeScale;
     this.camera.position.set(
       this.camPos.x + (Math.random() - 0.5) * kick,
       this.camPos.y + (Math.random() - 0.5) * kick,

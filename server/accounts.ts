@@ -70,7 +70,7 @@ function codeHash(code: string): Buffer {
 function toSave(row: PlayerRow): Save {
   // Rows from before a part type existed simply start with the free one.
   const state = { ...row.state, owned: { ...newSave().owned, ...row.state.owned } };
-  return tidyPowerups(retireParts(retireGuns({ name: row.name, money: row.money, matches: row.matches, wins: row.wins, ...state })));
+  return tidyPowerups(retireParts(retireGuns({ name: sanitizeName(row.name), money: row.money, matches: row.matches, wins: row.wins, ...state })));
 }
 
 function toProfile(row: PlayerRow): Profile {
@@ -287,21 +287,24 @@ export class Accounts {
   }
 
   /** Public, so it holds only what other players already see in a match. Members only. */
-  leaderboard(limit = 20): Promise<LeaderboardEntry[]> {
-    return this.db.query<LeaderboardEntry>(
+  async leaderboard(limit = 20): Promise<LeaderboardEntry[]> {
+    const rows = await this.db.query<LeaderboardEntry>(
       'SELECT name, rating, wins, matches, kills FROM players WHERE member AND matches > 0 ORDER BY rating DESC, wins DESC, created_at ASC LIMIT $1',
       [limit],
     );
+    // Names chosen before the filter existed are still in the table.
+    return rows.map((row) => ({ ...row, name: sanitizeName(row.name) }));
   }
 
   /** Public, and members only. Any who never chose a name are left out, as there's nobody to recognise. */
-  recentPlayers(): Promise<OnlineStatus['recent']> {
-    return this.db.query<OnlineStatus['recent'][number]>(
+  async recentPlayers(): Promise<OnlineStatus['recent']> {
+    const rows = await this.db.query<OnlineStatus['recent'][number]>(
       `SELECT name, last_seen AS "lastSeen" FROM players
        WHERE member AND name <> $1 AND last_seen > now() - interval '${RECENT_DAYS} days'
        ORDER BY last_seen DESC LIMIT $2`,
       [DEFAULT_NAME, RECENT_LIMIT],
     );
+    return rows.map((row) => ({ ...row, name: sanitizeName(row.name) })).filter((row) => row.name !== DEFAULT_NAME);
   }
 
   /** Removes expired sessions and abandoned guests. Run periodically. */

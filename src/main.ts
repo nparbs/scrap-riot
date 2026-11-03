@@ -20,6 +20,8 @@ import { renderGoogleButton } from './ui/google';
 import { Hud } from './ui/hud';
 import { DuelIntro } from './ui/duelIntro';
 import { Painter } from './ui/painter';
+import { isNameAllowed } from './game/nameFilter';
+import { COLORBLIND_PALETTE, STANDARD_PALETTE, type Palette } from './game/palette';
 import { enterFullscreen, exitFullscreen, isFullscreen, isInstalled, lockLandscape, onFullscreenChange, unlockOrientation } from './ui/fullscreen';
 import { isTouchDevice, touchControls } from './ui/touch';
 import { garageScreen, introScreen, lobbyScreen, menuScreen, nameScreen, onlineLabel, pauseScreen, playersPanel, queueLabel, resultsScreen, settingsScreen, type BuyCategory, type GarageTab, type SideTab } from './ui/screens';
@@ -34,6 +36,8 @@ const SERVER_URL: string = import.meta.env.VITE_SERVER_URL || (import.meta.env.D
 
 /** Shows between the workshop's panels. */
 const WORKSHOP_METAL = 0x121314;
+/** How much screen shake is left with Reduce Screen Shake on. */
+const REDUCED_SHAKE = 0.2;
 /** Seconds for the register to ring before the drill starts on a part that was just bought. */
 const DRILL_AFTER_SALE = 0.55;
 const DESK_DOCK_HEIGHT = 136;
@@ -170,6 +174,7 @@ class Game {
     window.addEventListener('resize', () => this.resize());
     this.checkForSoftwareRendering();
     this.applyQuality();
+    this.applyAccessibility();
 
     this.fpsEl.className = 'fps-counter';
     this.fpsEl.hidden = !this.settings.showFps;
@@ -284,6 +289,16 @@ class Game {
     this.ui.querySelector<HTMLInputElement>('[data-pilot-name]')?.focus();
   }
 
+  private get palette(): Palette {
+    return this.settings.colorblind ? COLORBLIND_PALETTE : STANDARD_PALETTE;
+  }
+
+  private applyAccessibility(): void {
+    this.view.shakeScale = this.settings.reduceShake ? REDUCED_SHAKE : 1;
+    this.view.hideSkins = this.settings.hidePaint;
+    this.view.setPalette(this.palette);
+  }
+
   private applyQuality(): void {
     const quality = QUALITY[activeLevel(this.settings)];
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatio));
@@ -340,6 +355,25 @@ class Game {
             // Its picture takes up graphics memory, so it only stays while it's in use.
             this.comic?.dispose();
             this.comic = null;
+            save();
+            render();
+          },
+          onReduceShake: () => {
+            this.settings.reduceShake = !this.settings.reduceShake;
+            this.applyAccessibility();
+            save();
+            render();
+          },
+          onColorblind: () => {
+            this.settings.colorblind = !this.settings.colorblind;
+            this.applyAccessibility();
+            this.hud?.setPalette(this.palette);
+            save();
+            render();
+          },
+          onHidePaint: () => {
+            this.settings.hidePaint = !this.settings.hidePaint;
+            this.applyAccessibility();
             save();
             render();
           },
@@ -761,6 +795,11 @@ class Game {
           onMemberCode: (code) => this.joinMembers(code),
           onName: (name) =>
             {
+              if (!isNameAllowed(name)) {
+                this.notice = "That name isn't allowed here, so your name is unchanged.";
+                this.refreshGarage();
+                return;
+              }
               this.settings.pilotName = sanitizeName(name);
               writeSettings(this.storage, this.settings);
               change({ type: 'name', name }, () => {
@@ -921,7 +960,7 @@ class Game {
     const rival = match.bots.find((bot) => bot !== player);
     if (!rival) return;
     const ratio = Math.min(window.devicePixelRatio, QUALITY[activeLevel(this.settings)].pixelRatio);
-    this.duelIntro = new DuelIntro(player, rival, match.arena.name, elapsed, ratio, this.settings.comic, (beat) => this.sfx.versus(beat));
+    this.duelIntro = new DuelIntro(player, rival, match.arena.name, elapsed, ratio, this.settings.comic, (beat) => this.sfx.versus(beat), { hideRivalPaint: this.settings.hidePaint, shakeScale: this.settings.reduceShake ? REDUCED_SHAKE : 1 });
     document.body.appendChild(this.duelIntro.root);
   }
 
@@ -962,7 +1001,7 @@ class Game {
   }
 
   private buildHud(match: Match, player: Bot): Hud {
-    return new Hud(match, player, this.settings.bindings, {
+    return new Hud(match, player, this.settings.bindings, this.palette, {
       onChat: (id) => {
         if (this.net) this.net.chat(id);
         else this.hud?.showChat(player.id, id);

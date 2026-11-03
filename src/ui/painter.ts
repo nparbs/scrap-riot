@@ -57,13 +57,15 @@ export class Painter {
   constructor() {
     this.bar.className = 'paint-bar';
     this.bar.innerHTML = `
+      <button class="tool-btn paint-color-open" data-palette-open title="Choose a color" aria-label="Choose a color"><i></i></button>
       <div class="paint-tools">${TOOLS.map(([id, label, icon]) => `<button class="tool-btn" data-tool="${id}" title="${label}" aria-label="${label}"><svg viewBox="0 0 32 32" aria-hidden="true">${icon}</svg></button>`).join('')}</div>
       <div class="paint-sizes">${SIZES.map((size) => `<button class="tool-btn" data-size="${size}" title="Size ${size}" aria-label="Size ${size}"><i style="height:${size + 1}px"></i></button>`).join('')}</div>
       <div class="paint-actions">
         <button class="tool-btn" data-undo title="Undo" aria-label="Undo"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M12 8 L6 14 L12 20 M6 14 H20 A6 6 0 0 1 20 26 H14"/></svg></button>
         <button class="tool-btn" data-clear title="Clear everything" aria-label="Clear everything"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 10 H24 M13 10 V6 H19 V10 M10 10 L11 26 H21 L22 10 M14 14 V22 M18 14 V22"/></svg></button>
       </div>
-      <div class="paint-palette">${PAINT_COLORS.map((color, i) => `<button data-color="${i + 1}" style="background:${css(color)}" aria-label="Color ${i + 1}"></button>`).join('')}</div>`;
+      <div class="paint-palette">${PAINT_COLORS.map((color, i) => `<button data-color="${i + 1}" style="background:${css(color)}" aria-label="Color ${i + 1}"></button>`).join('')}</div>
+      <button class="plate-btn paint-palette-done" data-palette-done>Done</button>`;
     this.bar.addEventListener('click', (e) => this.onBarClick(e));
 
     this.canvas.width = this.canvas.height = SKIN_SIZE;
@@ -155,6 +157,7 @@ export class Painter {
     for (const el of this.bar.querySelectorAll<HTMLElement>('[data-tool]')) el.classList.toggle('tool-on', el.dataset.tool === this.tool);
     for (const el of this.bar.querySelectorAll<HTMLElement>('[data-size]')) el.classList.toggle('tool-on', Number(el.dataset.size) === this.size);
     for (const el of this.bar.querySelectorAll<HTMLElement>('[data-color]')) el.classList.toggle('color-on', Number(el.dataset.color) === this.color);
+    this.bar.querySelector<HTMLElement>('.paint-color-open i')!.style.background = css(this.currentColor);
   }
 
   private onBarClick(e: Event): void {
@@ -167,7 +170,10 @@ export class Painter {
       this.color = Number(color);
       // Picking a colour while erasing almost always means wanting to paint again.
       if (this.tool === 'eraser') this.tool = 'pencil';
-    } else if ('undo' in button.dataset) this.undo();
+      this.bar.classList.remove('palette-open');
+    } else if ('paletteOpen' in button.dataset) this.bar.classList.add('palette-open');
+    else if ('paletteDone' in button.dataset) this.bar.classList.remove('palette-open');
+    else if ('undo' in button.dataset) this.undo();
     else if ('clear' in button.dataset) this.clear();
     this.highlight();
   }

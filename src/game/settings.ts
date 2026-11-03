@@ -88,6 +88,11 @@ export interface Settings {
   showFps: boolean;
   /** Ink outlines and flat shading, drawn over the normal picture. */
   comic: boolean;
+  reduceShake: boolean;
+  /** Health and armor in colors that hold up for color-blind players. */
+  colorblind: boolean;
+  /** Leaves off what other players have drawn on their robots. */
+  hidePaint: boolean;
   tutorialDone: boolean;
   /** Each from 0 to 100. */
   volume: { master: number; music: number; effects: number };
@@ -100,8 +105,12 @@ export interface Settings {
   fullscreen: boolean;
 }
 
+function prefersReducedMotion(): boolean {
+  return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 export function defaultSettings(): Settings {
-  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, comic: false, tutorialDone: false, volume: { ...DEFAULT_VOLUME }, muted: false, musicMuted: false, pilotName: '', fullscreen: true };
+  return { bindings: { ...DEFAULT_BINDINGS }, quality: 'auto', autoLevel: 'high', showFps: false, comic: false, reduceShake: prefersReducedMotion(), colorblind: false, hidePaint: false, tutorialDone: false, volume: { ...DEFAULT_VOLUME }, muted: false, musicMuted: false, pilotName: '', fullscreen: true };
 }
 
 /** A slider dragged all the way down counts as off too, so the music button always tells the truth. */
@@ -142,6 +151,9 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null): Settings
     if (saved.autoLevel && saved.autoLevel in QUALITY) settings.autoLevel = saved.autoLevel;
     settings.showFps = saved.showFps === true;
     settings.comic = saved.comic === true;
+    if (typeof saved.reduceShake === 'boolean') settings.reduceShake = saved.reduceShake;
+    settings.colorblind = saved.colorblind === true;
+    settings.hidePaint = saved.hidePaint === true;
     for (const kind of VOLUME_KINDS) {
       const value = saved.volume?.[kind];
       if (typeof value === 'number' && Number.isFinite(value)) settings.volume[kind] = Math.max(0, Math.min(100, value));
