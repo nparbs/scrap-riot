@@ -14,8 +14,7 @@ If `git pull --ff-only origin main` fails with "Cannot fast-forward to multiple 
 
 ## Current state
 
-- **Live:** everything through PR #51 is merged and on the page, with the server on protocol 15. A two-browser duel ran on the live page and server on 2 November, from joining the queue through surrender to the results, with no page errors.
-- **Not live yet:** the phone paintshop, name filter, hidden paint, spinner sparks and scars, and accessibility settings on the `polish-and-moderation` branch, not yet committed. The protocol is unchanged, but the name filter only protects anyone once the server is deployed too.
+- **Live:** everything through PR #53 is merged and on the page, with the server on protocol 15. A two-browser duel ran on the live page and server on 2 November, from joining the queue through surrender to the results, with no page errors.
 - **Tests:** see `npm test`, which includes the map layout checks.
 - **Not verified yet:** nobody has played the points, weight, armor or battery rules by hand, and no online match has run on them against the real server. The new maps, animations, tracks and window fixes have also only run in a headless browser. Hazard timings and damage are first guesses, tuned against bots only. An account already showing `null/3` hasn't been checked on the real database, only in tests. Nothing since the phone work has run on a real phone. That includes the thumb buttons, the face-off when a phone really rotates or goes full screen, the landscape lock and Add to Home Screen. The join banner and phone counts have only run against a mocked server, not a real queue.
 
