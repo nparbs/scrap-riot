@@ -21,6 +21,7 @@ import {
 } from '../sim/data';
 import type { BotSetup, GameEvent, Loadout } from '../sim/match';
 import type { Save } from '../game/progress';
+import { isNameAllowed } from '../game/nameFilter';
 import { decodeSkin } from '../game/skin';
 
 export const PROTOCOL_VERSION = 15;
@@ -126,7 +127,8 @@ export function powerupIndex(id: PowerupId | null): number {
 export function sanitizeName(raw: unknown): string {
   if (typeof raw !== 'string') return DEFAULT_NAME;
   const clean = raw.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, '').trim();
-  return [...clean].slice(0, NAME_MAX).join('').trim() || DEFAULT_NAME;
+  const name = [...clean].slice(0, NAME_MAX).join('').trim();
+  return name && isNameAllowed(name) ? name : DEFAULT_NAME;
 }
 
 function pickKey<T extends object>(table: T, raw: unknown, fallback: keyof T): keyof T {

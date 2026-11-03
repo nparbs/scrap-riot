@@ -1,5 +1,6 @@
 import { sawPos, TRAP_NAMES, trapdoorOpen } from '../sim/arena';
 import { pickLastWords } from '../game/lastWords';
+import { healthColor, type Palette } from '../game/palette';
 import { keyLabel, type Action, type Bindings } from '../game/settings';
 import { isTouchDevice } from './touch';
 import { QUICK_CHAT, type OnlineQueue } from '../net/protocol';
@@ -108,7 +109,7 @@ export class Hud {
   /** One indicator per attacker, refreshed while they keep hitting. */
   private readonly damageMarks = new Map<number, { el: HTMLElement; time: number }>();
 
-  constructor(private readonly match: Match, private readonly player: Bot, keys: Bindings, actions: HudActions) {
+  constructor(private readonly match: Match, private readonly player: Bot, keys: Bindings, private palette: Palette, actions: HudActions) {
     const { loadout } = player;
     const touch = isTouchDevice();
     this.powerSlots = fittedPowerups(loadout);
@@ -426,12 +427,18 @@ export class Hud {
     else this.addFeed(`${name(victim)} ${event.fell ? 'took the long way down' : 'lost to the arena'}`);
   }
 
+  /** The settings can be opened from the pause screen, so this can change during a match. */
+  setPalette(palette: Palette): void {
+    this.palette = palette;
+  }
+
   update(dt: number): void {
     const { match, player } = this;
     this.updateDamageMarks(dt);
     const health = player.hp / player.maxHp;
     this.hpFill.style.width = `${health * 100}%`;
-    this.hpFill.style.background = health > 0.5 ? '#7ddba8' : health > 0.25 ? '#ffa94d' : '#e8483a';
+    this.hpFill.style.background = hex(healthColor(this.palette.hudBar, health));
+    this.armorFill.style.background = this.palette.hudArmour === null ? '' : hex(this.palette.hudArmour);
     const armor = Math.ceil(player.armour);
     this.setText(this.hpText, `${armor > 0 ? `${armor} armor · ` : ''}${Math.min(Math.ceil(player.hp), Math.round(player.maxHp))} health`);
     this.armorFill.style.width = `${player.maxArmour > 0 ? (player.armour / player.maxArmour) * 100 : 0}%`;
@@ -523,7 +530,8 @@ export class Hud {
     this.setText(this.rivalWeapon, MELEE[rival.loadout.melee].name);
     const health = rival.hp / rival.maxHp;
     this.rivalFill.style.width = `${health * 100}%`;
-    this.rivalFill.style.background = health > 0.5 ? '#7ddba8' : health > 0.25 ? '#ffa94d' : '#e8483a';
+    this.rivalFill.style.background = hex(healthColor(this.palette.hudBar, health));
+    this.rivalArmor.style.background = this.palette.hudArmour === null ? '' : hex(this.palette.hudArmour);
     this.rivalArmor.style.width = `${rival.maxArmour > 0 ? (rival.armour / rival.maxArmour) * 100 : 0}%`;
     this.rivalBattery.style.height = `${Math.max(0, rival.ammo) * 100}%`;
     // Without a map, this is how to find them on the roof.
@@ -683,7 +691,7 @@ export class Hud {
       g.fill();
     }
     for (const p of this.match.pickups) {
-      g.fillStyle = p.kind === 'repair' ? '#5be36a' : '#ffd24a';
+      g.fillStyle = hex(p.kind === 'repair' ? this.palette.repair : this.palette.scrap);
       g.fillRect(toX(p.x) - 2, toY(p.z) - 2, 4, 4);
     }
     for (const bot of this.match.bots) {

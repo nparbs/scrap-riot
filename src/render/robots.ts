@@ -46,6 +46,8 @@ export interface RobotModel {
   plates: THREE.Mesh[];
   /** Colors at full health, which darken with damage. */
   baseColors: THREE.Color[];
+  /** The hull's picture before any cuts, kept once it has some. */
+  unscarred: HTMLCanvasElement | null;
   /** How high to hold the robot so its tower rests on the floor when it's upside down. */
   rollHeight: number;
   /** Where a flame starts, as a height and a distance out from the middle of the robot. */
@@ -106,6 +108,81 @@ function cone(r: number, h: number, mat: THREE.Material, sides = 8): THREE.Mesh 
 
 function css(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`;
+}
+
+/** What a robot looks like with nothing a player drew by hand: only its colors, pattern and shape. */
+export function withoutSkin(paint: Paint | undefined): Paint | undefined {
+  if (!paint) return paint;
+  const { skin: _skin, ...plain } = paint;
+  return plain;
+}
+
+/** Which face of a robot a hit from this direction lands on. `dx` and `dz` point from the robot to whatever hit it. */
+export function hullFaceHit(dx: number, dz: number, heading: number): PanelId {
+  const ahead = dx * Math.sin(heading) + dz * Math.cos(heading);
+  const across = dx * Math.cos(heading) - dz * Math.sin(heading);
+  if (Math.abs(ahead) >= Math.abs(across)) return ahead > 0 ? 'front' : 'back';
+  return across > 0 ? 'right' : 'left';
+}
+
+/** The hull's picture as a canvas, starting one if it was plain paint. */
+function hullCanvas(model: RobotModel): HTMLCanvasElement {
+  const material = model.hullMaterial;
+  if (!material.map) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = SKIN_SIZE;
+    const g = canvas.getContext('2d')!;
+    g.fillStyle = css(model.baseColors[0].getHex());
+    g.fillRect(0, 0, SKIN_SIZE, SKIN_SIZE);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    material.map = texture;
+    material.needsUpdate = true;
+    model.baseColors[0].set(0xffffff);
+  }
+  return material.map.image as HTMLCanvasElement;
+}
+
+/** Cuts a gash into one face of the hull, in the picture itself so that it follows any body shape. */
+export function scarHull(model: RobotModel, face: PanelId): void {
+  const canvas = hullCanvas(model);
+  if (!model.unscarred) {
+    model.unscarred = document.createElement('canvas');
+    model.unscarred.width = canvas.width;
+    model.unscarred.height = canvas.height;
+    model.unscarred.getContext('2d')!.drawImage(canvas, 0, 0);
+  }
+  const { x0, y0, x1, y1 } = SKIN_PANELS[face];
+  const x = x0 + Math.random() * (x1 - x0);
+  const y = y0 + Math.random() * (y1 - y0);
+  const reach = 8 + Math.random() * 10;
+  const angle = Math.random() * Math.PI;
+  const [dx, dy] = [Math.cos(angle) * reach, Math.sin(angle) * reach];
+  const g = canvas.getContext('2d')!;
+  g.save();
+  g.beginPath();
+  g.rect(x0, y0, x1 - x0, y1 - y0);
+  g.clip();
+  g.lineCap = 'round';
+  g.strokeStyle = '#17120e';
+  g.lineWidth = 3.6;
+  g.beginPath();
+  g.moveTo(x - dx, y - dy);
+  g.lineTo(x + dx, y + dy);
+  g.stroke();
+  // Bright bare metal down the middle of the cut.
+  g.strokeStyle = '#d7dbde';
+  g.lineWidth = 1.3;
+  g.stroke();
+  g.restore();
+  model.hullMaterial.map!.needsUpdate = true;
+}
+
+/** A respawned robot is a repaired one. */
+export function healHullScars(model: RobotModel): void {
+  if (!model.unscarred) return;
+  (model.hullMaterial.map!.image as HTMLCanvasElement).getContext('2d')!.drawImage(model.unscarred, 0, 0);
+  model.hullMaterial.map!.needsUpdate = true;
 }
 
 /** Paints a hull texture. The patterns are all drawn here, so no image files are needed. */
@@ -1923,6 +2000,7 @@ export function buildRobot(build: RobotBuild): RobotModel {
     materials,
     plates,
     baseColors: materials.map((m) => m.color.clone()),
+    unscarred: null,
     rollHeight: towerPivot.position.y + (0.3 + (mount?.top ?? 0)) * towerScale,
     muzzle: mount
       ? { height: towerPivot.position.y + (mount.y + 0.06) * towerScale, reach: facing * towerZ + (mount.z + mount.muzzle) * towerScale }

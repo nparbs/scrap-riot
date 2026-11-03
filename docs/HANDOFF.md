@@ -14,12 +14,17 @@ If `git pull --ff-only origin main` fails with "Cannot fast-forward to multiple 
 
 ## Current state
 
-- **Live:** everything through PR #51 is merged and on the page, with the server on protocol 15.
+- **Live:** everything through PR #53 is merged and on the page, with the server on protocol 15. A two-browser duel ran on the live page and server on 2 November, from joining the queue through surrender to the results, with no page errors.
 - **Tests:** see `npm test`, which includes the map layout checks.
 - **Not verified yet:** nobody has played the points, weight, armor or battery rules by hand, and no online match has run on them against the real server. The new maps, animations, tracks and window fixes have also only run in a headless browser. Hazard timings and damage are first guesses, tuned against bots only. An account already showing `null/3` hasn't been checked on the real database, only in tests. Nothing since the phone work has run on a real phone. That includes the thumb buttons, the face-off when a phone really rotates or goes full screen, the landscape lock and Add to Home Screen. The join banner and phone counts have only run against a mocked server, not a real queue.
 
 ## Latest work (protocol 15)
 
+- **Phone paintshop:** the rules are at the end of `src/style.css`. On a phone the board and tools share the panel, and the colors open as a full-screen sheet from `.paint-color-open` (`palette-open` on the bar). The sheet can't cover the settings and music buttons by z-index, because `#ui` is a fixed stacking context and they sit outside it, so `:has` hides them while it's open.
+- **Name filter:** `isNameAllowed` in `src/game/nameFilter.ts`, called from `sanitizeName`, so the server enforces it on every name. Names already stored are masked as they're read (`toSave`, `leaderboard`, `recentPlayers`) and the table isn't changed. It's a small word list that errs toward letting names through.
+- **Hidden paint:** `settings.hidePaint` leaves `skin` off other robots with `withoutSkin`, in `MatchView.addBot` and the duel face-off. Patterns and colors come from fixed lists, so only drawings need hiding. There's still no report button.
+- **Sparks and scars:** `cutterHit` in `src/render/matchView.ts` runs on hits from a spinner or `CUTTERS`. `hit` events don't say which weapon landed, so a mine from a robot with a spinner also sparks. Scars are drawn into the hull's picture by `scarHull` so they follow every body shape, up to `MAX_SCARS`, and a `spawn` event clears them.
+- **Accessibility:** `settings.reduceShake` keeps `REDUCED_SHAKE` of the shake, and starts on if the system asks for reduced motion. `settings.colorblind` swaps `STANDARD_PALETTE` for `COLORBLIND_PALETTE` in `src/game/palette.ts`, for health, armor and pickups. Colors players pick for their robots don't change.
 - **Chassis models:** each chassis has its own proportions in `HULLS`, on a shared frame in `buildHull` in `src/render/robots.ts`: a tub, side rails, a suspension for each wheel (`addSuspension`), fenders (`addFender`), a class-specific nose (`buildNose`) and a tail bumper. The frame is merged by `bake` into one mesh per material, so hundreds of brackets cost a few draw calls. The painted shell and body shapes work as before, on top of it. `buildTower` draws a different tower for each class, and they stop short of where a gun bolts on. `buildWeaponMount` stands every nose weapon on a fixed pedestal, while the weapon itself moves. `WEAPON_DROP` lifts big spinners clear of the floor. Run `scripts/make-previews.mjs` after changing any of this.
 - **Secondary weapons:** what the screens and docs call a secondary weapon is still `defense` in the code, saves, settings and network messages, and `DEFENSES` holds them. Side Blades, Cutter and the Nail Spreader are gone, with refunds in `retireParts`.
 - **Spike Strip:** `spikes` in `DEFENSES`, with the rule in `rollOverSpikes` in `src/sim/match.ts`. Patches now have an `angle`, sent in snapshots. `Bot.poppedT` stops driving through the same path as a stun, but not weapons. The numbers are in [balance.md](balance.md).
@@ -131,14 +136,14 @@ WASD to drive, Space or left click main weapon, R or right click defense, Shift 
 
 The user tests by hand, and their feedback should drive what comes next. Open items, roughly by priority:
 
-1. **Real phone test:** see "Not verified yet" under Current state. The face-off and the join banner are the first things to try.
-2. **Paintshop on phones:** the last layout problem at the 720p minimum. See Known weak spots.
+1. **Real phone test:** see "Not verified yet" under Current state. The face-off, the join banner and the new paintshop are the first things to try.
+2. **Report button:** other players' paint can be hidden, but nothing can be reported.
 3. **Human playtest:** nobody has played the points, weight, armor and battery rules by hand. Balance has only been tuned against bots.
 4. **Sound by ear:** levels were measured but never listened to by the person building them, so the user's opinion overrides the numbers. That includes the quieter spinners.
 5. **Google sign-in:** the name prompt is a stopgap until this exists. `GOOGLE_CLIENT_ID` isn't set on the server.
-6. **Name and paint moderation:** there is no filter on names and no report button for paint jobs. This is needed before sharing widely. The original had a Report Abuse button.
+6. **Sparks and scars by eye:** both have only been seen in small screenshots from a software renderer, so their size and how often they appear are guesses.
 7. **Custom domain:** `scrapriot.parbs.online` was discussed but not set up. DNS, GitHub Pages and the server's `ALLOWED_ORIGINS` would all need changing.
-8. **Database backups:** the nightly backup in [hosting.md](hosting.md) was never set up on the VM.
+8. **Check the first backup:** a nightly dump to `~/scrap-riot-backups` on the VM, kept 14 days, was installed on 2 November. A restore matched the live row counts, but real cron hadn't fired it yet.
 
 ### Known weak spots
 
@@ -147,7 +152,7 @@ The user tests by hand, and their feedback should drive what comes next. Open it
 - **Mini-Robot:** it still hunts on its own. The user asked for no gun tracking, and this is a drone, so it was left alone and flagged to them. They have not said either way.
 - **Windows Sticky Keys:** tapping Shift five times can bring up the prompt.
 - **Frame rate:** the Skyscraper was measured only in a software renderer, never on a weak real GPU. A friend of the user had low frame rates before Auto quality was added, and the result on their PC is unconfirmed.
-- **Paintshop on phones:** at 640x360 the panel scrolls sideways, with the colour and pattern controls off to the side, and its tools and swatches are small for thumbs at every phone size.
+- **Paintshop on phones:** the tools are 40px tall, and 34 to 37px wide on an upright phone, under the usual 44px advice. The board is 236px across at 640x360, so fine detail is fiddly. Pattern and body shape are a scroll below it. It has only run with emulated touch.
 - **Upright tablets:** the workshop panel sits above the robot and play buttons, so those need scrolling to, and the Fight Bots bar sits about two-thirds of the way down the screen.
 - **Refresh rate limit:** the 5-second refresh uses 12 of the 120 requests a minute each address gets (`REQUESTS_PER_WINDOW` in `server/api.ts`). About 10 people on one address would reach the limit, and their garage actions could then be refused. Matches don't go through it.
 - **Join banner lag:** the person waiting may have gone by the time someone taps it, leaving them waiting in the queue instead.

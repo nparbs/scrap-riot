@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { ComicPass } from '../render/comicPass';
-import { buildRobot, disposeRobot, type RobotModel } from '../render/robots';
+import { buildRobot, disposeRobot, withoutSkin, type RobotModel } from '../render/robots';
 import { CHASSIS, DUEL_INTRO, MELEE } from '../sim/data';
 import type { Bot } from '../sim/match';
 import { escapeText } from './hud';
@@ -63,6 +63,7 @@ export class DuelIntro {
   private time: number;
   private renderer: THREE.WebGLRenderer | null = null;
   private comicPass: ComicPass | null = null;
+  private readonly shakeScale: number;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 100);
   private readonly models: { model: RobotModel; side: 1 | -1; turn: number }[] = [];
@@ -74,7 +75,8 @@ export class DuelIntro {
   private stageX = STAGE_X;
   private stageY = 0;
 
-  constructor(left: Bot, right: Bot, arenaName: string, startAt: number, pixelRatio: number, comic: boolean, private readonly onBeat: (beat: DuelBeat) => void) {
+  constructor(left: Bot, right: Bot, arenaName: string, startAt: number, pixelRatio: number, comic: boolean, private readonly onBeat: (beat: DuelBeat) => void, options: { hideRivalPaint: boolean; shakeScale: number }) {
+    this.shakeScale = options.shakeScale;
     this.time = startAt;
     this.whooshed = startAt > ENTER_START;
     this.slammed = startAt > SLAM;
@@ -92,12 +94,12 @@ export class DuelIntro {
       <div class="di-flash"></div>
       <div class="di-skip">${isTouchDevice() ? 'Tap' : 'Click'} to skip</div>`;
     this.root.addEventListener('pointerdown', () => (this.done = true));
-    this.buildStage(left, right, pixelRatio);
+    this.buildStage(left, right, pixelRatio, options.hideRivalPaint);
     if (comic && this.renderer) this.comicPass = new ComicPass(this.renderer);
     this.resize();
   }
 
-  private buildStage(left: Bot, right: Bot, pixelRatio: number): void {
+  private buildStage(left: Bot, right: Bot, pixelRatio: number, hideRivalPaint: boolean): void {
     const canvas = this.root.querySelector<HTMLCanvasElement>('.di-canvas')!;
     try {
       this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
@@ -120,7 +122,7 @@ export class DuelIntro {
 
     const place = (bot: Bot, side: 1 | -1) => {
       const { chassis, melee, defense, paint, rearMelee, wheels } = bot.loadout;
-      const model = buildRobot({ chassis, melee, defense, paint, rearMelee, wheels, color: bot.color });
+      const model = buildRobot({ chassis, melee, defense, paint: hideRivalPaint && bot === right ? withoutSkin(paint) : paint, rearMelee, wheels, color: bot.color });
       // Turned most of the way toward the other robot, with the main weapon leading.
       const turn = -side * 1.05 + (rearMelee ? Math.PI : 0);
       model.root.scale.setScalar(1.25);
@@ -201,7 +203,7 @@ export class DuelIntro {
       for (const wheel of model.wheels) wheel.rotation.x += dt * (arrive < 1 ? 26 : 1.5);
     }
     // Screen shake when the VS lands.
-    const shake = t >= SLAM && t < SLAM + SHAKE_TIME ? (1 - (t - SLAM) / SHAKE_TIME) * SHAKE_SIZE : 0;
+    const shake = t >= SLAM && t < SLAM + SHAKE_TIME ? (1 - (t - SLAM) / SHAKE_TIME) * SHAKE_SIZE * this.shakeScale : 0;
     this.camera.position.x = (Math.random() - 0.5) * shake;
     this.camera.position.y = CAMERA_Y + (Math.random() - 0.5) * shake;
     if (this.comicPass) this.comicPass.render(this.scene, this.camera, true);

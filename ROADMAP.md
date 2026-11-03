@@ -61,9 +61,11 @@ Player feedback from playing against the original's look. Melee is the main even
 - [x] Spectating after being knocked out, with money for staying and a leave timer that scales with how long you lasted
 - [x] Traps spectators can control, themed for each map
 - [x] Someone knocked out of a match still running can leave after 10 seconds, giving up the payout
-- [ ] Replace the name prompt with Google sign-in, and add a name filter
-- [ ] A report button or a way to hide other players' paint jobs
-- [ ] Sparks and visible damage from spinner hits
+- [ ] Replace the name prompt with Google sign-in
+- [x] A name filter, on the server and the page
+- [x] A way to hide other players' paint jobs
+- [ ] A report button
+- [x] Sparks and visible damage from spinner hits
 - [x] Self-righting: a Flipper lands robots upside down, and they right themselves about 3 seconds later
 - [x] Weight as a stat, as the original's parts had
 - [x] Guns removed altogether, with the Flamethrower, Tesla Coil and Pneumatic Spear kept as main weapons
@@ -154,7 +156,7 @@ The original was built around online play, so this was moved to the front of the
 - [ ] Test with real players over the internet
 - [x] Accounts: Google sign-in or guest, with progress owned by the server
 - [x] Match history, rating and leaderboard
-- [ ] Moderation for player names
+- [x] A filter for player names
 
 ## v1.0: Release
 
@@ -162,8 +164,8 @@ The original was built around online play, so this was moved to the front of the
 - [ ] Full screen and landscape lock on phones, and Add to Home Screen on iPhone: built, needs testing on a real phone
 - [ ] Online counts on phones, and joining a waiting match from a bot fight: built, needs testing against a real queue
 - [x] Screens checked on phone sizes down to the 720p minimum (640x360), apart from the item below
-- [ ] Paintshop layout at the 720p minimum, with tools and colours big enough for thumbs
+- [x] Paintshop layout at the 720p minimum, with tools and colours big enough for thumbs: needs testing on a real phone
 - [x] Music, with four battle songs and three menu songs in rotation
-- [ ] Accessibility: color-blind palette, reduced screen shake
+- [x] Accessibility: color-blind palette, reduced screen shake
 - [ ] Trademark and name check before wide release
 - [ ] Launch on the web and itch.io

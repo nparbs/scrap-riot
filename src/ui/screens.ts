@@ -1,6 +1,7 @@
 import { ACHIEVEMENTS, CAREER, isUnlocked, type AchievementStats, type CareerProgress, type Fight, type Medal } from '../game/career';
 import { canSell, CATALOG, CHEAT_MAX, partProblem, previewLoadout, sellPrice, upgradeCost, type PartPreview, type Save, type Slot } from '../game/progress';
 import { ACTIONS, activeLevel, keyLabel, LEVELS, QUALITY, VOLUME_KINDS, type Action, type Bindings, type Quality, type Settings, type VolumeKind } from '../game/settings';
+import { isNameAllowed } from '../game/nameFilter';
 import { DEFAULT_NAME, NAME_MAX, sanitizeName, type HistoryEntry, type LeaderboardEntry, type OnlineQueue, type OnlineStatus, type Profile } from '../net/protocol';
 import { logoUrl } from '../render/logo';
 import { ARENA_ORDER, ARENAS, type ArenaId } from '../sim/arena';
@@ -145,6 +146,11 @@ export function nameScreen(onSubmit: (name: string, code: string) => Promise<str
   const error = el.querySelector<HTMLElement>('.name-error')!;
   el.querySelector('form')!.addEventListener('submit', (e) => {
     e.preventDefault();
+    if (!isNameAllowed(input.value)) {
+      error.textContent = "That name isn't allowed here. Please pick another.";
+      input.focus();
+      return;
+    }
     const name = sanitizeName(input.value);
     if (input.value.trim().length < NAME_MIN || name === DEFAULT_NAME) {
       error.textContent = `Please enter a name of at least ${NAME_MIN} characters, other than "${DEFAULT_NAME}".`;
@@ -648,6 +654,7 @@ function paintPanel(save: Save): string {
       .map(([id, label]) => `<button class="mini-btn${paint[part] === id ? ' mini-on' : ''}" data-paint="${part}" data-value="${id}">${label}</button>`)
       .join('');
   return `
+    <div class="paint-panel">
     <div data-painter-bar></div>
     <div class="paint-lower">
       <div data-painter-board></div>
@@ -657,6 +664,7 @@ function paintPanel(save: Save): string {
         <section><h3>Body shape</h3><div class="choices">${choice('body', BODIES)}</div></section>
         <p class="settings-hint">Paint and body shape are free, and your opponent sees them. Your painting goes over the pattern. Body shape is only for looks.</p>
       </div>
+    </div>
     </div>`;
 }
 
@@ -886,6 +894,9 @@ export interface SettingsActions {
   onQuality: (quality: Quality) => void;
   onFps: () => void;
   onComic: () => void;
+  onReduceShake: () => void;
+  onColorblind: () => void;
+  onHidePaint: () => void;
   onFullscreen: () => void;
   onVolume: (kind: VolumeKind, value: number) => void;
   onVolumeSet: (kind: VolumeKind) => void;
@@ -940,6 +951,16 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
       <p class="settings-hint">Black ink outlines and flat shading, like a comic book. Takes a little more from your graphics card.</p>
       <div class="settings-row"><span>Show frame rate</span>
         <button class="mini-btn${settings.showFps ? ' mini-on' : ''}" data-fps>${settings.showFps ? 'On' : 'Off'}</button></div>
+      <h3>Accessibility</h3>
+      <div class="settings-row"><span>Reduce screen shake</span>
+        <button class="mini-btn${settings.reduceShake ? ' mini-on' : ''}" data-reduce-shake>${settings.reduceShake ? 'On' : 'Off'}</button></div>
+      <div class="settings-row"><span>Color-blind colors</span>
+        <button class="mini-btn${settings.colorblind ? ' mini-on' : ''}" data-colorblind>${settings.colorblind ? 'On' : 'Off'}</button></div>
+      <p class="settings-hint">Health goes blue, yellow and orange in place of green and red, and armor goes grey.</p>
+      <h3>Other players</h3>
+      <div class="settings-row"><span>Hide their paint jobs</span>
+        <button class="mini-btn${settings.hidePaint ? ' mini-on' : ''}" data-hide-paint>${settings.hidePaint ? 'On' : 'Off'}</button></div>
+      <p class="settings-hint">Anything drawn by hand on another robot won't show, only its colors. It starts from your next match.</p>
       <h3>Audio</h3>
       ${VOLUME_KINDS.map((kind) => `<label class="settings-row volume-row"><span>${VOLUME_LABELS[kind]}</span>
         <input type="range" min="0" max="100" step="5" value="${settings.volume[kind]}" data-volume="${kind}" aria-label="${VOLUME_LABELS[kind]}" />
@@ -962,6 +983,9 @@ export function settingsScreen(settings: Settings, waitingFor: Action | null, ac
     else if (bind) actions.onBind(bind as Action);
     else if ('fps' in target.dataset) actions.onFps();
     else if ('comic' in target.dataset) actions.onComic();
+    else if ('reduceShake' in target.dataset) actions.onReduceShake();
+    else if ('colorblind' in target.dataset) actions.onColorblind();
+    else if ('hidePaint' in target.dataset) actions.onHidePaint();
     else if ('fullscreen' in target.dataset) actions.onFullscreen();
     else if ('mute' in target.dataset) actions.onMute();
     else if ('reset' in target.dataset) actions.onReset();

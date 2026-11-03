@@ -4513,3 +4513,155 @@ html:has(.ws) .music-button {
     margin: 0 4px;
   }
 }
+
+/* Only phones open the palette as a sheet. Everywhere else it sits in the bar. */
+.paint-color-open,
+.paint-palette-done {
+  display: none;
+}
+
+/* Thumbs need bigger targets than a mouse does. */
+@media (pointer: coarse) {
+  .paint-tools {
+    grid-template-columns: repeat(3, 40px);
+  }
+
+  .tool-btn,
+  .paint-tools .tool-btn,
+  .paint-actions .tool-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .paint-palette {
+    grid-auto-rows: minmax(24px, 1fr);
+  }
+}
+
+/* A phone can't show the tools, the board and 120 colors at once, so the board and tools share the
+   panel, the colors open over everything, and the options are a scroll away. */
+@media (max-height: 500px), (max-width: 600px) and (orientation: portrait) {
+  .paint-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: start;
+  }
+
+  .paint-lower {
+    display: contents;
+  }
+
+  .paint-board {
+    grid-area: 1 / 1;
+    width: 100%;
+  }
+
+  .paint-template {
+    width: min(100%, calc(100dvh - 84px));
+    height: auto;
+    margin: 0 auto;
+    aspect-ratio: 1;
+  }
+
+  .paint-options {
+    grid-column: 1 / -1;
+  }
+
+  .paint-bar {
+    display: grid;
+    grid-area: 1 / 2;
+    grid-template-columns: repeat(3, 40px);
+    gap: 3px;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .paint-tools,
+  .paint-sizes,
+  .paint-actions {
+    display: contents;
+  }
+
+  .paint-color-open {
+    display: grid;
+    grid-column: span 2;
+    width: 100%;
+    padding: 5px;
+  }
+
+  .paint-color-open i {
+    width: 100%;
+    height: 100%;
+    border: 1px solid #0c0d0e;
+  }
+
+  .paint-palette {
+    display: none;
+  }
+
+  /* They sit above the whole UI layer, so no z-index in here could cover them. */
+  body:has(.palette-open) .settings-button {
+    display: none;
+  }
+
+  .palette-open::before {
+    content: 'Choose a color';
+    position: fixed;
+    z-index: 30;
+    inset: 0 0 auto;
+    height: 48px;
+    padding: 14px calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left));
+    background: #191b1e;
+    color: #f2eadb;
+    font-weight: 700;
+  }
+
+  .palette-open .paint-palette {
+    display: grid;
+    position: fixed;
+    z-index: 30;
+    inset: 48px 0 0;
+    grid-template-columns: repeat(20, 1fr);
+    grid-auto-rows: 1fr;
+    gap: 2px;
+    padding: 2px calc(2px + env(safe-area-inset-right)) calc(2px + env(safe-area-inset-bottom)) calc(2px + env(safe-area-inset-left));
+  }
+
+  .palette-open .paint-palette-done {
+    display: block;
+    position: fixed;
+    z-index: 31;
+    top: 6px;
+    right: calc(8px + env(safe-area-inset-right));
+    height: 36px;
+  }
+}
+
+/* Upright, the board takes the width and the tools go underneath it, with the colors turned to suit. */
+@media (max-width: 600px) and (orientation: portrait) {
+  .paint-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .paint-template {
+    width: min(100%, calc(100dvh - 370px));
+  }
+
+  .paint-bar {
+    grid-area: 2 / 1;
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+  }
+
+  .paint-bar .tool-btn {
+    width: 100%;
+  }
+
+  .palette-open .paint-palette {
+    grid-template-columns: repeat(6, 1fr);
+    grid-template-rows: repeat(20, 1fr);
+    grid-auto-flow: column;
+    grid-auto-rows: auto;
+  }
+}

@@ -5,6 +5,7 @@ import { Accounts, ratingChange } from '../server/accounts';
 import { connectPostgres, type Db } from '../server/db';
 import { ACTIVE_FOR_MS, startGameServer, type GameServer } from '../server/gameServer';
 import { googleVerifier } from '../server/google';
+import { DEFAULT_NAME } from '../src/net/protocol';
 import { STARTING_MONEY } from '../src/game/progress';
 import { NetClient } from '../src/net/client';
 import { OFFLINE_PAYOUT_MAX, PROTOCOL_VERSION, type OnlineStatus, type Profile, type ServerMessage } from '../src/net/protocol';
@@ -377,6 +378,22 @@ describe('over the network', () => {
     const { accountId } = (await accounts.forMatch(old.token))!;
     await db.query("UPDATE players SET last_seen = now() - interval '8 days' WHERE id = $1", [accountId]);
     expect((await accounts.recentPlayers()).some((p) => p.name === label)).toBe(false);
+  });
+
+  it('hides a bad name chosen before the filter, everywhere it would show', async () => {
+    const guest = await accounts.createGuest();
+    const { accountId } = (await accounts.forMatch(guest.token))!;
+    await accounts.joinMembers(guest.token, MEMBER_CODE);
+    await db.query("UPDATE players SET name = 'f.u.c.k', matches = 3, rating = 9000 WHERE id = $1", [accountId]);
+    expect((await accounts.forMatch(guest.token))!.save.name).toBe(DEFAULT_NAME);
+    expect((await accounts.leaderboard(100)).some((p) => p.name === 'f.u.c.k')).toBe(false);
+    expect((await accounts.recentPlayers()).some((p) => p.name === 'f.u.c.k' || p.name === DEFAULT_NAME)).toBe(false);
+  });
+
+  it('refuses a bad name through the garage', async () => {
+    const guest = await accounts.createGuest();
+    await accounts.garage(guest.token, { type: 'name', name: 'sh1t' });
+    expect((await accounts.forMatch(guest.token))!.save.name).toBe(DEFAULT_NAME);
   });
 
   it('lists only members, and joining brings their record with them', async () => {
