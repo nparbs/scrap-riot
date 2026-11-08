@@ -14,6 +14,7 @@ import { GarageView } from './render/garageView';
 import type { ArenaId } from './sim/arena';
 import { installLogoIcon } from './render/logo';
 import { MatchView } from './render/matchView';
+import { loadModels } from './render/models';
 import { batteryCost, COUNTDOWN, DEFAULT_PAINT, DUEL_INTRO, fittedPowerups, MELEE, POWERUP_CAP, withoutUpgrades } from './sim/data';
 import { emptyInput, Match, STEP, type Bot, type BotSetup, type GameEvent } from './sim/match';
 import { renderGoogleButton } from './ui/google';
@@ -1452,5 +1453,8 @@ class Game {
 }
 
 installLogoIcon();
-const game = new Game();
-if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = game;
+// Modelled parts load first so the first robot on screen already has them.
+void loadModels().then(() => {
+  const game = new Game();
+  if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = game;
+});
