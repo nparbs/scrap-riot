@@ -86,6 +86,11 @@ export class Particles {
     }
   }
 
+  clear(): void {
+    this.pool.length = 0;
+    this.mesh.count = 0;
+  }
+
   update(dt: number): void {
     for (let i = this.pool.length - 1; i >= 0; i--) {
       const p = this.pool[i];

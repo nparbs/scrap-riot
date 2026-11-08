@@ -4735,3 +4735,145 @@ html:has(.ws) .music-button {
     grid-auto-rows: auto;
   }
 }
+
+/* The replay at the end of a match: letterbox bars, a blinking tag, and the call once the kill lands. */
+.screen-replay {
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.replay-bar {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 11vh;
+  background: #000;
+  animation: replay-bar-in 0.45s ease-out both;
+}
+
+.replay-bar-top {
+  top: 0;
+  transform-origin: top;
+}
+
+.replay-bar-bottom {
+  bottom: 0;
+  transform-origin: bottom;
+}
+
+@keyframes replay-bar-in {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+.replay-tag {
+  position: absolute;
+  top: calc(11vh + 14px);
+  left: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+  font: 400 22px var(--display);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+}
+
+.replay-tag i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ff3a2a;
+  box-shadow: 0 0 10px #ff3a2a;
+  animation: replay-blink 1s steps(2, jump-none) infinite;
+}
+
+@keyframes replay-blink {
+  50% {
+    opacity: 0.15;
+  }
+}
+
+.replay-call {
+  position: absolute;
+  right: 0;
+  bottom: calc(11vh + 22px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0 16px;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.replay-call strong {
+  color: var(--accent);
+  font: 400 clamp(44px, 9vw, 96px) / 1 var(--display);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  -webkit-text-stroke: 2px #141516;
+  text-shadow: 0 4px 0 #141516, 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+.replay-call span {
+  color: #fff;
+  font: 600 clamp(15px, 2.4vw, 20px) var(--body);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+}
+
+.replay-call span i {
+  margin: 0 6px;
+  color: var(--accent);
+  font-style: normal;
+}
+
+.replay-hit .replay-call {
+  animation: replay-call-in 0.5s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+@keyframes replay-call-in {
+  from {
+    opacity: 0;
+    transform: scale(2.2) rotate(-4deg);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.replay-skip {
+  position: absolute;
+  right: 18px;
+  bottom: max(6px, calc(5.5vh - 15px));
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font: 600 13px var(--body);
+  cursor: pointer;
+}
+
+.replay-skip i {
+  font-style: normal;
+  font-size: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .replay-bar,
+  .replay-tag i,
+  .replay-hit .replay-call {
+    animation: none;
+  }
+
+  .replay-hit .replay-call {
+    opacity: 1;
+  }
+}
