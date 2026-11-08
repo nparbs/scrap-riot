@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { decodeSkin, ERASED, SKIN_PANELS, SKIN_SIZE, type PanelId } from '../game/skin';
+import { modelPart } from './models';
 import { classBonus, DEFAULT_PAINT, MELEE, PAINT_COLORS, type BodyId, type ChassisId, type DefenseId, type MeleeId, type Paint, type PatternId, type WheelsId } from '../sim/data';
 
 export interface RobotBuild {
@@ -85,6 +86,21 @@ const glueTip = new THREE.MeshStandardMaterial({ color: 0xffdb3a, metalness: 0.2
 const tyreBlock = new THREE.MeshStandardMaterial({ color: 0x17191c, metalness: 0.1, roughness: 0.95 });
 const trackLink = new THREE.MeshStandardMaterial({ color: 0x34383d, metalness: 0.7, roughness: 0.6 });
 const shared = new Set<THREE.Material>([steel, dark, blade, hot, copper, paintRed, warhead, glowBlue, glowRed, glowGreen, glowViolet, glowWhite, oilBlack, oilTip, glueTank, glueTip, tyreBlock, trackLink]);
+
+/** Which of the materials above paints each look named in the modelled parts (art/*.py). */
+const LOOKS: Record<string, THREE.Material> = { dark, steel, blade, copper, red: paintRed, bolt: steel, band: warhead, body: dark, boss: dark, face: steel };
+
+/** A part modelled in Blender, or null if it didn't load and the built shape should be used. */
+function modelled(name: Parameters<typeof modelPart>[0]): THREE.Group | null {
+  return modelPart(name, LOOKS, dark);
+}
+
+/** Adds a part modelled in Blender, or runs `fallback` to build the old shape if it didn't load. */
+function addModelled(parent: THREE.Object3D, name: Parameters<typeof modelPart>[0], fallback: () => void): void {
+  const part = modelled(name);
+  if (part) parent.add(part);
+  else fallback();
+}
 
 function box(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -1396,13 +1412,16 @@ const FLAIL_SPIN = 24;
 const SPEAR_THRUST = 1.5;
 const SPEAR_RETURN = 0.28;
 
+/** How wide art/drum_body.py models the drum. */
+const DRUM_MODEL_WIDTH = 1.26;
+
 function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: number): BuiltMelee {
   switch (id) {
     case 'chainsaw':
       return buildChainsaw(pivot);
     case 'drill': {
       // A motor and chuck, then a tapered bit with two flutes winding down it to the point.
-      pivot.add(turned([[0, -0.05], [0.3, -0.05], [0.34, 0], [0.34, 0.3], [0.27, 0.36], [0.27, 0.42], [0.2, 0.48], [0, 0.48]], dark));
+      addModelled(pivot, 'drillMotor', () => pivot.add(turned([[0, -0.05], [0.3, -0.05], [0.34, 0], [0.34, 0.3], [0.27, 0.36], [0.27, 0.42], [0.2, 0.48], [0, 0.48]], dark)));
       const bit = new THREE.Group();
       bit.position.z = 0.46;
       bit.add(turned([[0, 0], [0.2, 0], [0.22, 0.08], [0.18, 0.3], [0.12, 0.7], [0.05, 1.1], [0, 1.28]], steel));
@@ -1421,10 +1440,12 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: numb
     }
     case 'flamethrower':
       // A nozzle flaring at the end of a pipe, with a fuel line and a pilot light beneath it.
-      pivot.add(sideOn([[-0.08, -0.14], [0.2, -0.1], [0.24, 0.1], [-0.08, 0.14]], 0.34, dark, 0.02));
-      // Closed at both ends, with a shallow bore inside the mouth, or you'd see straight through it.
-      pivot.add(turned([[0, 0], [0.09, 0], [0.09, 1.15], [0.11, 1.22], [0.19, 1.45], [0.19, 1.5], [0.13, 1.5], [0.08, 1.34], [0, 1.34]], dark, 0, 0.06));
-      pivot.add(turned([[0.12, 0.28], [0.12, 0.36], [0, 0.36]], steel, 0, 0.06), turned([[0.12, 0.8], [0.12, 0.88], [0, 0.88]], steel, 0, 0.06));
+      addModelled(pivot, 'flameBody', () => {
+        pivot.add(sideOn([[-0.08, -0.14], [0.2, -0.1], [0.24, 0.1], [-0.08, 0.14]], 0.34, dark, 0.02));
+        // Closed at both ends, with a shallow bore inside the mouth, or you'd see straight through it.
+        pivot.add(turned([[0, 0], [0.09, 0], [0.09, 1.15], [0.11, 1.22], [0.19, 1.45], [0.19, 1.5], [0.13, 1.5], [0.08, 1.34], [0, 1.34]], dark, 0, 0.06));
+        pivot.add(turned([[0.12, 0.28], [0.12, 0.36], [0, 0.36]], steel, 0, 0.06), turned([[0.12, 0.8], [0.12, 0.88], [0, 0.88]], steel, 0, 0.06));
+      });
       pivot.add(tube([[0.15, -0.06, -0.05], [0.15, -0.05, 0.5], [0.05, -0.04, 1.1]], 0.022, copper, false, 12));
       {
         const pilot = turned([[0, -0.06], [0.03, -0.06], [0.03, 0.02], [0.016, 0.08], [0, 0.1]], hot, 1.38, 0.06);
@@ -1441,8 +1462,10 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: numb
       }
     case 'tesla': {
       // A coil lying along the nose and pointing the way the bolt goes, with a polished ring at the front.
-      pivot.add(sideOn([[-0.08, -0.13], [0.2, -0.13], [0.3, -0.06], [0.3, 0.1], [0.2, 0.16], [-0.08, 0.16]], 0.4, dark, 0.02));
-      pivot.add(turned([[0, 0.26], [0.2, 0.26], [0.24, 0.32], [0.16, 0.38], [0, 0.38]], dark, 0, 0.02));
+      addModelled(pivot, 'teslaBase', () => {
+        pivot.add(sideOn([[-0.08, -0.13], [0.2, -0.13], [0.3, -0.06], [0.3, 0.1], [0.2, 0.16], [-0.08, 0.16]], 0.4, dark, 0.02));
+        pivot.add(turned([[0, 0.26], [0.2, 0.26], [0.24, 0.32], [0.16, 0.38], [0, 0.38]], dark, 0, 0.02));
+      });
       const stack = new THREE.Group();
       stack.position.set(0, 0.02, 0.4);
       for (let i = 0; i < 5; i++) {
@@ -1473,7 +1496,7 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: numb
     }
     case 'spear':
       // A pneumatic cylinder with a long barbed spike that fires out of it.
-      pivot.add(turned([[0, -0.1], [0.18, -0.1], [0.2, -0.06], [0.2, 0.42], [0.15, 0.46], [0, 0.46]], dark));
+      addModelled(pivot, 'spearBody', () => pivot.add(turned([[0, -0.1], [0.18, -0.1], [0.2, -0.06], [0.2, 0.42], [0.15, 0.46], [0, 0.46]], dark)));
       {
         // It telescopes: a sleeve comes part of the way, and the spike runs out through it.
         const sleeve = turned([[0.1, -0.08], [0.1, 0.92], [0.08, 0.95], [0, 0.95]], dark);
@@ -1497,10 +1520,11 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: numb
       // A mount and crossguard, then a long double-edged spike with a dark fuller down the middle.
       pivot.add(sideOn([[-0.08, -0.14], [0.2, -0.1], [0.24, 0.1], [-0.08, 0.14]], 0.3, dark, 0.02));
       const spike = new THREE.Group();
-      spike.add(rod([-0.28, 0, 0.26], [0.28, 0, 0.26], 0.05, steel, 12));
-      spike.add(topOn([[-0.16, 0.26], [0.16, 0.26], [0.13, 1.1], [0, 1.72], [-0.13, 1.1]], 0.05, blade, 0.022));
-      const fuller = topOn([[-0.035, 0.3], [0.035, 0.3], [0.02, 1.1], [-0.02, 1.1]], 0.075, dark, 0);
-      spike.add(fuller);
+      addModelled(spike, 'daggerBlade', () => {
+        spike.add(rod([-0.28, 0, 0.26], [0.28, 0, 0.26], 0.05, steel, 12));
+        spike.add(topOn([[-0.16, 0.26], [0.16, 0.26], [0.13, 1.1], [0, 1.72], [-0.13, 1.1]], 0.05, blade, 0.022));
+        spike.add(topOn([[-0.035, 0.3], [0.035, 0.3], [0.02, 1.1], [-0.02, 1.1]], 0.075, dark, 0));
+      });
       pivot.add(spike);
       // Sprung, so it pushes out as the robot charges. Reach in the rules doesn't change.
       return {
@@ -1516,15 +1540,17 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: numb
       forkArms(pivot, 0.76, 0.7);
       const drum = new THREE.Group();
       drum.position.z = 0.7;
-      const roller = cylinder(0.38, 1.34, steel);
-      roller.rotation.z = Math.PI / 2;
-      drum.add(roller);
-      for (const side of [-1, 1]) {
-        const flange = cylinder(0.43, 0.06, dark);
-        flange.rotation.z = Math.PI / 2;
-        flange.position.x = side * 0.66;
-        drum.add(flange);
-      }
+      addModelled(drum, 'rollerBody', () => {
+        const roller = cylinder(0.38, 1.34, steel);
+        roller.rotation.z = Math.PI / 2;
+        drum.add(roller);
+        for (const side of [-1, 1]) {
+          const flange = cylinder(0.43, 0.06, dark);
+          flange.rotation.z = Math.PI / 2;
+          flange.position.x = side * 0.66;
+          drum.add(flange);
+        }
+      });
       for (let row = 0; row < 3; row++) {
         for (let i = 0; i < 8; i++) {
           const a = ((i + row * 0.5) / 8) * Math.PI * 2;
@@ -1543,7 +1569,8 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: numb
       pivot.add(rod([0, 0, 0.04], [0, 0, 1.85], 0.055, steel, 12));
       pivot.add(turned([[0.075, 0.1], [0.075, 0.5], [0.06, 0.52]], dark));
       piston(pivot, [0, -0.3, -0.05], [0, -0.03, 0.8], 0.05);
-      const head = new THREE.Mesh(smoothed(new THREE.LatheGeometry([[0, -0.46], [0.2, -0.46], [0.25, -0.42], [0.2, -0.33], [0.2, 0.33], [0.25, 0.42], [0.2, 0.46], [0, 0.46]].map(([r, h]) => new THREE.Vector2(Math.max(r, 0.0001), h)), 8), 0.5), dark);
+      // The head modelled in Blender (art/hammer_head.py), or a plain turned one if that didn't load.
+      const head = modelled('hammerHead') ?? new THREE.Mesh(smoothed(new THREE.LatheGeometry([[0, -0.46], [0.2, -0.46], [0.25, -0.42], [0.2, -0.33], [0.2, 0.33], [0.25, 0.42], [0.2, 0.46], [0, 0.46]].map(([r, h]) => new THREE.Vector2(Math.max(r, 0.0001), h)), 8), 0.5), dark);
       head.position.z = 1.85;
       head.castShadow = true;
       pivot.add(head);
@@ -1561,13 +1588,19 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: numb
       head.quadraticCurveTo(1.78, -0.26, 2.02, -0.42);
       head.quadraticCurveTo(1.72, -0.74, 1.08, -0.7);
       head.quadraticCurveTo(1.3, -0.36, 1.22, -0.08);
-      pivot.add(sideOn(head, 0.075, blade, 0.03, 10));
-      pivot.add(topOn([[-0.06, 1.22], [0.06, 1.22], [0.06, 1.62], [-0.06, 1.62]], 0.2, dark, 0.012));
+      // The head modelled in Blender (art/axe_head.py), or a flat one if that didn't load.
+      const modelledHead = modelled('axeHead');
+      if (modelledHead) pivot.add(modelledHead);
+      else {
+        pivot.add(sideOn(head, 0.075, blade, 0.03, 10));
+        pivot.add(topOn([[-0.06, 1.22], [0.06, 1.22], [0.06, 1.62], [-0.06, 1.62]], 0.2, dark, 0.012));
+      }
       return { spinner: null, axis: 'x' };
     }
     case 'ram': {
       // A chamfered plate on two rams, with three turned spikes.
-      pivot.add(frontOn([[-0.78, -0.12], [-0.78, 0.12], [-0.6, 0.24], [0.6, 0.24], [0.78, 0.12], [0.78, -0.12], [0.6, -0.24], [-0.6, -0.24]], 0.14, steel, 0.025));
+      // The plate modelled in Blender (art/ram_plate.py), or a plain one if that didn't load.
+      pivot.add(modelled('ramPlate') ?? frontOn([[-0.78, -0.12], [-0.78, 0.12], [-0.6, 0.24], [0.6, 0.24], [0.78, 0.12], [0.78, -0.12], [0.6, -0.24], [-0.6, -0.24]], 0.14, steel, 0.025));
       for (const side of [-1, 1]) piston(pivot, [side * 0.45, 0, -0.45], [side * 0.45, 0, 0.0], 0.08);
       for (const x of [-0.52, 0, 0.52]) {
         pivot.add(turned([[0.17, 0.05], [0.17, 0.13], [0.11, 0.2], [0.05, 0.62], [0, 0.82]], blade, 0, 0, x));
@@ -1606,17 +1639,19 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: numb
     }
     case 'magnet': {
       // A red horseshoe with steel pole tips, wound with coils and carried on a bracket.
-      const bend = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.16, 12, 24, Math.PI), paintRed);
-      bend.rotation.x = -Math.PI / 2;
-      bend.position.z = 0.56;
-      bend.castShadow = true;
-      pivot.add(bend);
-      for (const side of [-1, 1]) {
-        pivot.add(turned([[0.16, 0], [0.16, 0.42]], paintRed, 0.56, 0, side * 0.5));
-        pivot.add(turned([[0.17, 0], [0.17, 0.2], [0.14, 0.24], [0, 0.24]], steel, 0.98, 0, side * 0.5));
-        for (const z of [0.62, 0.72, 0.82]) pivot.add(turned([[0.175, 0], [0.175, 0.06]], copper, z, 0, side * 0.5));
-      }
-      pivot.add(sideOn([[-0.1, -0.1], [0.2, -0.09], [0.2, 0.09], [-0.1, 0.1]], 0.24, dark, 0.02));
+      addModelled(pivot, 'magnetBody', () => {
+        const bend = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.16, 12, 24, Math.PI), paintRed);
+        bend.rotation.x = -Math.PI / 2;
+        bend.position.z = 0.56;
+        bend.castShadow = true;
+        pivot.add(bend);
+        for (const side of [-1, 1]) {
+          pivot.add(turned([[0.16, 0], [0.16, 0.42]], paintRed, 0.56, 0, side * 0.5));
+          pivot.add(turned([[0.17, 0], [0.17, 0.2], [0.14, 0.24], [0, 0.24]], steel, 0.98, 0, side * 0.5));
+          for (const z of [0.62, 0.72, 0.82]) pivot.add(turned([[0.175, 0], [0.175, 0.06]], copper, z, 0, side * 0.5));
+        }
+        pivot.add(sideOn([[-0.1, -0.1], [0.2, -0.09], [0.2, 0.09], [-0.1, 0.1]], 0.24, dark, 0.02));
+      });
       // Rings of force drawn in toward the poles while it's on.
       const rings: THREE.Mesh[] = [];
       for (let i = 0; i < 3; i++) {
@@ -1653,11 +1688,13 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: numb
       const bar = new THREE.Group();
       bar.position.set(0, 0.3, 1);
       // Thick at the hub and tapering out, with a hardened hammer block on each end.
-      bar.add(sideOn([[-0.17, -0.2], [-0.13, -0.7], [-0.22, -0.96], [0.2, -1.05], [0.17, -0.25], [0.17, 0.2], [0.13, 0.7], [0.22, 0.96], [-0.2, 1.05], [-0.17, 0.25]], 0.17, steel, 0.02));
-      for (const end of [-1, 1]) {
-        bar.add(sideOn(end > 0 ? [[-0.2, 0.78], [0.26, 0.82], [0.28, 0.98], [-0.24, 1.08]] : [[0.2, -0.78], [-0.26, -0.82], [-0.28, -0.98], [0.24, -1.08]], 0.24, blade, 0.02));
-      }
-      bar.add(axle(0.2, 0.3, dark));
+      addModelled(bar, 'vertbarBar', () => {
+        bar.add(sideOn([[-0.17, -0.2], [-0.13, -0.7], [-0.22, -0.96], [0.2, -1.05], [0.17, -0.25], [0.17, 0.2], [0.13, 0.7], [0.22, 0.96], [-0.2, 1.05], [-0.17, 0.25]], 0.17, steel, 0.02));
+        for (const end of [-1, 1]) {
+          bar.add(sideOn(end > 0 ? [[-0.2, 0.78], [0.26, 0.82], [0.28, 0.98], [-0.24, 1.08]] : [[0.2, -0.78], [-0.26, -0.82], [-0.28, -0.98], [0.24, -1.08]], 0.24, blade, 0.02));
+        }
+        bar.add(axle(0.2, 0.3, dark));
+      });
       pivot.add(bar);
       return { spinner: bar, axis: 'x' };
     }
@@ -1665,12 +1702,13 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: numb
       pivot.add(sideOn([[-0.05, -0.1], [0.5, -0.02], [0.82, 0.08], [0.82, 0.14], [0.3, 0.22], [-0.05, 0.2]], 0.44, dark, 0.03));
       const bar = new THREE.Group();
       bar.position.set(0, 0.28, 0.72);
-      bar.add(topOn([[-1.5, -0.22], [-0.4, -0.15], [0.4, -0.2], [1.5, -0.06], [1.5, 0.22], [0.4, 0.15], [-0.4, 0.2], [-1.5, 0.06]], 0.11, steel, 0.02));
-      for (const end of [-1, 1]) {
-        bar.add(topOn(end > 0 ? [[1.08, -0.1], [1.52, -0.08], [1.56, 0.28], [1.1, 0.22]] : [[-1.08, 0.1], [-1.52, 0.08], [-1.56, -0.28], [-1.1, -0.22]], 0.17, blade, 0.02));
-      }
-      const hub = cylinder(0.25, 0.24, dark);
-      bar.add(hub);
+      addModelled(bar, 'horizbarBar', () => {
+        bar.add(topOn([[-1.5, -0.22], [-0.4, -0.15], [0.4, -0.2], [1.5, -0.06], [1.5, 0.22], [0.4, 0.15], [-0.4, 0.2], [-1.5, 0.06]], 0.11, steel, 0.02));
+        for (const end of [-1, 1]) {
+          bar.add(topOn(end > 0 ? [[1.08, -0.1], [1.52, -0.08], [1.56, 0.28], [1.1, 0.22]] : [[-1.08, 0.1], [-1.52, 0.08], [-1.56, -0.28], [-1.1, -0.22]], 0.17, blade, 0.02));
+        }
+        bar.add(cylinder(0.25, 0.24, dark));
+      });
       pivot.add(bar);
       return { spinner: bar, axis: 'y' };
     }
@@ -1686,10 +1724,18 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: numb
       forkArms(pivot, width / 2 + 0.08, 0.68, 0);
       const drum = new THREE.Group();
       drum.position.set(0, 0, 0.68);
-      const body = new THREE.Mesh(smoothed(new THREE.LatheGeometry([[0.02, -width / 2], [0.3, -width / 2], [0.36, -width / 2 + 0.06], [0.36, width / 2 - 0.06], [0.3, width / 2], [0.02, width / 2]].map(([r, h]) => new THREE.Vector2(r, h)), ROUND_SIDES), 0.6), steel);
-      body.rotation.z = Math.PI / 2;
-      body.castShadow = true;
-      drum.add(body);
+      // The barrel modelled in Blender (art/drum_body.py) at the brawler's width and stretched to fit,
+      // or a plain turned one if that didn't load.
+      const barrel = modelled('drumBody');
+      if (barrel) {
+        barrel.scale.x = width / DRUM_MODEL_WIDTH;
+        drum.add(barrel);
+      } else {
+        const body = new THREE.Mesh(smoothed(new THREE.LatheGeometry([[0.02, -width / 2], [0.3, -width / 2], [0.36, -width / 2 + 0.06], [0.36, width / 2 - 0.06], [0.3, width / 2], [0.02, width / 2]].map(([r, h]) => new THREE.Vector2(r, h)), ROUND_SIDES), 0.6), steel);
+        body.rotation.z = Math.PI / 2;
+        body.castShadow = true;
+        drum.add(body);
+      }
       // Hardened teeth, staggered so one is always about to bite.
       const count = 6;
       for (let i = 0; i < count; i++) {
