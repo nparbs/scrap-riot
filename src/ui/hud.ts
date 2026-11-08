@@ -1,4 +1,4 @@
-import { sawPos, TRAP_NAMES, trapdoorOpen } from '../sim/arena';
+import { hillAt, hillIndex, hillMovesIn, HILL_WARN, nextHill, sawPos, TRAP_NAMES, trapdoorOpen } from '../sim/arena';
 import { pickLastWords } from '../game/lastWords';
 import { healthColor, type Palette } from '../game/palette';
 import { keyLabel, type Action, type Bindings } from '../game/settings';
@@ -52,6 +52,11 @@ export class Hud {
   private armorFill!: HTMLElement;
   private rivalArmor!: HTMLElement;
   private readonly timer: HTMLElement;
+  /** King of the Hill: when the zone moves, and whether you're scoring. */
+  private readonly zone: HTMLElement;
+  private readonly zoneCount: HTMLElement;
+  private readonly zoneState: HTMLElement;
+  private lastHill = -1;
   private readonly board: HTMLElement;
   private readonly feed: HTMLElement;
   private readonly center: HTMLElement;
@@ -122,6 +127,7 @@ export class Hud {
         <div class="hud-effects"></div>
       </div>
       <div class="hud-timer"></div>
+      <div class="hud-zone" hidden><b class="hud-zone-count"></b><small class="hud-zone-state"></small></div>
       <div class="hud-ping"></div>
       <div class="hud-mode">${escapeText(match.arena.name)} · ${MODES[match.mode].name}</div>
       <div class="hud-arrow"></div>
@@ -181,6 +187,9 @@ export class Hud {
     this.armorFill = q('[data-armor]');
     this.rivalArmor = q('[data-rival-armor]');
     this.timer = q('.hud-timer');
+    this.zone = q('.hud-zone');
+    this.zoneCount = q('.hud-zone-count');
+    this.zoneState = q('.hud-zone-state');
     this.ping = q('.hud-ping');
     this.blind = q('.hud-blind');
     this.battery = q('[data-battery]');
@@ -446,6 +455,7 @@ export class Hud {
     const left = Math.ceil(match.timeLeft);
     this.setText(this.timer, `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`);
     this.timer.classList.toggle('hud-timer-low', left <= 15);
+    if (match.mode === 'koth') this.updateZone();
 
     const money = Math.round(player.earned);
     if (money !== this.lastMoney) {
@@ -516,6 +526,32 @@ export class Hud {
   }
 
   /** Writing text makes the browser lay the page out again, even when the text is the same. */
+  /** Counts down to the zone moving, flashes for the last few seconds, and says so when it has. */
+  private updateZone(): void {
+    const { match, player } = this;
+    this.zone.hidden = match.countdown > 0;
+    const index = hillIndex(match.arena, match.time);
+    if (this.lastHill >= 0 && index !== this.lastHill) {
+      this.zone.classList.remove('hud-zone-moved');
+      // Restarts the animation for every move.
+      void this.zone.offsetWidth;
+      this.zone.classList.add('hud-zone-moved');
+    }
+    this.lastHill = index;
+    const moved = this.zone.classList.contains('hud-zone-moved') && hillMovesIn(match.time) > 30 - 2;
+    const until = Math.ceil(hillMovesIn(match.time));
+    // The last move would come after the final whistle, so there's nothing to count down to.
+    const last = match.timeLeft < hillMovesIn(match.time);
+    this.setText(this.zoneCount, moved ? 'Zone moved!' : last ? 'Final zone' : `Zone moves in 0:${String(until).padStart(2, '0')}`);
+    this.zone.classList.toggle('hud-zone-warn', !moved && !last && hillMovesIn(match.time) <= HILL_WARN);
+    const hill = hillAt(match.arena, match.time);
+    const inside = (bot: Bot) => bot.alive && Math.hypot(bot.x - hill.x, bot.z - hill.z) < hill.r;
+    const sharing = match.bots.filter(inside).length;
+    const state = !inside(player) ? 'Get to the zone' : sharing > 1 ? `Contested · +${(1 / sharing).toFixed(1)} pts/s` : 'Holding · +1 pt/s';
+    this.setText(this.zoneState, state);
+    this.zone.classList.toggle('hud-zone-holding', inside(player));
+  }
+
   private setText(el: HTMLElement, text: string): void {
     if (el.textContent !== text) el.textContent = text;
   }
@@ -677,11 +713,23 @@ export class Hud {
       g.fillRect(toX(block.x) - (block.w * scale) / 2, toY(block.z) - (block.d * scale) / 2, block.w * scale, block.d * scale);
     }
     if (this.match.mode === 'koth') {
+      const hill = hillAt(arena, this.match.time);
+      g.fillStyle = 'rgba(255, 210, 58, 0.28)';
       g.strokeStyle = '#ffd23a';
       g.lineWidth = 2;
       g.beginPath();
-      g.arc(toX(arena.hill.x), toY(arena.hill.z), arena.hill.r * scale, 0, Math.PI * 2);
+      g.arc(toX(hill.x), toY(hill.z), hill.r * scale, 0, Math.PI * 2);
+      g.fill();
       g.stroke();
+      // Where it goes next, blinking, for the last few seconds before it moves.
+      if (hillMovesIn(this.match.time) <= HILL_WARN && Math.floor(this.match.time * 4) % 2 === 0) {
+        const next = nextHill(arena, this.match.time);
+        g.setLineDash([4, 3]);
+        g.beginPath();
+        g.arc(toX(next.x), toY(next.z), next.r * scale, 0, Math.PI * 2);
+        g.stroke();
+        g.setLineDash([]);
+      }
     }
     g.fillStyle = '#e84a3a';
     for (const saw of arena.saws) {

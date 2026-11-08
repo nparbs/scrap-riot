@@ -1501,14 +1501,16 @@ export function buildArena(def: ArenaDef): ArenaScene {
   }
 
   // The King of the Hill zone. Only shown in that mode.
-  const zoneColor = 0xfff1dc;
+  // Built a unit across and scaled to whichever zone is live, since it moves during the match.
+  const zoneColor = 0xffe08a;
   const hill = new THREE.Mesh(
-    new THREE.RingGeometry(def.hill.r - 0.3, def.hill.r, 48),
-    new THREE.MeshBasicMaterial({ color: zoneColor, transparent: true, opacity: 0.9, side: THREE.DoubleSide, toneMapped: false }),
+    new THREE.RingGeometry(0.95, 1, 64),
+    new THREE.MeshBasicMaterial({ color: zoneColor, transparent: true, opacity: 0.95, side: THREE.DoubleSide, toneMapped: false }),
   );
-  hill.add(new THREE.Mesh(new THREE.CircleGeometry(def.hill.r - 0.3, 48), new THREE.MeshBasicMaterial({ color: zoneColor, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false, toneMapped: false })));
+  hill.add(new THREE.Mesh(new THREE.CircleGeometry(0.95, 64), new THREE.MeshBasicMaterial({ color: zoneColor, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false, toneMapped: false })));
   hill.rotation.x = -Math.PI / 2;
-  hill.position.set(def.hill.x, 0.05, def.hill.z);
+  hill.position.set(def.hills[0].x, 0.05, def.hills[0].z);
+  hill.scale.set(def.hills[0].r, def.hills[0].r, 1);
   hill.visible = false;
   scene.add(hill);
 

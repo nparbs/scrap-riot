@@ -895,7 +895,7 @@ function rollMoney(el: HTMLElement, money: number): void {
   requestAnimationFrame(step);
 }
 
-export function resultsScreen(standings: Standing[], playerId: number, onContinue: () => void, note = '', drawn = false): HTMLElement {
+export function resultsScreen(standings: Standing[], playerId: number, onContinue: () => void, note = '', drawn = false, koth = false): HTMLElement {
   const mine = standings.find((s) => s.bot.id === playerId)!;
   const el = document.createElement('div');
   el.className = 'screen screen-results';
@@ -903,7 +903,7 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
   const headline = drawn ? 'A draw.' : mine.place === 1 ? 'Last bot rolling!' : duel ? 'Scrapped.' : mine.place <= 3 ? 'Still in one piece.' : 'Back to the scrapyard.';
   const rows = standings
     .map(
-      (s) => `<tr class="${s.bot.id === playerId ? 'row-me' : ''}"><td>${s.place}</td><td>${escapeText(s.bot.name)}</td><td>${s.bot.kills}</td><td>${s.bot.assists}</td><td>${s.bot.deaths}</td><td>${Math.round(s.bot.damageDealt)}</td><td>$${s.total}</td></tr>`,
+      (s) => `<tr class="${s.bot.id === playerId ? 'row-me' : ''}"><td>${s.place}</td><td>${escapeText(s.bot.name)}</td>${koth ? `<td class="results-points">${Math.floor(s.bot.hillScore)}</td>` : ''}<td>${s.bot.kills}</td><td>${s.bot.assists}</td><td>${s.bot.deaths}</td><td>${Math.round(s.bot.damageDealt)}</td><td>$${s.total}</td></tr>`,
     )
     .join('');
   el.innerHTML = `
@@ -911,7 +911,7 @@ export function resultsScreen(standings: Standing[], playerId: number, onContinu
       <h2>${headline}</h2>
       ${note ? `<p class="payout"><small>${escapeText(note)}</small></p>` : `<p class="payout">You earned <b>$${mine.total}</b> <small>($${Math.round(mine.bot.earned)} in battle + $${mine.bonus} bonus)${mine.total > Math.round(mine.bot.earned + mine.bonus) ? `. Every finished match pays at least $${REWARD.minimum}.` : ''}</small></p>`}
       <table class="results">
-        <thead><tr><th>#</th><th>Robot</th><th>Kills</th><th>Assists</th><th>Deaths</th><th>Damage</th><th>Payout</th></tr></thead>
+        <thead><tr><th>#</th><th>Robot</th>${koth ? '<th>Points</th>' : ''}<th>Kills</th><th>Assists</th><th>Deaths</th><th>Damage</th><th>Payout</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       <button class="btn btn-primary" data-continue>Back to the workshop</button>

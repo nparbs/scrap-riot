@@ -134,8 +134,8 @@ describe('gun-style weapons', () => {
   const build = (melee: MeleeId, rearMelee = false, chassis: ChassisId = 'brawler') =>
     buildRobot({ chassis, melee, defense: 'shield', color: 0xff8a2a, rearMelee });
 
-  it('are the flamethrower and the spear', () => {
-    expect(GUNS.sort()).toEqual(['flamethrower', 'spear']);
+  it('are the flail, the flamethrower and the spear', () => {
+    expect(GUNS.sort()).toEqual(['flail', 'flamethrower', 'spear']);
   });
 
   it('leave the tesla coil out, which points forward from the nose', () => {

@@ -3,7 +3,7 @@
 export type ChassisId = 'scout' | 'ghost' | 'brawler' | 'rhino' | 'juggernaut';
 export type MeleeId =
   | 'chainsaw' | 'drill' | 'dagger' | 'rollingpin' | 'hammer' | 'axe' | 'ram' | 'claw' | 'magnet'
-  | 'vertdisc' | 'vertbar' | 'horizbar' | 'undercutter' | 'drum' | 'hammersaw' | 'flipper' | 'crusher' | 'forks'
+  | 'vertdisc' | 'vertbar' | 'horizbar' | 'undercutter' | 'drum' | 'flail' | 'flipper' | 'crusher' | 'forks'
   | 'flamethrower' | 'tesla' | 'spear';
 export type DefenseId =
   | 'shield' | 'mines' | 'oil' | 'glue' | 'spikes' | 'steelram' | 'plow'
@@ -78,7 +78,7 @@ export const ARMOUR_REGEN_DELAY = 5;
 export const CLASSES: Record<ChassisId, ChassisClass> = {
   scout: { role: 'Striker', weapons: ['dagger', 'axe', 'drum', 'undercutter'], bonus: { ...NO_BONUS, damage: 1.2, reload: 0.8 }, armourRegen: 8, movingTarget: 0.25 },
   ghost: { role: 'Lancer', weapons: ['flamethrower', 'tesla', 'spear'], bonus: { ...NO_BONUS, damage: 1.1, battery: 0.6, reach: 1.15 } },
-  brawler: { role: 'Brawler', weapons: ['chainsaw', 'drill', 'rollingpin', 'hammersaw'], bonus: { ...NO_BONUS, damage: 1.15, battery: 0.85 } },
+  brawler: { role: 'Brawler', weapons: ['chainsaw', 'drill', 'rollingpin', 'flail'], bonus: { ...NO_BONUS, damage: 1.15, battery: 0.85 } },
   rhino: { role: 'Bulldozer', weapons: ['ram', 'claw', 'forks', 'flipper', 'magnet'], bonus: { ...NO_BONUS, damage: 1.1, reload: 0.9, grip: 1.2 } },
   juggernaut: { role: 'Titan', weapons: ['hammer', 'crusher', 'vertdisc', 'vertbar', 'horizbar'], bonus: { ...NO_BONUS, damage: 1.15, reload: 0.9 } },
 };
@@ -282,8 +282,8 @@ export interface MeleeDef {
   launch?: number;
   /** Hits land the target upside down, helpless until it rights itself. */
   flips?: boolean;
-  /** A hammer-saw's blade: damage per second to whatever is under it while the key is held. */
-  saw?: number;
+  /** Strikes all the way round and throws each robot straight away from it, rather than ahead. */
+  sweep?: boolean;
   /** What it costs out of the robot's points. Stronger weapons cost more. */
   points: number;
   /** In kg. Bigger weapons need a bigger chassis, and slow the robot down. */
@@ -325,7 +325,7 @@ export const MELEE: Record<MeleeId, MeleeDef> = {
   horizbar: melee({ name: 'Horizontal Bar', type: 'Horizontal spinner', blurb: 'A wide, heavy sweep that swats robots across the roof.', price: 800, points: 30, weight: 38, kind: 'spinner', range: 3.4, arc: 0.75, damage: 48, cooldown: 1.4, windup: 0.75, knockback: 14, powerUse: 0.7 }),
   undercutter: melee({ name: 'Undercutter', type: 'Horizontal spinner', blurb: 'A low blade that goes for the wheels, leaving them crawling.', price: 450, points: 18, weight: 20, kind: 'spinner', range: 2.9, arc: 0.8, damage: 28, cooldown: 0.9, windup: 0.45, knockback: 10, slow: 0.7, powerUse: 0.8 }),
   drum: melee({ name: 'Drum', type: 'Drum', blurb: 'Spins up fast and bites often, popping robots off the ground.', price: 500, points: 18, weight: 20, kind: 'spinner', range: 2.6, arc: 0.55, damage: 24, cooldown: 0.5, windup: 0.25, knockback: 8, launch: 0.3, pierce: 0.2, powerUse: 0.7 }),
-  hammersaw: melee({ name: 'Hammer Saw', type: 'Hammer saw', blurb: 'Slams a spinning blade down, then keeps cutting while you hold.', price: 750, points: 20, weight: 34, kind: 'strike', range: 3.0, arc: 0.5, damage: 24, cooldown: 1.7, windup: 0.15, stun: 0.4, knockback: 5, saw: 18, pierce: 0.3 }),
+  flail: melee({ name: 'Flail', type: 'Flail', blurb: 'A spiked ball on a chain, whirled right round the robot. It hits everything around you, front, back and sides, and flings them away.', price: 750, points: 20, weight: 30, kind: 'strike', range: 3.6, arc: 3.15, damage: 26, cooldown: 1.6, windup: 0.3, stun: 0.15, knockback: 18, sweep: true, onTower: true, pierce: 0.2 }),
   flipper: melee({ name: 'Pneumatic Flipper', type: 'Flipper', blurb: 'Hurls robots through the air, and they land upside down until they right themselves. Little damage, but deadly near an edge. Hungry for battery, though a miss reloads quickly.', price: 600, points: 8, weight: 36, kind: 'strike', range: 2.8, arc: 0.55, damage: 14, cooldown: 3.5, windup: 0.05, stun: 0.3, knockback: 12, launch: 0.55, flips: true, powerUse: 0.7, missReload: 1 }),
   crusher: melee({ name: 'Hydraulic Crusher', type: 'Crusher', blurb: 'Bites through armor and holds on. Enormous damage if you can catch them.', price: 900, points: 35, weight: 46, kind: 'claw', range: 2.9, arc: 0.45, damage: 60, cooldown: 4, windup: 1.6, pierce: 0.6 }),
   forks: melee({ name: 'Lifting Forks', type: 'Lifter', blurb: 'Scoop a robot up and drive it wherever you like. Almost no damage.', price: 300, points: 16, weight: 20, kind: 'claw', range: 3.1, arc: 0.6, damage: 16, cooldown: 2.5, windup: 3.5 }),
@@ -489,7 +489,8 @@ export const REWARD = {
   damage: 0.4,
   scrap: 25,
   repairPickup: 0.3,
-  hillPerSecond: 3,
+  /** For each point of King of the Hill, which is a second alone in the zone. */
+  hillPerSecond: 8,
   placement: [300, 180, 100, 50, 25, 10, 5, 0],
   /** The least anyone earns for seeing a match through to the end. */
   minimum: 100,
@@ -502,13 +503,8 @@ export const MODES: Record<ModeId, { name: string; blurb: string; duration: numb
   duel: { name: 'Duel', blurb: 'One on one, one life. Wreck them or knock them off the roof.', duration: 180 },
   ffa: { name: 'Free-for-All', blurb: 'First to 8 kills, or the most when time runs out.', duration: 150 },
   lms: { name: 'Last Robot Standing', blurb: 'One life each. Outlast everyone.', duration: 180 },
-  koth: { name: 'King of the Hill', blurb: 'Hold the zone to score, and share the points with anyone in there with you.', duration: 180 },
+  koth: { name: 'King of the Hill', blurb: 'Hold the zone for points, shared with anyone in there with you. It moves every 30 seconds. Most points when time runs out wins.', duration: 150 },
 };
-
-export const HILL_TARGET = 45;
-/** With this many robots the zone is rarely empty, so the race is shorter. */
-export const HILL_CROWD = 5;
-export const HILL_TARGET_CROWD = 30;
 /** Long enough to watch the loser come apart, and the screen go black, before the results appear. */
 export const DUEL_OUTRO = 3;
 /** Giving up has nothing to watch, so the results come sooner. */

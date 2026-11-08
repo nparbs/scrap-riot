@@ -93,7 +93,7 @@ describe.each(ARENA_ORDER)('the %s layout', (id) => {
     }
     for (const [name, c] of circles) expect(circlesTouch(def.logo, c, 0.1), `logo and ${name} ${JSON.stringify(c)}`).toBe(false);
     for (const [name, r] of rects) expect(rectTouchesCircle(r, def.logo, 0.1), `logo and ${name} ${JSON.stringify(r)}`).toBe(false);
-    expect(circlesTouch(def.logo, def.hill), 'logo and hill').toBe(false);
+    for (const hill of def.hills) expect(circlesTouch(def.logo, hill), `logo and hill ${JSON.stringify(hill)}`).toBe(false);
   });
 
   it('holes never reach the outline, which the floor is cut from', () => {
@@ -131,15 +131,35 @@ describe.each(ARENA_ORDER)('the %s layout', (id) => {
     }
   });
 
-  it('keeps the hill on solid ground, with room around any pool it surrounds', () => {
-    expect(onDeck(def, def.hill.x + def.hill.r, def.hill.z)).toBe(true);
-    expect(onDeck(def, def.hill.x - def.hill.r, def.hill.z)).toBe(true);
-    for (const c of def.pits) {
-      const centred = Math.hypot(c.x - def.hill.x, c.z - def.hill.z) < 0.01;
-      if (centred) expect(def.hill.r - c.r).toBeGreaterThan(4);
-      else expect(circlesTouch(def.hill, c, RIM)).toBe(false);
+  it('keeps every hill on solid ground, with room around any pool it surrounds', () => {
+    for (const hill of def.hills) {
+      const where = JSON.stringify(hill);
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        expect(onDeck(def, hill.x + Math.cos(a) * hill.r, hill.z + Math.sin(a) * hill.r), `${where} rim`).toBe(true);
+      }
+      for (const c of def.pits) {
+        const centred = Math.hypot(c.x - hill.x, c.z - hill.z) < 0.01;
+        if (centred) expect(hill.r - c.r).toBeGreaterThan(4);
+        else expect(circlesTouch(hill, c, RIM), `${where} and ${JSON.stringify(c)}`).toBe(false);
+      }
+      // A zone can ring a trapdoor, as the Pit's first one does, as long as there's floor left round it.
+      for (const c of def.trapdoors) {
+        const centred = Math.hypot(c.x - hill.x, c.z - hill.z) < 0.01;
+        if (centred) expect(hill.r).toBeGreaterThan(c.r);
+        else expect(circlesTouch(hill, c, RIM), `${where} and ${JSON.stringify(c)}`).toBe(false);
+      }
+      for (const c of def.pillars) expect(circlesTouch(hill, c), `${where} and pillar ${JSON.stringify(c)}`).toBe(false);
+      for (const r of [...def.blocks, ...def.chasms]) expect(rectTouchesCircle(r, hill), `${where} and ${JSON.stringify(r)}`).toBe(false);
     }
-    for (const c of def.pillars) expect(circlesTouch(def.hill, c), `pillar ${JSON.stringify(c)}`).toBe(false);
+  });
+
+  it('moves the hill somewhere well away each time', () => {
+    expect(def.hills.length).toBeGreaterThanOrEqual(3);
+    def.hills.forEach((hill, i) => {
+      const next = def.hills[(i + 1) % def.hills.length];
+      expect(Math.hypot(next.x - hill.x, next.z - hill.z), `${JSON.stringify(hill)} to ${JSON.stringify(next)}`).toBeGreaterThan(14);
+    });
   });
 
   it('is the same from either end, so no spawn is better than another by design', () => {

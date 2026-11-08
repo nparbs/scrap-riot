@@ -114,7 +114,7 @@ export function retireGuns<T extends { money: number; owned: Save['owned']; load
 /** What was paid for parts that have since gone from the game. */
 const OLD_PART_PRICES: Record<string, Record<string, number>> = {
   tower: { small: 100, medium: 0, large: 400 },
-  melee: { shell: 1000, eggbeater: 500 },
+  melee: { shell: 1000, eggbeater: 500, hammersaw: 750 },
   defense: { regen: 700, blades: 500, cutter: 500, nails: 300 },
 };
 

@@ -114,6 +114,8 @@ class Game {
   private player: Bot | null = null;
   private hud: Hud | null = null;
   private replay: ReplayOverlay | null = null;
+  /** Whether this fight's music has started, which waits for GO. */
+  private battleMusic = false;
   private net: NetClient | null = null;
   private notice = '';
   private softwareWarning = '';
@@ -216,6 +218,7 @@ class Game {
       else this.togglePause();
     });
     this.view.onEvent = (event) => this.onMatchEvent(event);
+    this.view.onZoneMove = () => this.sfx.zoneMove();
     this.painter.onChange = (skin, done) => this.onSkinChange(skin, done);
     window.setInterval(() => void this.pollOnline(), ONLINE_POLL_MS);
     for (const kind of ['keydown', 'pointerdown', 'pointermove', 'wheel', 'touchstart']) {
@@ -949,7 +952,7 @@ class Game {
     this.accumulator = 0;
     this.mode = 'match';
     this.sfx.click();
-    this.sfx.setTrack('battle');
+    this.startFightAudio(match);
     this.startDuelIntro(match, player);
     this.lastOffer = null;
     void this.pollOnline();
@@ -1014,7 +1017,10 @@ class Game {
         else match.forfeit(player.id);
       },
       onLeave: () => this.showGarage(),
-      onCountdown: (go) => this.sfx.countdown(go),
+      onCountdown: (go) => {
+        this.sfx.countdown(go);
+        if (go) this.startBattleMusic();
+      },
       onJoinQueue: (queue) => this.joinQueueFromFight(queue),
       onDismissQueue: (queue) => {
         this.dismissedQueues.add(queue);
@@ -1052,7 +1058,7 @@ class Game {
         this.setScreen(this.hud.root);
         this.keyboard.clear();
         this.mode = 'match';
-        this.sfx.setTrack('battle');
+        this.startFightAudio(match);
         this.startDuelIntro(match, player);
       },
       onOver: () => this.finishMatch(),
@@ -1100,12 +1106,14 @@ class Game {
     this.mode = 'results';
     this.endTutorial();
     this.sfx.silence();
-    this.sfx.setTrack('menu');
+    this.sfx.setTrack(null);
     if (this.training) {
       this.training = false;
+      this.sfx.setTrack('menu');
       this.showGarage();
       return;
     }
+    this.sfx.matchOver();
     const standings = match.standings();
     const mine = standings.find((s) => s.bot === player)!;
     const online = this.net !== null;
@@ -1141,13 +1149,14 @@ class Game {
         });
     }
     // The money is already banked above, so skipping or sitting through the replay changes nothing.
-    const results = resultsScreen(standings, player.id, () => this.showGarage(), note, match.drawn);
+    const results = resultsScreen(standings, player.id, () => this.showGarage(), note, match.drawn, match.mode === 'koth');
     const reveal = () => {
       this.replay?.dispose();
       this.replay = null;
       this.view.onEvent = (event) => this.onMatchEvent(event);
       if (this.mode !== 'replay') return;
       this.mode = 'results';
+      this.sfx.setTrack('menu');
       if (mine.place === 1 && !match.drawn) this.sfx.win();
       else if (!match.drawn) this.sfx.lose();
       this.setScreen(results);
@@ -1155,12 +1164,14 @@ class Game {
     const kill = match.drawn ? null : this.view.startReplay(reveal);
     if (!kill) {
       this.mode = 'results';
+      this.sfx.setTrack('menu');
       if (mine.place === 1 && !match.drawn) this.sfx.win();
       else if (!match.drawn) this.sfx.lose();
       this.setScreen(results);
       return;
     }
     this.mode = 'replay';
+    this.sfx.rewind();
     this.view.onEvent = (event) => this.replaySound(event);
     const killer = kill.event.killer >= 0 && kill.event.killer !== kill.event.victim ? match.bots[kill.event.killer]?.name ?? null : null;
     this.replay = replayOverlay(kill.event, killer, match.bots[kill.event.victim]?.name ?? '', () => this.view.skipReplay());
@@ -1196,6 +1207,26 @@ class Game {
       default:
         break;
     }
+  }
+
+  /**
+   * The music cuts out for the countdown, which a riser builds through, and comes in on GO. A duel's
+   * face-off has its own sounds, so it goes without the riser.
+   */
+  private startFightAudio(match: Match): void {
+    this.battleMusic = false;
+    if (match.countdown <= 0.5) {
+      this.startBattleMusic();
+      return;
+    }
+    this.sfx.setTrack(null);
+    if (match.mode !== 'duel') this.sfx.fightIntro(match.countdown);
+  }
+
+  private startBattleMusic(): void {
+    if (this.battleMusic) return;
+    this.battleMusic = true;
+    this.sfx.setTrack('battle');
   }
 
   private onMatchEvent(event: GameEvent): void {
@@ -1410,6 +1441,8 @@ class Game {
     this.hud?.update(dt);
     this.updateTutorial(dt);
     this.updateSounds(match, player);
+    // Joining a fight already under way misses GO, so the music starts anyway.
+    if (!this.battleMusic && match.countdown <= 0) this.startBattleMusic();
     // Online, the server announces the end of the match and onOver handles it.
     if (match.over && !net) {
       this.view.update(0, 1);

@@ -31,6 +31,7 @@ import {
   HAMMER_HIT,
   HAMMER_STUN,
   hammerClock,
+  hillAt,
   LAUNCH_AIR,
   LAUNCH_MIN_SPEED,
   LAUNCH_SPEED,
@@ -46,7 +47,6 @@ import {
   ARMOUR,
   ARMOUR_REGEN_DELAY,
   BATTERY_REGEN,
-  BATTERY_PER_POWER,
   batteryCost,
   BOOST_ACCEL,
   BOOST_DRAIN,
@@ -64,9 +64,6 @@ import {
   DUEL_OUTRO,
   FLIP_TIME,
   FORFEIT_OUTRO,
-  HILL_CROWD,
-  HILL_TARGET,
-  HILL_TARGET_CROWD,
   IDLE_DRAW,
   MATCH,
   MEGA_ABSORB,
@@ -350,7 +347,6 @@ export interface MatchOptions {
   mode?: ModeId;
   duration?: number;
   killTarget?: number;
-  hillTarget?: number;
   /** Seconds everyone waits on the start line. */
   countdown?: number;
 }
@@ -408,7 +404,6 @@ export class Match {
   readonly pickups: Pickup[] = [];
   readonly duration: number;
   readonly killTarget: number;
-  readonly hillTarget: number;
   time = 0;
   over = false;
   /** Both pilots agreed to call it off. */
@@ -432,7 +427,6 @@ export class Match {
     this.countdown = options.countdown ?? 0;
     this.duration = options.duration ?? MODES[this.mode].duration;
     this.killTarget = options.killTarget ?? MATCH.killTarget;
-    this.hillTarget = options.hillTarget ?? (setups.length >= HILL_CROWD ? HILL_TARGET_CROWD : HILL_TARGET);
     this.repairEvery = MATCH.repairInterval * Math.min(1, 4 / Math.max(1, setups.length));
     setups.forEach((setup, id) => {
       const bot = this.createBot(id, setup);
@@ -606,7 +600,6 @@ export class Match {
   private checkEnd(): void {
     if (this.time >= this.duration) this.over = true;
     if (this.mode === 'ffa' && this.bots.some((b) => b.kills >= this.killTarget)) this.over = true;
-    if (this.mode === 'koth' && this.bots.some((b) => b.hillScore >= this.hillTarget)) this.over = true;
     if (this.mode === 'lms' && this.bots.filter((b) => !b.out).length <= 1) this.over = true;
     if (this.mode === 'duel' && this.bots.filter((b) => !b.out).length <= 1) {
       this.decidedAt ??= this.time;
@@ -617,9 +610,9 @@ export class Match {
 
   private updateHill(dt: number): void {
     if (this.mode !== 'koth') return;
-    const { hill } = this.arena;
+    const hill = hillAt(this.arena, this.time);
     const inside = this.bots.filter((b) => b.alive && Math.hypot(b.x - hill.x, b.z - hill.z) < hill.r);
-    // Sharing the zone splits the points, so a crowded hill still moves toward a winner.
+    // A point a second for holding it alone. Sharing the zone splits the point, so a crowded hill still moves toward a winner.
     for (const bot of inside) {
       bot.hillScore += dt / inside.length;
       bot.earned += (REWARD.hillPerSecond * dt) / inside.length;
@@ -907,13 +900,6 @@ export class Match {
         break;
     }
 
-    if (def.saw && pressed && this.spend(bot, def.saw * BATTERY_PER_POWER * bot.bonus.battery * dt * IDLE_DRAW)) {
-      bot.meleeActive = true;
-      for (const other of this.enemies(bot)) {
-        if (this.inCone(bot, other, facing, def.range * bot.bonus.reach, def.arc) && this.spend(bot, def.saw * BATTERY_PER_POWER * bot.bonus.battery * dt * (1 - IDLE_DRAW))) this.damage(other, def.saw * this.hitOutput(bot) * dt, bot.id, def.pierce);
-      }
-    }
-
     if (bot.meleeWindup > 0) {
       bot.meleeWindup -= dt;
       if (bot.meleeWindup <= 0) {
@@ -927,8 +913,12 @@ export class Match {
           struck.push(other);
           this.damage(other, def.damage * this.hitOutput(bot), bot.id, def.pierce);
           this.stun(other, def.stun);
-          other.vx += (fx * def.knockback) / other.mass;
-          other.vz += (fz * def.knockback) / other.mass;
+          // A sweep throws each robot straight out from the middle of it, wherever it was standing.
+          const gap = Math.hypot(other.x - bot.x, other.z - bot.z) || 1;
+          const pushX = def.sweep ? (other.x - bot.x) / gap : fx;
+          const pushZ = def.sweep ? (other.z - bot.z) / gap : fz;
+          other.vx += (pushX * def.knockback) / other.mass;
+          other.vz += (pushZ * def.knockback) / other.mass;
           if (def.launch && other.invulnT <= 0) {
             other.airT = Math.max(other.airT, def.launch);
             if (def.flips) {

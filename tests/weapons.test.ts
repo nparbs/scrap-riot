@@ -180,15 +180,14 @@ describe('big matches', () => {
 
   it('a crowded hill still moves toward a winner, by sharing the points', () => {
     const match = new Match(Array.from({ length: 8 }, (_, i) => pilot(`P${i}`)), { seed: 1, arena: 'foundry', mode: 'koth' });
-    expect(match.hillTarget).toBeLessThan(45);
     const [a, b] = match.bots;
     match.bots.forEach((bot) => {
       bot.invulnT = 99;
       bot.x = 25;
       bot.z = 25;
     });
-    a.x = b.x = match.arena.hill.x;
-    a.z = b.z = match.arena.hill.z;
+    a.x = b.x = match.arena.hills[0].x;
+    a.z = b.z = match.arena.hills[0].z;
     run(match, 1);
     expect(a.hillScore).toBeGreaterThan(0.3);
     expect(a.hillScore).toBeLessThan(0.7);
@@ -635,16 +634,28 @@ describe('thrown robots', () => {
 });
 
 describe('other new weapons', () => {
-  it('a hammer saw lands a hit, then keeps cutting while held', () => {
-    const [match, a, b] = fight({ melee: 'hammersaw' });
-    b.z = a.z + 2.8;
+  it('a flail hits a robot behind it as hard as one in front, and throws it straight away', () => {
+    for (const side of [1, -1]) {
+      const [match, a, b] = fight({ melee: 'flail' });
+      // In front, then right behind, where nothing else can reach.
+      b.z = a.z + side * 3;
+      b.vx = b.vz = 0;
+      a.input.melee = true;
+      run(match, 0.4);
+      expect(b.hp, `side ${side}`).toBeLessThan(b.maxHp - MELEE.flail.damage * 0.5);
+      expect(Math.sign(b.vz), `side ${side}`).toBe(side);
+    }
+  });
+
+  it('a flail flings a robot at its side out sideways', () => {
+    const [match, a, b] = fight({ melee: 'flail' });
+    b.x = a.x + 3;
+    b.z = a.z;
+    b.vx = b.vz = 0;
     a.input.melee = true;
-    run(match, 0.5);
-    const afterHit = b.hp;
-    expect(afterHit).toBeLessThan(b.maxHp - MELEE.hammersaw.damage + 1);
-    run(match, 0.5);
-    expect(b.hp).toBeLessThan(afterHit);
-    expect(a.meleeActive).toBe(true);
+    run(match, 0.4);
+    expect(b.hp).toBeLessThan(b.maxHp);
+    expect(b.vx).toBeGreaterThan(Math.abs(b.vz));
   });
 
   it('a crusher holds on and does far more damage than the claw, for less time', () => {

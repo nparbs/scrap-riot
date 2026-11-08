@@ -1232,6 +1232,8 @@ export interface WeaponParts {
   swing: number;
   /** How fast the robot is rolling forward, from 0 to 1. */
   speed: number;
+  /** About to strike. */
+  windingUp: boolean;
 }
 
 function buildChainsaw(pivot: THREE.Group): BuiltMelee {
@@ -1306,11 +1308,11 @@ function buildChainsaw(pivot: THREE.Group): BuiltMelee {
 }
 
 /** How far each big spinning weapon reaches below its pivot, so it can be held high enough to clear the floor. */
-const WEAPON_DROP: Partial<Record<MeleeId, number>> = { vertdisc: 0.76, vertbar: 0.8, rollingpin: 0.48, drum: 0.5, hammersaw: 0.75 };
+const WEAPON_DROP: Partial<Record<MeleeId, number>> = { vertdisc: 0.76, vertbar: 0.8, rollingpin: 0.48, drum: 0.5 };
 /** How far out to the sides a weapon's own arms start, for those carried on two. */
 const WEAPON_ARMS: Partial<Record<MeleeId, number>> = { rollingpin: 0.76, vertdisc: 0.2, vertbar: 0.22 };
 /** How far apart the cheeks of a weapon's mount stand. */
-const MOUNT_HALF: Partial<Record<MeleeId, number>> = { hammer: 0.21, axe: 0.19, hammersaw: 0.2, chainsaw: 0.19, dagger: 0.17, magnet: 0.14, flipper: 0.3, claw: 0.3, crusher: 0.25, tesla: 0.22, ram: 0.3 };
+const MOUNT_HALF: Partial<Record<MeleeId, number>> = { hammer: 0.21, axe: 0.19, chainsaw: 0.19, dagger: 0.17, magnet: 0.14, flipper: 0.3, claw: 0.3, crusher: 0.25, tesla: 0.22, ram: 0.3 };
 
 /** Secondary weapons that go on the end of the robot rather than the tower. */
 const GEAR_AT_THE_END = new Set<DefenseId>(['mines', 'oil', 'glue', 'spikes', 'steelram', 'plow', 'emp', 'minibot', 'remote', 'kamikaze']);
@@ -1377,8 +1379,18 @@ function buildWeaponMount(s: HullSpec, id: MeleeId, pivotY: number, facing: numb
 /** Where gun-style weapons bolt onto the tower, and how far they stand above it, both in the tower's own size. */
 const TOWER_MOUNTS: Partial<Record<MeleeId, { y: number; z: number; top: number; muzzle: number }>> = {
   flamethrower: { y: 0.34, z: 0.06, top: 0.25, muzzle: 1.5 },
+  flail: { y: 0.3, z: 0, top: 0.42, muzzle: 0.4 },
   spear: { y: 0.36, z: 0.08, top: 0.25, muzzle: 1.75 },
 };
+
+/** The Flail: its arm, how much chain hangs at rest and flies out in a swing, and how fast it turns. */
+const FLAIL_ARM = 0.32;
+const FLAIL_LINKS = 9;
+const FLAIL_REST = 0.5;
+const FLAIL_OUT = 1.9;
+const FLAIL_DROOP = 1.2;
+const FLAIL_IDLE = 1.6;
+const FLAIL_SPIN = 24;
 
 /** How far a Pneumatic Spear's spike shoots out, and how long it takes to come back. */
 const SPEAR_THRUST = 1.5;
@@ -1691,21 +1703,78 @@ function buildMelee(pivot: THREE.Group, id: MeleeId, spec: HullSpec, reach: numb
       pivot.add(drum);
       return { spinner: drum, axis: 'x' };
     }
-    case 'hammersaw': {
-      // A swinging arm with a guarded circular saw on the end.
-      swingMount(pivot, 0.32);
-      pivot.add(sideOn([[0, -0.08], [0.7, -0.07], [1.5, -0.05], [1.5, 0.08], [0.7, 0.1], [0, 0.1]], 0.13, steel, 0.018));
-      piston(pivot, [0, -0.3, -0.05], [0, -0.04, 0.75], 0.05);
-      const guard = new THREE.Shape();
-      guard.moveTo(1.5 - 0.72, 0);
-      guard.absarc(1.5, -0.08, 0.72, Math.PI, 0.2, true);
-      guard.lineTo(1.5 + 0.56, 0.05);
-      guard.absarc(1.5, -0.08, 0.58, 0.2, Math.PI, false);
-      pivot.add(sideOn(guard, 0.1, dark, 0.008, 12));
-      const saw = sawOnHub('x', 0.56, 0.05, 14, 0.12, 5);
-      saw.position.set(0, -0.08, 1.5);
-      pivot.add(saw);
-      return { spinner: saw, axis: 'x' };
+    case 'flail': {
+      // A spindle on the tower, a short arm, and a chain with a spiked iron ball on the end. At rest it
+      // turns slowly with the chain hanging. Swinging, it spins up and the chain flies out flat.
+      pivot.add(placed(cylinder(0.09, 0.32, dark), 0, 0.16, 0));
+      pivot.add(placed(cylinder(0.13, 0.05, steel), 0, 0.03, 0));
+      const whirl = new THREE.Group();
+      whirl.position.y = 0.32;
+      whirl.add(placed(cylinder(0.11, 0.08, steel), 0, 0, 0));
+      whirl.add(rod([0, 0, 0], [0, 0, FLAIL_ARM], 0.035, steel, 10));
+      const chain = new THREE.Group();
+      chain.position.z = FLAIL_ARM;
+      const links: THREE.Mesh[] = [];
+      for (let i = 0; i < FLAIL_LINKS; i++) {
+        const link = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.014, 6, 10), steel);
+        // Each link turned a quarter from the last, as a real chain hangs.
+        link.rotation.set(0, i % 2 ? Math.PI / 2 : 0, 0);
+        link.castShadow = true;
+        chain.add(link);
+        links.push(link);
+      }
+      const ball = new THREE.Group();
+      ball.add(new THREE.Mesh(new THREE.IcosahedronGeometry(0.2, 1), dark));
+      const spikes: THREE.BufferGeometry[] = [];
+      const corners = new THREE.IcosahedronGeometry(1, 0).getAttribute('position');
+      const seen = new Set<string>();
+      for (let i = 0; i < corners.count; i++) {
+        const dir = new THREE.Vector3().fromBufferAttribute(corners, i).normalize();
+        const key = dir.toArray().map((v) => v.toFixed(2)).join();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const spike = new THREE.ConeGeometry(0.055, 0.17, 5);
+        spike.translate(0, 0.27, 0);
+        spike.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir));
+        spikes.push(spike);
+      }
+      const points = new THREE.Mesh(mergeGeometries(spikes), blade);
+      for (const spike of spikes) spike.dispose();
+      points.castShadow = true;
+      ball.add(points);
+      ball.children[0].castShadow = true;
+      chain.add(ball);
+      whirl.add(chain);
+      pivot.add(whirl);
+
+      let angle = Math.PI / 2;
+      let speed = FLAIL_IDLE;
+      let last = -1;
+      const pose = (length: number, droop: number) => {
+        chain.rotation.x = droop;
+        links.forEach((link, i) => {
+          link.position.z = ((i + 0.5) / FLAIL_LINKS) * length;
+        });
+        ball.position.z = length + 0.16;
+      };
+      pose(FLAIL_REST, FLAIL_DROOP);
+      whirl.rotation.y = angle;
+      return {
+        spinner: null,
+        axis: 'y',
+        animate: ({ swing, time, windingUp }) => {
+          const dt = last < 0 ? 0 : Math.min(0.1, Math.max(0, time - last));
+          last = time;
+          // Whirls hard through the windup and the blow, then winds back down.
+          const target = windingUp || swing < 0.45 ? FLAIL_SPIN : FLAIL_IDLE;
+          speed += (target - speed) * Math.min(1, dt * (target > speed ? 14 : 3));
+          angle += speed * dt;
+          whirl.rotation.y = angle;
+          const out = Math.min(1, Math.max(0, (speed - FLAIL_IDLE) / (FLAIL_SPIN - FLAIL_IDLE)));
+          // A class that reaches further lets out more chain, so the ball still touches what it hits.
+          pose(FLAIL_REST + (FLAIL_OUT * reach - FLAIL_REST) * out, FLAIL_DROOP * (1 - out) + 0.04);
+        },
+      };
     }
     case 'flipper': {
       // A wedge plate on a hinge, stiffened with ribs, fired by two pneumatic rams underneath.
@@ -2243,7 +2312,7 @@ export function poseWeapon(model: RobotModel, id: MeleeId, state: WeaponState, d
   const running = state.active && (melee.kind === 'held' || melee.kind === 'magnet') && !melee.passive;
   pivot.position.y = model.meleeRest.y + (running ? Math.sin(state.time * 95) * 0.014 : 0);
 
-  model.animate?.({ grip: model.grip, active: state.active, time: state.time, swing: state.swing, speed: state.speed });
+  model.animate?.({ grip: model.grip, active: state.active, time: state.time, swing: state.swing, speed: state.speed, windingUp: state.windingUp });
 }
 
 export function disposeRobot(model: RobotModel): void {
