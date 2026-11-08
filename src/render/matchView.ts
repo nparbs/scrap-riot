@@ -6,6 +6,7 @@ import type { MeleeId } from '../sim/data';
 import { buildArena, type ArenaScene } from './arenaScene';
 import { ArcBolts, Particles } from './fx';
 import { Ragdoll } from './ragdoll';
+import { ReplayPlayer, ReplayRecorder, type KillMoment } from './replay';
 import { buildRobot, disposeRobot, healHullScars, hullFaceHit, poseWeapon, scarHull, withoutSkin, type RobotModel } from './robots';
 import { healthColor, STANDARD_PALETTE, type Palette } from '../game/palette';
 
@@ -40,6 +41,9 @@ const FLAT_TIRE_DROP = 0.09;
 const ROLL_OVER_TIME = 0.4;
 const RIGHTING_TIME = 0.5;
 const MATTE_METALNESS = 0.15;
+/** The replay's lens, a little tighter in the slow motion for drama. */
+const REPLAY_FOV = 58;
+const REPLAY_SLOW_FOV = 48;
 const FILL_LIGHT = 1.3;
 
 interface BotVisual {
@@ -142,6 +146,17 @@ export class MatchView {
   hideSkins = false;
   private palette = STANDARD_PALETTE;
   onEvent: ((event: GameEvent) => void) | null = null;
+  /** Keeps the last few seconds while a real match is on, for the replay at the end. */
+  recording = false;
+  private readonly recorder = new ReplayRecorder();
+  private replay: ReplayPlayer | null = null;
+  private replayDone: (() => void) | null = null;
+  /** Where the replay last saw the robot that died, so the camera has somewhere to look once it's gone. */
+  private readonly replayFocus = new THREE.Vector3();
+  /** Which way round the kill cam circles, settled when it starts. */
+  private replayAngle: number | null = null;
+  private replaySnap = false;
+  private replayDock = DOCK_HEIGHT;
 
   private match: Match | null = null;
   private readonly scenes = new Map<ArenaId, ArenaScene>();
@@ -224,6 +239,11 @@ export class MatchView {
   }
 
   setMatch(match: Match, followId: number): void {
+    if (this.replay) this.setDockHeight(this.replayDock);
+    this.replay = null;
+    this.replayDone = null;
+    this.recording = false;
+    this.recorder.reset();
     this.clearMatch();
     this.arena = this.sceneFor(match.arena.id);
     this.arena.scene.add(this.particles.mesh, this.bolts.group, this.flash);
@@ -333,7 +353,7 @@ export class MatchView {
   private syncTraps(match: Match, dt: number): void {
     const { scene } = this.arena;
     const viewer = match.bots[this.followId];
-    const spectating = viewer.out && match.mode === 'lms';
+    const spectating = viewer.out && match.mode === 'lms' && !this.replay;
     if (spectating && this.trapMarker?.parent !== scene) {
       this.trapMarker = new THREE.Group();
       const ring = new THREE.Mesh(new THREE.RingGeometry(TRAP.strike.radius - 0.2, TRAP.strike.radius, 40), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.9, side: THREE.DoubleSide, toneMapped: false }));
@@ -446,9 +466,28 @@ export class MatchView {
   update(frameDt: number, alpha: number): void {
     const match = this.match;
     if (!match) return;
-    this.spin += frameDt;
-    for (const event of match.drainEvents()) this.handleEvent(event);
+    if (this.replay) {
+      this.updateReplay(match, this.replay, frameDt);
+      return;
+    }
+    const events = match.drainEvents();
+    for (const event of events) this.handleEvent(event);
+    if (this.recording) this.recorder.capture(match, events, alpha, frameDt);
+    this.animate(match, frameDt, alpha);
+    this.updateCamera(match, frameDt, alpha);
+    for (const [id, v] of this.visuals) {
+      const bot = match.bots[id];
+      // Labels right next to the lens would fill the screen, so they fade out up close.
+      const seen = bot.cloakT <= 0 || match.bots[this.followId].xrayT > 0;
+      const clear = bot.alive && seen && id !== this.followId && v.label.position.distanceTo(this.camera.position) > 10;
+      v.barBack.visible = v.barFront.visible = v.label.visible = clear;
+      v.barArmour.visible = clear && bot.armour > 0;
+    }
+  }
 
+  /** Everything in the world moving on by dt, apart from the camera. */
+  private animate(match: Match, frameDt: number, alpha: number): void {
+    this.spin += frameDt;
     match.bots.forEach((bot) => this.syncBot(bot, frameDt, alpha));
     this.syncHazards(match, frameDt);
     this.arena.animate(this.spin);
@@ -463,15 +502,182 @@ export class MatchView {
     this.bolts.update(frameDt);
     this.updateWrecks(frameDt);
     this.flash.intensity = Math.max(0, this.flash.intensity - frameDt * 900);
-    this.updateCamera(match, frameDt, alpha);
-    for (const [id, v] of this.visuals) {
-      const bot = match.bots[id];
-      // Labels right next to the lens would fill the screen, so they fade out up close.
-      const seen = bot.cloakT <= 0 || match.bots[this.followId].xrayT > 0;
-      const clear = bot.alive && seen && id !== this.followId && v.label.position.distanceTo(this.camera.position) > 10;
-      v.barBack.visible = v.barFront.visible = v.label.visible = clear;
-      v.barArmour.visible = clear && bot.armour > 0;
+  }
+
+  /**
+   * Plays the kill that decided the match again, in slow motion around the moment itself.
+   * Returns null, and does nothing, when no kill decided it. onDone runs when it ends or is skipped.
+   */
+  startReplay(onDone: () => void): KillMoment | null {
+    const match = this.match;
+    const kill = this.recorder.decidingKill();
+    if (!match || !kill || this.recorder.frames.length < 2) return null;
+    // Everything already on screen came from the moments about to be replayed.
+    for (const ragdoll of this.ragdolls.values()) ragdoll.dispose();
+    this.ragdolls.clear();
+    for (const wreck of this.wrecks.splice(0)) this.removeWreck(wreck);
+    for (const transient of this.transients.splice(0)) {
+      this.arena.scene.remove(transient.object);
+      const mesh = transient.object as THREE.Mesh;
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
     }
+    this.particles.clear();
+    this.shake = 0;
+    this.deathHold = 0;
+    this.flash.intensity = 0;
+    for (const v of this.visuals.values()) {
+      v.roll = 0;
+      v.airPeak = 0;
+      v.flipPeak = 0;
+    }
+    if (this.trapMarker) this.trapMarker.visible = false;
+    this.recording = false;
+    this.replay = new ReplayPlayer(match, this.recorder.frames, kill);
+    this.replayDone = onDone;
+    this.replayAngle = null;
+    this.replaySnap = true;
+    this.replayFocus.set(kill.event.x, 1, kill.event.z);
+    // There's no HUD dock under a replay, so the picture sits in the middle.
+    this.replayDock = this.dockHeight;
+    this.setDockHeight(0);
+    return kill;
+  }
+
+  get replaying(): boolean {
+    return this.replay !== null;
+  }
+
+  /** Seconds since the kill in the replay, below zero before it, or null with no replay running. */
+  get replaySinceKill(): number | null {
+    return this.replay ? this.replay.sinceKill : null;
+  }
+
+  /** Ends the replay early, as if it had played out. */
+  skipReplay(): void {
+    if (this.replay) this.finishReplay();
+  }
+
+  private finishReplay(): void {
+    this.replay?.restore();
+    this.replay = null;
+    this.setDockHeight(this.replayDock);
+    const done = this.replayDone;
+    this.replayDone = null;
+    done?.();
+  }
+
+  private updateReplay(match: Match, replay: ReplayPlayer, frameDt: number): void {
+    const { dt, events, alpha } = replay.advance(frameDt);
+    for (const event of events) this.handleEvent(event);
+    this.animate(match, dt, alpha);
+    for (const v of this.visuals.values()) v.barBack.visible = v.barFront.visible = v.barArmour.visible = v.label.visible = false;
+    this.replayCamera(match, replay, frameDt, alpha);
+    if (replay.done) this.finishReplay();
+  }
+
+  /**
+   * The replay's camera. A ring-out gets a low fly-by just past the edge as the robot goes over,
+   * then looks down after it from the edge. Any other kill gets a slow circle round the robot as it's
+   * finished off, then a crane shot up and away as it blows.
+   */
+  private replayCamera(match: Match, replay: ReplayPlayer, realDt: number, alpha: number): void {
+    const { event } = replay.kill;
+    const s = replay.sinceKill;
+    const at = (bot: Bot) => new THREE.Vector3(bot.prevX + (bot.x - bot.prevX) * alpha, 1, bot.prevZ + (bot.z - bot.prevZ) * alpha);
+    const victimBot = match.bots[event.victim];
+    const doll = this.ragdolls.get(event.victim);
+    if (doll) this.replayFocus.copy(doll.position);
+    else if (victimBot?.alive) this.replayFocus.copy(at(victimBot));
+    const victim = this.replayFocus.clone();
+    const killerBot = event.killer >= 0 && event.killer !== event.victim ? match.bots[event.killer] : undefined;
+    const killer = killerBot?.alive ? at(killerBot) : null;
+    const { walled } = this.arena.def;
+
+    const target = new THREE.Vector3();
+    const look = victim.clone();
+    let rate = 5;
+    // Behind whoever made the kill, looking past them at the robot they're about to finish.
+    const overShoulder = () => {
+      if (!killer) {
+        const a = 0.6 + replay.t * 0.25;
+        target.set(victim.x + Math.sin(a) * 9, 4.5, victim.z + Math.cos(a) * 9);
+        return;
+      }
+      const away = Math.hypot(victim.x - killer.x, victim.z - killer.z) || 1;
+      const ux = (victim.x - killer.x) / away;
+      const uz = (victim.z - killer.z) / away;
+      target.set(killer.x - ux * 5.5 + uz * 1.8, 2.8, killer.z - uz * 5.5 - ux * 1.8);
+      look.lerpVectors(killer, victim, 0.6).setY(1);
+    };
+
+    if (event.fell) {
+      // Which way it went over, or straight out from the middle if it was barely moving.
+      let dx = event.vx;
+      let dz = event.vz;
+      if (Math.hypot(dx, dz) < 0.5) {
+        dx = event.x;
+        dz = event.z;
+      }
+      const length = Math.hypot(dx, dz);
+      if (length < 0.01) {
+        dx = 0;
+        dz = 1;
+      } else {
+        dx /= length;
+        dz /= length;
+      }
+      const nx = -dz;
+      const nz = dx;
+      if (s < -1.1) {
+        overShoulder();
+      } else if (s < 0.9) {
+        // Swings in alongside its path, just out past the edge, and drops away with it. It stays off to
+        // one side, so the robot sails past the lens rather than into it.
+        const u = THREE.MathUtils.smoothstep(s, -1.1, 0.9);
+        const side = THREE.MathUtils.lerp(-11, -5, u);
+        const out = THREE.MathUtils.lerp(1, 6, u);
+        const y = walled ? THREE.MathUtils.lerp(2.6, 1.1, u) : THREE.MathUtils.lerp(2.6, -2.5, u);
+        target.set(event.x + dx * out + nx * side, y, event.z + dz * out + nz * side);
+        rate = 12;
+      } else {
+        // Standing on the edge, looking down after it.
+        target.set(event.x - dx * 1.5 + nx * 3, 6, event.z - dz * 1.5 + nz * 3);
+        rate = 3;
+      }
+    } else if (s < -0.8) {
+      overShoulder();
+    } else {
+      // Side on to the fight, so both robots are in the shot.
+      this.replayAngle ??= killer ? Math.atan2(killer.x - victim.x, killer.z - victim.z) + Math.PI / 2 : 0.8;
+      const u = Math.min(1, (s + 0.8) / 1.8);
+      const crane = THREE.MathUtils.smoothstep(s, 0.6, 1.8);
+      const a = this.replayAngle + u * 1.4 + crane * 0.4;
+      const radius = 6 + crane * 5;
+      target.set(victim.x + Math.sin(a) * radius, THREE.MathUtils.lerp(2.2, 1.3, u) + crane * 5, victim.z + Math.cos(a) * radius);
+      rate = 8;
+    }
+    if (walled) this.keepInsideWalls(target);
+
+    const slow = replay.t > replay.slowFrom && replay.t < replay.slowTo;
+    const fov = slow ? REPLAY_SLOW_FOV : REPLAY_FOV;
+    if (this.replaySnap) {
+      this.replaySnap = false;
+      this.camPos.copy(target);
+      this.camLook.copy(look);
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
+    }
+    this.camPos.lerp(target, 1 - Math.exp(-realDt * rate));
+    this.camLook.lerp(look, 1 - Math.exp(-realDt * 10));
+    if (Math.abs(this.camera.fov - fov) > 0.02) {
+      this.camera.fov += (fov - this.camera.fov) * (1 - Math.exp(-realDt * 3));
+      this.camera.updateProjectionMatrix();
+    }
+    this.shake = Math.max(0, this.shake - realDt * 2.4);
+    const kick = this.shake * this.shake * 0.6 * this.shakeScale;
+    this.camera.position.set(this.camPos.x + (Math.random() - 0.5) * kick, this.camPos.y + (Math.random() - 0.5) * kick, this.camPos.z + (Math.random() - 0.5) * kick);
+    this.camera.lookAt(this.camLook);
   }
 
   private handleEvent(event: GameEvent): void {

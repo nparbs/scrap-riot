@@ -20,13 +20,14 @@ import { renderGoogleButton } from './ui/google';
 import { Hud } from './ui/hud';
 import { DuelIntro } from './ui/duelIntro';
 import { Painter } from './ui/painter';
+import { replayOverlay, type ReplayOverlay } from './ui/replayOverlay';
 import { isNameAllowed } from './game/nameFilter';
 import { COLORBLIND_PALETTE, STANDARD_PALETTE, type Palette } from './game/palette';
 import { enterFullscreen, exitFullscreen, isFullscreen, isInstalled, lockLandscape, onFullscreenChange, unlockOrientation } from './ui/fullscreen';
 import { isTouchDevice, touchControls } from './ui/touch';
 import { garageScreen, introScreen, lobbyScreen, menuScreen, nameScreen, onlineLabel, pauseScreen, playersPanel, queueLabel, resultsScreen, settingsScreen, type BuyCategory, type GarageTab, type SideTab } from './ui/screens';
 
-type Mode = 'intro' | 'menu' | 'garage' | 'lobby' | 'match' | 'paused' | 'results';
+type Mode = 'intro' | 'menu' | 'garage' | 'lobby' | 'match' | 'paused' | 'replay' | 'results';
 
 /** Without a configured server, the build simply offers no online mode. */
 const SETTINGS_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-1.7-1L15 3.5h-4L10.6 6a7.6 7.6 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 1.7 1l.3 2.5h4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.4 1 2-3.4zM13 15.2a3.2 3.2 0 1 1 0-6.4 3.2 3.2 0 0 1 0 6.4z" transform="translate(-1 0)"/></svg>';
@@ -112,6 +113,7 @@ class Game {
   private match: Match | null = null;
   private player: Bot | null = null;
   private hud: Hud | null = null;
+  private replay: ReplayOverlay | null = null;
   private net: NetClient | null = null;
   private notice = '';
   private softwareWarning = '';
@@ -245,7 +247,7 @@ class Game {
   }
 
   private syncFighting(): void {
-    const fighting = this.mode === 'match' || this.mode === 'paused';
+    const fighting = this.mode === 'match' || this.mode === 'paused' || this.mode === 'replay';
     if (fighting === this.fighting) return;
     this.fighting = fighting;
     document.documentElement.classList.toggle('fighting', fighting);
@@ -941,6 +943,7 @@ class Game {
     this.hud = this.makeHud(match, player);
     this.beginTutorial();
     this.view.setMatch(match, player.id);
+    this.view.recording = true;
     this.setScreen(this.hud.root);
     this.keyboard.clear();
     this.accumulator = 0;
@@ -1045,6 +1048,7 @@ class Game {
         this.hud = this.makeHud(match, player);
         this.beginTutorial();
         this.view.setMatch(match, player.id);
+        this.view.recording = true;
         this.setScreen(this.hud.root);
         this.keyboard.clear();
         this.mode = 'match';
@@ -1104,8 +1108,6 @@ class Game {
     }
     const standings = match.standings();
     const mine = standings.find((s) => s.bot === player)!;
-    if (mine.place === 1 && !match.drawn) this.sfx.win();
-    else if (!match.drawn) this.sfx.lose();
     const online = this.net !== null;
     this.net = null;
     let note = '';
@@ -1138,7 +1140,62 @@ class Game {
           if (this.mode === 'garage') this.refreshGarage();
         });
     }
-    this.setScreen(resultsScreen(standings, player.id, () => this.showGarage(), note, match.drawn));
+    // The money is already banked above, so skipping or sitting through the replay changes nothing.
+    const results = resultsScreen(standings, player.id, () => this.showGarage(), note, match.drawn);
+    const reveal = () => {
+      this.replay?.dispose();
+      this.replay = null;
+      this.view.onEvent = (event) => this.onMatchEvent(event);
+      if (this.mode !== 'replay') return;
+      this.mode = 'results';
+      if (mine.place === 1 && !match.drawn) this.sfx.win();
+      else if (!match.drawn) this.sfx.lose();
+      this.setScreen(results);
+    };
+    const kill = match.drawn ? null : this.view.startReplay(reveal);
+    if (!kill) {
+      this.mode = 'results';
+      if (mine.place === 1 && !match.drawn) this.sfx.win();
+      else if (!match.drawn) this.sfx.lose();
+      this.setScreen(results);
+      return;
+    }
+    this.mode = 'replay';
+    this.view.onEvent = (event) => this.replaySound(event);
+    const killer = kill.event.killer >= 0 && kill.event.killer !== kill.event.victim ? match.bots[kill.event.killer]?.name ?? null : null;
+    this.replay = replayOverlay(kill.event, killer, match.bots[kill.event.victim]?.name ?? '', () => this.view.skipReplay());
+    this.setScreen(this.replay.el);
+  }
+
+  /** The replay's sounds, heard as if from the camera rather than the player's robot. */
+  private replaySound(event: GameEvent): void {
+    const match = this.match;
+    if (!match) return;
+    switch (event.type) {
+      case 'hit':
+        if (event.source >= 0 && event.amount >= 1) this.sfx.hit(0.7, event.amount);
+        break;
+      case 'strike':
+        this.sfx.meleeHit(match.bots[event.owner].loadout.melee, 0.8);
+        break;
+      case 'arc':
+        this.sfx.arc(0.6);
+        break;
+      case 'pulse':
+        this.sfx.meleeHit('hammer', 0.8);
+        break;
+      case 'pop':
+        this.sfx.tirePop(0.8);
+        break;
+      case 'kill':
+        if (event.fell) this.sfx.fall(1);
+        break;
+      case 'explosion':
+        this.sfx.explosion(1);
+        break;
+      default:
+        break;
+    }
   }
 
   private onMatchEvent(event: GameEvent): void {
@@ -1229,6 +1286,9 @@ class Game {
         break;
       case 'match':
         this.tickMatch(dt);
+        break;
+      case 'replay':
+        this.replay?.update(this.view.replaySinceKill ?? 0);
         break;
       case 'paused':
       case 'results':

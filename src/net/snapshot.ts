@@ -104,7 +104,7 @@ export function applyBotState(bot: Bot, row: number[]): void {
 }
 
 /** Rebuilds the shared lists the renderer reads. `ahead` brings timers up to the render time. */
-export function applyWorldState(match: Match, snap: SnapshotMessage, ahead: number): void {
+export function applyWorldState(match: Match, snap: Pick<SnapshotMessage, 'mines' | 'oil' | 'traps' | 'drones' | 'pickups'>, ahead: number): void {
   match.mines.length = 0;
   for (const [id, owner, x, z, armT, kind] of snap.mines) {
     match.mines.push({ id, owner, kind: MINE_KINDS[kind], x, z, armT, life: 1, damage: 0, radius: 0 });
