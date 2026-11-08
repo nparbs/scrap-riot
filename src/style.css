@@ -886,6 +886,10 @@ select:focus-visible {
   color: var(--bad);
 }
 
+.spec-grid .spec-class dd {
+  color: var(--good);
+}
+
 .help-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -2716,6 +2720,38 @@ button.part-card-about {
 .class-note b {
   color: var(--good, #7ddba8);
   font-weight: 600;
+}
+
+/* A weapon or chassis that gets the class bonus with the robot as shown. A green stripe down the side
+   leaves the border free to say fitted or trying. */
+.card-class {
+  box-shadow: inset 4px 0 0 var(--good);
+  background: linear-gradient(160deg, rgba(125, 219, 168, 0.13), #212428 55%);
+}
+
+.card-class.card-on {
+  background: linear-gradient(160deg, rgba(255, 127, 63, 0.14), rgba(125, 219, 168, 0.08) 45%, #212428 75%);
+}
+
+.class-banner {
+  display: block;
+  align-self: stretch;
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(125, 219, 168, 0.16);
+  color: var(--good) !important;
+  font: 400 11px/1.35 var(--body);
+}
+
+.class-banner b {
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rail-class {
+  color: var(--good);
 }
 
 .card-type {
