@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { ARENAS, hammerClock, onDeck, sawPos, shockerActive, solidGround, TRAP_NAMES, ventHeat, type ArenaId } from '../sim/arena';
 import { BOOST_SPEED, legibleColor, MATCH, MELEE, SPIKE_STRIP_DEPTH, TRAP } from '../sim/data';
-import { lerpAngle, type Bot, type GameEvent, type Match, type Trap } from '../sim/match';
+import { lerpAngle, wrapAngle, type Bot, type GameEvent, type Match, type Trap } from '../sim/match';
 import type { MeleeId } from '../sim/data';
 import { buildArena, type ArenaScene } from './arenaScene';
-import { ArcBolts, Particles } from './fx';
+import { ArcBolts, Debris, Particles, SkidMarks } from './fx';
 import { Ragdoll } from './ragdoll';
 import { ReplayPlayer, ReplayRecorder, type KillMoment } from './replay';
-import { buildRobot, disposeRobot, healHullScars, hullFaceHit, poseWeapon, scarHull, withoutSkin, type RobotModel } from './robots';
+import { buildRobot, dentHull, disposeRobot, healHullDents, healHullScars, hullFaceHit, poseWeapon, scarHull, withoutSkin, type RobotModel } from './robots';
 import { healthColor, STANDARD_PALETTE, type Palette } from '../game/palette';
 
 const CAM_DISTANCE = 9;
@@ -31,7 +31,7 @@ const DROP_HEIGHT = 34;
 /** A hit this hard gets the big sparks and a kick of the camera. */
 const BIG_HIT = 12;
 /** Besides spinners, the weapons that bite into a robot rather than hit it. */
-const CUTTERS = new Set<MeleeId>(['chainsaw', 'drill', 'hammersaw']);
+const CUTTERS = new Set<MeleeId>(['chainsaw', 'drill', 'hammersaw', 'axe']);
 const SPARK_GAP = 0.06;
 const SCAR_GAP = 0.3;
 const MAX_SCARS = 14;
@@ -41,6 +41,35 @@ const FLAT_TIRE_DROP = 0.09;
 const ROLL_OVER_TIME = 0.4;
 const RIGHTING_TIME = 0.5;
 const MATTE_METALNESS = 0.15;
+/** Weapons that land like a club, a shove, or a point, which each throw something different. */
+const BLUNT = new Set<MeleeId>(['hammer', 'crusher', 'rollingpin']);
+const SHOVE = new Set<MeleeId>(['ram', 'flipper', 'forks', 'claw', 'magnet']);
+const PIERCE = new Set<MeleeId>(['spear', 'dagger']);
+/** The least time between dents, and between showers of bits, on one robot. */
+const DENT_GAP = 0.35;
+const DEBRIS_GAP = 0.12;
+/** What robots kick up off the floor, on the maps that have something loose on it. */
+const DUST: Partial<Record<ArenaId, { color: number; rate: number }>> = {
+  canyon: { color: 0xd2a476, rate: 16 },
+  glacier: { color: 0xf2f8ff, rate: 14 },
+  furnace: { color: 0x4d4542, rate: 6 },
+  foundry: { color: 0x8c8780, rate: 5 },
+  pit: { color: 0xb9bcc0, rate: 4 },
+};
+/** Pale scratches on ice. Everywhere else lays dark rubber. */
+const SKID_LOOK: Partial<Record<ArenaId, { color: number; opacity: number }>> = {
+  glacier: { color: 0xe4f2ff, opacity: 0.55 },
+};
+const SKID_GAP = 0.3;
+/** Health below which each kind of wear shows. */
+const WOBBLE_AT = 0.6;
+const BENT_AT = 0.35;
+const ANTENNA_AT = 0.45;
+const WIRES_AT = 0.35;
+const SOOT_AT = 0.3;
+const RIM_SPARKS_AT = 0.25;
+const FIRE_AT = 0.2;
+
 /** The replay's lens, a little tighter in the slow motion for drama. */
 const REPLAY_FOV = 58;
 const REPLAY_SLOW_FOV = 48;
@@ -68,6 +97,17 @@ interface BotVisual {
   sparkAt: number;
   scarAt: number;
   scars: number;
+  dentAt: number;
+  debrisAt: number;
+  /** Counts down to the next puff from the pipes. */
+  exhaustT: number;
+  lastSpeed: number;
+  lastHeading: number;
+  boostAge: number;
+  /** Counts down to the next crackle from the wiring. */
+  wireT: number;
+  /** Where each rear wheel last laid rubber, while it's skidding. */
+  skid: [{ x: number; z: number } | null, { x: number; z: number } | null];
 }
 
 /** Brief effects such as beams and shockwaves. */
@@ -167,6 +207,11 @@ export class MatchView {
   private readonly visuals = new Map<number, BotVisual>();
   private readonly particles = new Particles();
   private readonly bolts = new ArcBolts();
+  private readonly debris = new Debris();
+  private readonly skids = new SkidMarks();
+  private dust: { color: number; rate: number } | null = null;
+  private readonly tip = new THREE.Vector3();
+  private readonly tipDir = new THREE.Vector3();
   private readonly ragdolls = new Map<number, Ragdoll>();
   /** Holds the camera on a robot that's just died, before it moves on to spectating. */
   private deathHold = 0;
@@ -193,7 +238,7 @@ export class MatchView {
 
   constructor() {
     this.arena = this.sceneFor('pit');
-    this.arena.scene.add(this.particles.mesh, this.bolts.group, this.flash);
+    this.arena.scene.add(this.particles.mesh, this.bolts.group, this.flash, this.debris.group, this.skids.mesh);
   }
 
   /** Scenes are built once and reused, since each one is expensive to create. */
@@ -246,9 +291,14 @@ export class MatchView {
     this.recorder.reset();
     this.clearMatch();
     this.arena = this.sceneFor(match.arena.id);
-    this.arena.scene.add(this.particles.mesh, this.bolts.group, this.flash);
+    this.arena.scene.add(this.particles.mesh, this.bolts.group, this.flash, this.debris.group, this.skids.mesh);
     this.particles.floorHalf = match.arena.walled ? Infinity : match.arena.half;
     this.particles.floorAt = (x, z) => solidGround(match.arena, x, z) && !match.arena.pits.some((p) => Math.hypot(x - p.x, z - p.z) < p.r);
+    this.debris.floorHalf = this.particles.floorHalf;
+    this.debris.floorAt = this.particles.floorAt;
+    const skidLook = SKID_LOOK[match.arena.id] ?? { color: 0x0c0c0c, opacity: 0.42 };
+    this.skids.setLook(skidLook.color, skidLook.opacity);
+    this.dust = DUST[match.arena.id] ?? null;
     this.arena.hill.visible = match.mode === 'koth';
     this.match = match;
     this.followId = followId;
@@ -295,6 +345,65 @@ export class MatchView {
     }
   }
 
+  /**
+   * What a weapon knocks loose when it lands, on top of the sparks: a club kicks up dust and rubble,
+   * a shove sends bolts and scraps of the target's paint flying, a point sprays a jet of sparks, and
+   * blades throw glowing embers. A solid hit from anything leaves a dent where it landed.
+   */
+  private weaponHit(event: Extract<GameEvent, { type: 'hit' }>): void {
+    const match = this.match!;
+    const attacker = match.bots[event.source];
+    const target = match.bots[event.target];
+    const v = this.visuals.get(event.target);
+    if (!attacker || !target || !v || attacker === target || event.shielded || event.amount < 1) return;
+    const weapon = attacker.loadout.melee;
+    const melee = MELEE[weapon];
+    const away = Math.hypot(target.x - attacker.x, target.z - attacker.z) || 1;
+    // The way the blow was travelling.
+    const dx = (target.x - attacker.x) / away;
+    const dz = (target.z - attacker.z) / away;
+    const blunt = BLUNT.has(weapon);
+
+    if (event.amount >= 5 && match.time - v.dentAt >= DENT_GAP) {
+      v.dentAt = match.time;
+      // From the target's own point of view, which side it was hit on.
+      const h = target.heading;
+      const fromX = -dx * Math.cos(h) + dz * Math.sin(h);
+      const fromZ = -dx * Math.sin(h) - dz * Math.cos(h);
+      dentHull(v.model, fromX, fromZ, Math.min(0.11, 0.025 + event.amount * 0.0018) * (blunt ? 1.5 : 1));
+    }
+
+    if (match.time - v.debrisAt < DEBRIS_GAP) return;
+    v.debrisAt = match.time;
+    const big = event.amount >= BIG_HIT;
+    const { x, z } = event;
+    const paint = target.color;
+    if (blunt) {
+      this.addPulse(x, z, big ? 3.2 : 2, 0xb9b2a4, 0.12);
+      this.particles.burst(x, z, { count: big ? 12 : 6, color: 0xa8a29a, speed: 5, size: 0.28, life: 0.7, y: 0.3, gravity: 1, grow: true, spread: 1 });
+      this.debris.throw('chunk', big ? 4 : 2, x, 0.6, z, { color: 0x5d6166, speed: 7, up: 1.1 });
+      this.debris.throw('bolt', big ? 2 : 1, x, 0.8, z, { color: 0x9aa0a6, speed: 8, dirX: dx, dirZ: dz });
+    } else if (SHOVE.has(weapon)) {
+      this.particles.burst(x, z, { count: 6, color: 0xffd27a, speed: 12, size: 0.12, life: 0.3, y: 0.8 });
+      this.debris.throw('bolt', big ? 3 : 1.5, x, 0.8, z, { color: 0x9aa0a6, speed: 9, dirX: dx, dirZ: dz });
+      this.debris.throw('panel', big ? 1.5 : 0.5, x, 0.9, z, { color: paint, speed: 8, dirX: dx, dirZ: dz, up: 1 });
+    } else if (PIERCE.has(weapon)) {
+      // Sparks spray on through, the way the point was going.
+      this.particles.burst(x, z, { count: big ? 14 : 8, color: 0xffd27a, speed: 18, size: 0.13, life: 0.3, y: 0.9, gravity: 16, dir: { x: dx, z: dz, jitter: 4 } });
+      this.debris.throw('bolt', 0.6, x, 0.8, z, { color: 0x9aa0a6, speed: 9, dirX: dx, dirZ: dz });
+    } else if (weapon === 'tesla') {
+      this.particles.burst(x, z, { count: 12, color: 0x9fe6ff, speed: 10, size: 0.11, life: 0.3, y: 1 });
+      this.particles.burst(x, z, { count: 4, color: 0xffffff, speed: 14, size: 0.08, life: 0.18, y: 1 });
+    } else if (melee.burns) {
+      this.particles.burst(x, z, { count: 3, color: 0xff7a1a, speed: 4, size: 0.12, life: 0.7, y: 0.9, gravity: 6 });
+    } else if (melee.kind === 'spinner' || CUTTERS.has(weapon)) {
+      // Hot embers that bounce and glow on the floor, and the odd shard of panel.
+      this.particles.burst(x, z, { count: big ? 10 : 4, color: 0xff8a2a, speed: 9, size: 0.1, life: 0.9, y: 1, gravity: 14 });
+      if (big) this.debris.throw('panel', 1, x, 1, z, { color: paint, speed: 11, dirX: dx, dirZ: dz, up: 1.2, size: 0.6 });
+      if (big) this.debris.throw('bolt', 1, x, 1, z, { color: 0x9aa0a6, speed: 11, dirX: dx, dirZ: dz });
+    }
+  }
+
   private keepInsideWalls(position: THREE.Vector3): THREE.Vector3 {
     const { walled, half } = this.arena.def;
     if (!walled) return position;
@@ -321,7 +430,7 @@ export class MatchView {
     const label = nameSprite(bot.name, bot.color);
     label.renderOrder = 12;
     this.arena.scene.add(model.root, barBack, barFront, barArmour, label);
-    this.visuals.set(bot.id, { model, barBack, barFront, barArmour, label, smokeT: 0, wheelSpin: 0, airPeak: 0, chainTravel: 0, flipPeak: 0, roll: 0, platesLost: 0, sparkAt: -1, scarAt: -1, scars: 0 });
+    this.visuals.set(bot.id, { model, barBack, barFront, barArmour, label, smokeT: 0, wheelSpin: 0, airPeak: 0, chainTravel: 0, flipPeak: 0, roll: 0, platesLost: 0, sparkAt: -1, scarAt: -1, scars: 0, dentAt: -1, debrisAt: -1, exhaustT: Math.random(), lastSpeed: 0, lastHeading: bot.heading, boostAge: 0, wireT: 0, skid: [null, null] });
   }
 
   private clearMatch(): void {
@@ -337,6 +446,8 @@ export class MatchView {
       v.label.material.dispose();
     }
     this.visuals.clear();
+    this.debris.clear();
+    this.skids.clear();
     for (const wreck of this.wrecks.splice(0)) this.removeWreck(wreck);
     for (const transient of this.transients.splice(0)) scene.remove(transient.object);
     for (const map of [this.mineMeshes, this.oilMeshes, this.pickupMeshes, this.droneMeshes]) {
@@ -347,6 +458,7 @@ export class MatchView {
 
   setParticleDensity(density: number): void {
     this.particles.density = density;
+    this.debris.density = density;
   }
 
   /** The marker a spectator steers, and whatever their traps are doing, which everyone can see. */
@@ -499,6 +611,8 @@ export class MatchView {
     this.updateRagdolls(frameDt);
     this.syncPickups(match);
     this.particles.update(frameDt);
+    this.debris.update(frameDt);
+    this.skids.update(frameDt);
     this.bolts.update(frameDt);
     this.updateWrecks(frameDt);
     this.flash.intensity = Math.max(0, this.flash.intensity - frameDt * 900);
@@ -523,6 +637,8 @@ export class MatchView {
       (mesh.material as THREE.Material).dispose();
     }
     this.particles.clear();
+    this.debris.clear();
+    this.skids.clear();
     this.shake = 0;
     this.deathHold = 0;
     this.flash.intensity = 0;
@@ -530,6 +646,9 @@ export class MatchView {
       v.roll = 0;
       v.airPeak = 0;
       v.flipPeak = 0;
+      v.skid = [null, null];
+      // The dents come back as the hits play again.
+      healHullDents(v.model);
     }
     if (this.trapMarker) this.trapMarker.visible = false;
     this.recording = false;
@@ -690,10 +809,18 @@ export class MatchView {
           healHullScars(v.model);
           v.scars = 0;
         }
+        if (v) {
+          healHullDents(v.model);
+          for (const antenna of v.model.antennas) antenna.visible = true;
+          v.skid = [null, null];
+        }
         break;
       }
       case 'hit':
-        if (event.source >= 0) this.cutterHit(event);
+        if (event.source >= 0) {
+          this.cutterHit(event);
+          this.weaponHit(event);
+        }
         if (event.source < 0) {
           this.particles.burst(event.x, event.z, { count: 2, color: 0xffc040, speed: 10, size: 0.14, life: 0.3 });
         } else if (event.amount >= BIG_HIT) {
@@ -932,20 +1059,12 @@ export class MatchView {
     v.smokeT -= dt;
     if (health < 0.45 && v.smokeT <= 0) {
       v.smokeT = 0.05 + health * 0.25;
-      this.particles.burst(bot.x, bot.z, { count: 1, color: health < 0.2 ? 0x1c1c1c : 0x555555, speed: 1.2, size: 0.6, life: 0.9, y: 1.6, gravity: -3 });
+      this.particles.burst(bot.x, bot.z, { count: 1, color: health < 0.2 ? 0x1c1c1c : 0x555555, speed: 1.2, size: 0.34, life: 1.1, y: 1.6, gravity: -3, grow: true });
     }
-    if (bot.boostT > 0) {
-      const boost = Math.hypot(bot.vx, bot.vz) / (bot.chassis.speed * BOOST_SPEED);
-      this.particles.burst(bot.x - Math.sin(bot.heading) * bot.radius, bot.z - Math.cos(bot.heading) * bot.radius, {
-        count: 1,
-        color: 0xff8a2a,
-        speed: 3,
-        size: 0.3 * Math.max(boost, 0.4),
-        life: 0.25,
-        y: 0.6,
-        gravity: 0,
-      });
-    }
+    model.root.updateMatrix();
+    this.exhaustFx(bot, v, dt, health, !hidden);
+    this.wear(bot, v, dt, health, !hidden, forward);
+    this.treadFx(bot, v, dt, !hidden, x, z);
     if (bot.stunT > 0 && Math.random() < 0.3) {
       this.particles.burst(bot.x, bot.z, { count: 1, color: 0x9fe6ff, speed: 4, size: 0.12, life: 0.25, y: 1.8, gravity: 0 });
     }
@@ -967,6 +1086,164 @@ export class MatchView {
     v.label.position.set(x, barY + 0.55, z);
   }
 
+  /**
+   * Smoke from the pipes: a wisp at idle, more on the move, a sooty cough when it puts its foot down,
+   * and flames while it boosts. A badly hurt engine smokes black and backfires as it slows.
+   */
+  private exhaustFx(bot: Bot, v: BotVisual, dt: number, health: number, seen: boolean): void {
+    if (dt <= 0) return;
+    const speed = Math.hypot(bot.vx, bot.vz);
+    const accel = (speed - v.lastSpeed) / dt;
+    v.lastSpeed = speed;
+    v.boostAge = bot.boostT > 0 ? v.boostAge + dt : 0;
+    if (!seen) return;
+    const top = bot.chassis.speed;
+    const boosting = bot.boostT > 0;
+    const pushing = accel > top * 0.8;
+    const sooty = pushing || health < SOOT_AT;
+    const matrix = v.model.root.matrix;
+    const backfire = health < SOOT_AT && accel < -top * 0.8 && Math.random() < dt * 4;
+    const rate = boosting ? 40 : pushing ? 20 : 3 + 7 * Math.min(1, speed / top);
+    v.exhaustT -= dt * rate;
+    let puffs = 0;
+    while (v.exhaustT <= 0 && puffs < 3) {
+      v.exhaustT += 1;
+      puffs++;
+    }
+    if (v.exhaustT <= 0) v.exhaustT = Math.random();
+    if (!puffs && !backfire) return;
+    for (const tip of v.model.exhausts) {
+      const p = this.tip.copy(tip.position).applyMatrix4(matrix);
+      const d = this.tipDir.copy(tip.direction).transformDirection(matrix);
+      if (boosting) {
+        const strength = Math.min(1, speed / (top * BOOST_SPEED));
+        this.particles.burst(p.x, p.z, { count: 2, color: Math.random() < 0.5 ? 0xff8a2a : 0xffc23a, speed: 7, size: 0.22 + 0.12 * strength, life: 0.14, y: p.y, gravity: -4, dir: { x: d.x, z: d.z, jitter: 1.2 }, rise: d.y * 7 });
+        this.particles.burst(p.x, p.z, { count: 1, color: 0xfff1c8, speed: 5, size: 0.14, life: 0.08, y: p.y, gravity: 0, dir: { x: d.x, z: d.z, jitter: 0.5 }, rise: d.y * 5 });
+      }
+      if (backfire) {
+        this.particles.burst(p.x, p.z, { count: 7, color: 0xff7a1a, speed: 6, size: 0.2, life: 0.18, y: p.y, gravity: 0, dir: { x: d.x, z: d.z, jitter: 3 }, rise: d.y * 6 });
+      }
+      if (puffs) {
+        this.particles.burst(p.x, p.z, {
+          count: puffs,
+          color: sooty ? 0x26282b : 0x8d9094,
+          speed: 2.2,
+          size: sooty ? 0.19 : 0.13,
+          life: sooty ? 0.85 : 0.55,
+          y: p.y,
+          gravity: -2.5,
+          dir: { x: d.x, z: d.z, jitter: 0.8 },
+          rise: d.y * 2,
+          grow: true,
+        });
+      }
+    }
+  }
+
+  /**
+   * Wear that builds as health goes. A bent wheel wobbles on its axle, then a second, and the worst one
+   * drags its rim along the floor in a trail of sparks. The antenna snaps off, loose wiring crackles,
+   * and in the end the deck catches fire. Repairs mend all of it but the dents, which go on respawning.
+   */
+  private wear(bot: Bot, v: BotVisual, dt: number, health: number, seen: boolean, forward: number): void {
+    const { model } = v;
+    const wheels = model.wheels;
+    const bent = (bot.id * 3 + 1) % Math.max(1, wheels.length);
+    const second = (bot.id * 5 + 2) % Math.max(1, wheels.length);
+    if (!model.tread) {
+      wheels.forEach((wheel, i) => {
+        const wobble = i === bent ? (health < BENT_AT ? 0.26 : health < WOBBLE_AT ? 0.13 : 0) : i === second && health < BENT_AT ? 0.13 : 0;
+        wheel.rotation.y = wobble;
+      });
+    }
+
+    const snapped = health < ANTENNA_AT;
+    for (const antenna of model.antennas) {
+      if (antenna.visible === !snapped) continue;
+      // Repairs bolt a new one on, once it's well enough to be worth it.
+      if (!snapped && health < ANTENNA_AT + 0.25) continue;
+      antenna.visible = !snapped;
+      if (snapped && seen) {
+        antenna.getWorldPosition(this.tip);
+        this.debris.throw('rod', 1, this.tip.x, this.tip.y + 0.3 * bot.size, this.tip.z, { color: 0x6d7379, speed: 5, up: 1.4 });
+        this.particles.burst(this.tip.x, this.tip.z, { count: 5, color: 0xffd27a, speed: 6, size: 0.08, life: 0.25, y: this.tip.y + 0.2 });
+      }
+    }
+    if (!seen || dt <= 0) return;
+
+    const top = bot.chassis.speed;
+    const moving = Math.abs(forward) / top;
+    if (health < RIM_SPARKS_AT && moving > 0.25 && Math.random() < dt * 24 * moving) {
+      const spot = model.tread ? this.tip.set(model.contact.x, 0, model.contact.z) : this.tip.copy(wheels[bent].position).setY(0);
+      spot.applyMatrix4(model.root.matrix);
+      const back = Math.sign(forward) || 1;
+      this.particles.burst(spot.x, spot.z, { count: 2, color: Math.random() < 0.5 ? 0xffc23a : 0xfff1c8, speed: 10, size: 0.09, life: 0.25, y: 0.08, gravity: 18, dir: { x: -Math.sin(bot.heading) * back, z: -Math.cos(bot.heading) * back, jitter: 4 } });
+    }
+
+    if (health < WIRES_AT) {
+      v.wireT -= dt;
+      if (v.wireT <= 0) {
+        v.wireT = 0.2 + Math.random() * (0.5 + health * 3);
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.random() * bot.radius * 0.5;
+        const y = (model.deck + 0.05) * bot.size;
+        this.particles.burst(bot.x + Math.cos(a) * r, bot.z + Math.sin(a) * r, { count: 6, color: 0xb8ecff, speed: 7, size: 0.08, life: 0.22, y, gravity: 10 });
+        this.particles.burst(bot.x + Math.cos(a) * r, bot.z + Math.sin(a) * r, { count: 2, color: 0xffffff, speed: 4, size: 0.12, life: 0.1, y, gravity: 0 });
+      }
+    }
+
+    if (health < FIRE_AT && Math.random() < dt * 30) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * bot.radius * 0.45;
+      this.particles.burst(bot.x + Math.cos(a) * r, bot.z + Math.sin(a) * r, { count: 1, color: Math.random() < 0.5 ? 0xff6a1a : 0xffc23a, speed: 1.5, size: 0.42, life: 0.45, y: (model.deck + 0.1) * bot.size, gravity: -9 });
+    }
+  }
+
+  /**
+   * Rubber laid on the floor by a robot sliding sideways, turning hard at speed or launching off a
+   * boost, and on loose floors a trail of dust, or snow on the ice.
+   */
+  private treadFx(bot: Bot, v: BotVisual, dt: number, seen: boolean, x: number, z: number): void {
+    const turn = dt > 0 ? Math.abs(wrapAngle(bot.heading - v.lastHeading)) / dt : 0;
+    v.lastHeading = bot.heading;
+    if (!seen || dt <= 0 || bot.airT > 0 || bot.flipT > 0) {
+      v.skid = [null, null];
+      return;
+    }
+    const h = bot.heading;
+    const fx = Math.sin(h);
+    const fz = Math.cos(h);
+    const rx = Math.cos(h);
+    const rz = -Math.sin(h);
+    const speed = Math.hypot(bot.vx, bot.vz);
+    const top = bot.chassis.speed;
+    const sideways = Math.abs(bot.vx * rx + bot.vz * rz);
+    const skidding = !bot.oiled && (sideways > 2.4 || (bot.boostT > 0 && v.boostAge < 0.45) || (turn > 2.4 && speed > top * 0.5));
+    const { contact } = v.model;
+    const width = 0.3 * bot.size;
+    const floorAt = this.particles.floorAt;
+    const kick = this.dust && speed > top * 0.35 ? dt * this.dust.rate * (speed / top) * (skidding ? 2.5 : 1) : 0;
+    for (const [i, side] of [[0, -1], [1, 1]] as const) {
+      const cx = x + (rx * side * contact.x + fx * contact.z) * bot.size;
+      const cz = z + (rz * side * contact.x + fz * contact.z) * bot.size;
+      const onFloor = floorAt?.(cx, cz) ?? true;
+      const last = v.skid[i];
+      if (skidding && onFloor) {
+        if (!last) {
+          v.skid[i] = { x: cx, z: cz };
+        } else if (Math.hypot(cx - last.x, cz - last.z) > SKID_GAP) {
+          this.skids.add(last.x, last.z, cx, cz, width);
+          v.skid[i] = { x: cx, z: cz };
+        }
+      } else {
+        v.skid[i] = null;
+      }
+      if (this.dust && onFloor && Math.random() < kick) {
+        this.particles.burst(cx, cz, { count: 1, color: this.dust.color, speed: 2.5, size: 0.24, life: 0.6, y: 0.15, gravity: -0.8, grow: true, dir: { x: -bot.vx / (speed || 1), z: -bot.vz / (speed || 1), jitter: 1.5 } });
+      }
+    }
+  }
+
   /** Armor plates break off as its armor wears away, or with its health if it has none, and the paint scorches as its health goes. */
   private showDamage(bot: Bot, v: BotVisual, health: number): void {
     const { model } = v;
@@ -975,16 +1252,31 @@ export class MatchView {
 
     // Health can round to just above full on its way over the network.
     const plating = bot.maxArmour > 0 ? bot.armour / bot.maxArmour : health;
-    const lost = Math.floor(Math.max(0, 1 - plating) * 1.4 * model.plates.length);
-    const target = Math.min(lost, model.plates.length);
+    const worn = Math.max(0, 1 - plating) * 1.4 * model.plates.length;
+    const target = Math.min(Math.floor(worn), model.plates.length);
+    const rest = (plate: THREE.Mesh) => (plate.userData.rest ??= plate.rotation.x) as number;
     if (target < v.platesLost) {
       // Healing bolts the armor back on.
       for (let i = target; i < v.platesLost; i++) model.plates[i].visible = true;
       v.platesLost = target;
     }
     while (v.platesLost < target) {
-      model.plates[v.platesLost++].visible = false;
+      const plate = model.plates[v.platesLost++];
+      plate.visible = false;
+      plate.rotation.x = rest(plate);
       this.particles.burst(bot.x, bot.z, { count: 7, color: 0x6d7379, speed: 9, size: 0.3, life: 0.9, y: 1.2 });
+      // Dying throws everything at once, and the blast covers that.
+      if (health > 0) {
+        plate.getWorldPosition(this.tip);
+        const color = (plate.material as THREE.MeshStandardMaterial).color.getHex();
+        this.debris.throw('panel', 1, this.tip.x, this.tip.y, this.tip.z, { color, speed: 6, up: 1.1, size: bot.size });
+      }
+    }
+    // The next to go hangs loose and rattles first.
+    for (let i = v.platesLost; i < model.plates.length; i++) {
+      const plate = model.plates[i];
+      const loose = i === v.platesLost ? worn - target : 0;
+      plate.rotation.x = rest(plate) + loose * (0.35 + Math.sin(this.spin * 38 + i) * 0.06);
     }
   }
 

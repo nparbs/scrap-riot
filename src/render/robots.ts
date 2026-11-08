@@ -52,6 +52,18 @@ export interface RobotModel {
   rollHeight: number;
   /** Where a flame starts, as a height and a distance out from the middle of the robot. */
   muzzle: { height: number; reach: number };
+  /** The painted shell, which takes dents. */
+  hull: THREE.Mesh;
+  /** The exhaust pipes, which stand up off the deck on some classes. */
+  exhaust: THREE.Group;
+  /** The open end of each pipe and which way it blows, in the robot's own space. */
+  exhausts: { position: THREE.Vector3; direction: THREE.Vector3 }[];
+  /** Antennas on the tower, which snap off once the robot is badly hurt. */
+  antennas: THREE.Object3D[];
+  /** Where the outer rear wheels touch the floor, in the robot's own space, for skid marks and dust. */
+  contact: { x: number; z: number };
+  /** How high the top of the deck is, in the robot's own space. */
+  deck: number;
 }
 
 const steel = new THREE.MeshStandardMaterial({ color: 0x6d7379, metalness: 0.75, roughness: 0.45 });
@@ -751,7 +763,7 @@ function buildNose(id: ChassisId, s: HullSpec, baseY: number): THREE.Group {
   return bake(nose);
 }
 
-function buildHull(root: THREE.Group, id: ChassisId, body: BodyId, paint: THREE.Material, trim: THREE.Material, wheels: THREE.Mesh[], treads: ((travel: number) => void)[], look: WheelsId, ends: { nose: boolean; tail: boolean }): { deckY: number; frame: THREE.Group; nose: THREE.Group | null } {
+function buildHull(root: THREE.Group, id: ChassisId, body: BodyId, paint: THREE.Material, trim: THREE.Material, wheels: THREE.Mesh[], treads: ((travel: number) => void)[], look: WheelsId, ends: { nose: boolean; tail: boolean }): { deckY: number; frame: THREE.Group; nose: THREE.Group | null; contact: { x: number; z: number } } {
   const s = HULLS[id];
   const baseY = s.wheelRadius * 0.7;
   const frame = new THREE.Group();
@@ -816,7 +828,95 @@ function buildHull(root: THREE.Group, id: ChassisId, body: BodyId, paint: THREE.
 
   const baked = bake(frame);
   root.add(baked);
-  return { deckY: baseY + s.height, frame: baked, nose };
+  const rearTyre = look === 'tracks' ? 0 : s.wheelRadius * WHEEL_LOOK[look].radius;
+  const contact = {
+    x: s.width / 2 + s.outboard + s.trackWidth / 2,
+    z: look === 'tracks' ? -s.length * 0.4 : -(s.length - rearTyre * 1.5) / 2,
+  };
+  return { deckY: baseY + s.height, frame: baked, nose, contact };
+}
+
+/**
+ * Each class's exhaust: twin chrome megaphones down the Whippet's flanks, flat glowing vents on the
+ * Wraith, a pair of bent stacks on the Bruiser, one fat raked pipe on the Rhino, and two big capped
+ * smokestacks on the Anvil. They keep to the corners, clear of the tower and anything in the middle.
+ *
+ * They're built as if at the back. With `flip` at -1 they go at the front instead, mirrored by the
+ * caller, so the deck is read where they'll really stand.
+ */
+function buildExhaust(id: ChassisId, s: HullSpec, body: BodyId, baseY: number, flip: 1 | -1): { group: THREE.Group; tips: { position: THREE.Vector3; direction: THREE.Vector3 }[] } {
+  const group = new THREE.Group();
+  const tips: { position: THREE.Vector3; direction: THREE.Vector3 }[] = [];
+  const back = -s.length / 2;
+  const deck = (u: number, t: number): Vec => {
+    const [x, y, z] = onDeck(s, body, u, t * flip, baseY);
+    return [x, y, z * flip];
+  };
+  const tip = (p: Vec, d: Vec) => tips.push({ position: new THREE.Vector3(...p), direction: new THREE.Vector3(...d).normalize() });
+  switch (id) {
+    case 'scout': {
+      const y = baseY + 0.17;
+      for (const side of [-1, 1]) {
+        const x = side * (frameHalf(s, flip * (back + 0.3)) + 0.06);
+        group.add(tube([[x, y, 0.25], [x, y, back + 0.25], [x + side * 0.02, y + 0.03, back - 0.04]], 0.038, blade, false, 16));
+        // A flared megaphone on the end.
+        const flare = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.042, 0.16, ROUND_SIDES).rotateX(-Math.PI / 2), blade);
+        flare.position.set(x + side * 0.02, y + 0.035, back - 0.1);
+        flare.castShadow = true;
+        // Dark inside the mouth, so it reads as a pipe and not a solid cone.
+        const mouth = new THREE.Mesh(new THREE.CircleGeometry(0.058, ROUND_SIDES).rotateY(Math.PI), dark);
+        mouth.position.set(x + side * 0.02, y + 0.035, back - 0.181);
+        group.add(flare, mouth);
+        tip([x + side * 0.02, y + 0.04, back - 0.18], [0, 0.12, -1]);
+      }
+      break;
+    }
+    case 'ghost': {
+      for (const side of [-1, 1]) {
+        const [x, y, z] = deck(side * 0.5, -0.86);
+        group.add(placed(box(0.26, 0.035, 0.2, dark), x, y + 0.012, z));
+        // Glowing slots, the only sign of the heat it hides.
+        for (const slot of [-0.05, 0, 0.05]) group.add(placed(box(0.2, 0.012, 0.022, hot), x, y + 0.032, z + slot));
+        tip([x, y + 0.05, z - 0.05], [0, 1, -0.7]);
+      }
+      break;
+    }
+    case 'brawler': {
+      for (const side of [-1, 1]) {
+        const [x, y, z] = deck(side * 0.82, -0.88);
+        group.add(placed(cylinder(0.075, 0.05, dark), x, y + 0.02, z));
+        group.add(tube([[x, y, z], [x, y + 0.38, z], [x, y + 0.5, z - 0.05], [x, y + 0.55, z - 0.16]], 0.048, steel, false, 16));
+        group.add(ring(0.052, 0.012, dark, x, y + 0.22, z));
+        tip([x, y + 0.56, z - 0.2], [0, 0.45, -1]);
+      }
+      break;
+    }
+    case 'rhino': {
+      const [x, y, z] = deck(0.84, -0.84);
+      const rake = 0.55;
+      const top: Vec = [x, y + 0.62, z - 0.62 * rake];
+      group.add(placed(cylinder(0.11, 0.06, dark), x, y + 0.025, z));
+      group.add(rod([x, y, z], top, 0.07, steel, ROUND_SIDES));
+      // A heat shield with holes, bolted along the pipe.
+      group.add(rod([x + 0.02, y + 0.15, z - 0.15 * rake], [x + 0.02, y + 0.45, z - 0.45 * rake], 0.082, dark, 10));
+      tip([top[0], top[1] + 0.02, top[2] - 0.01], [0, 1, -rake]);
+      break;
+    }
+    case 'juggernaut': {
+      for (const side of [-1, 1]) {
+        const [x, y, z] = deck(side * 0.88, -0.95);
+        const height = 0.85;
+        group.add(placed(cylinder(0.11, 0.07, dark), x, y + 0.03, z));
+        group.add(placed(cylinder(0.09, height, steel), x, y + height / 2, z));
+        for (const band of [0.3, 0.6]) group.add(placed(cylinder(0.1, 0.05, dark), x, y + height * band, z));
+        // A wide lip round the top.
+        group.add(placed(cylinder(0.12, 0.06, dark), x, y + height, z));
+        tip([x, y + height + 0.04, z], [0, 1, 0]);
+      }
+      break;
+    }
+  }
+  return { group, tips };
 }
 
 /** Where the tower sits, so it rests on the hull whatever the shape below it. */
@@ -993,9 +1093,13 @@ function addBolts(pivot: THREE.Group, radius: number, y: number, count: number):
 }
 
 function addMast(pivot: THREE.Group, x: number, z: number, y: number, height: number): void {
-  pivot.add(rod([x, y, z], [x, y + height, z], 0.011, steel, 6));
   pivot.add(placed(cylinder(0.022, 0.03, dark), x, y + 0.01, z));
-  pivot.add(ball(0.02, glowRed, x, y + height, z));
+  // The whip and its light, apart from the base, so they can snap off together.
+  const whip = new THREE.Group();
+  whip.name = 'antenna';
+  whip.add(rod([x, y, z], [x, y + height, z], 0.011, steel, 6));
+  whip.add(ball(0.02, glowRed, x, y + height, z));
+  pivot.add(whip);
 }
 
 /** A tower with flat sides, tapering upward. */
@@ -1912,7 +2016,7 @@ export function buildRobot(build: RobotBuild): RobotModel {
   const treads: ((travel: number) => void)[] = [];
   // A bumper is left off whichever end has the secondary weapon or the main weapon on it.
   const gearAtEnd = GEAR_AT_THE_END.has(build.defense);
-  const { deckY, frame, nose } = buildHull(root, build.chassis, paint.body, hullMaterial, trim, wheels, treads, build.wheels ?? 'large4', { nose: !(build.rearMelee && gearAtEnd), tail: !build.rearMelee && !gearAtEnd });
+  const { deckY, frame, nose, contact } = buildHull(root, build.chassis, paint.body, hullMaterial, trim, wheels, treads, build.wheels ?? 'large4', { nose: !(build.rearMelee && gearAtEnd), tail: !build.rearMelee && !gearAtEnd });
   const spec = HULLS[build.chassis];
 
   const towerPivot = new THREE.Group();
@@ -1974,11 +2078,29 @@ export function buildRobot(build: RobotBuild): RobotModel {
   shield.visible = false;
   root.add(shield);
 
+  const exhaust = buildExhaust(build.chassis, spec, paint.body, spec.wheelRadius * 0.7, build.rearMelee ? -1 : 1);
+  exhaust.group.name = 'exhaust';
+  // The pipes go at the opposite end from the main weapon, so nothing it swings can hit them.
+  if (build.rearMelee) {
+    exhaust.group.scale.z = -1;
+    for (const tip of exhaust.tips) {
+      tip.position.z *= -1;
+      tip.direction.z *= -1;
+    }
+  }
+  root.add(exhaust.group);
+
   const materials = [hullMaterial, headMaterial, trim];
   const plates: THREE.Mesh[] = [];
+  const antennas: THREE.Object3D[] = [];
+  let hull: THREE.Mesh | null = null;
   root.traverse((node) => {
     if (node instanceof THREE.Mesh && node.material === trim) plates.push(node);
+    if (node instanceof THREE.Mesh && node.material === hullMaterial && !hull) hull = node;
+    if (node.name === 'antenna') antennas.push(node);
   });
+  const shell = hull as unknown as THREE.Mesh;
+  shell.userData.crease = HULL_CREASE[paint.body];
 
   return {
     root,
@@ -2005,7 +2127,73 @@ export function buildRobot(build: RobotBuild): RobotModel {
     muzzle: mount
       ? { height: towerPivot.position.y + (mount.y + 0.06) * towerScale, reach: facing * towerZ + (mount.z + mount.muzzle) * towerScale }
       : { height: 1.2, reach: spec.length / 2 + 0.7 },
+    hull: shell,
+    exhaust: exhaust.group,
+    exhausts: exhaust.tips,
+    antennas,
+    contact,
+    deck: deckY,
   };
+}
+
+/** How many dents a shell takes before it stops getting any worse. */
+const MAX_DENTS = 12;
+
+/**
+ * Pushes a dent into the shell where a hit landed, from the direction given in the robot's own space.
+ * Depth is in the shell's own units, a few hundredths for a solid hit.
+ */
+export function dentHull(model: RobotModel, dirX: number, dirZ: number, depth: number): void {
+  const hull = model.hull;
+  const data = hull.userData as { pristine?: THREE.BufferGeometry; dents?: number; crease?: number };
+  if ((data.dents ?? 0) >= MAX_DENTS) return;
+  data.dents = (data.dents ?? 0) + 1;
+  data.pristine ??= hull.geometry;
+  hull.geometry.computeBoundingBox();
+  const box = hull.geometry.boundingBox!;
+  const size = box.getSize(new THREE.Vector3());
+  const middle = box.getCenter(new THREE.Vector3());
+  const length = Math.hypot(dirX, dirZ) || 1;
+  const ux = dirX / length / (size.x / 2);
+  const uz = dirZ / length / (size.z / 2);
+  const geometry = hull.geometry.clone();
+  const position = geometry.getAttribute('position');
+  const point = new THREE.Vector3();
+  // Where the hit lands: somewhere on the part of the shell that sticks out furthest toward it.
+  let reach = -Infinity;
+  for (let i = 0; i < position.count; i++) reach = Math.max(reach, (position.getX(i) - middle.x) * ux + (position.getZ(i) - middle.z) * uz);
+  const near: number[] = [];
+  for (let i = 0; i < position.count; i++) {
+    if ((position.getX(i) - middle.x) * ux + (position.getZ(i) - middle.z) * uz >= reach - 0.15) near.push(i);
+  }
+  const center = new THREE.Vector3().fromBufferAttribute(position, near[Math.floor(Math.random() * near.length)]);
+  const radius = Math.min(size.x, size.z) * (0.22 + Math.random() * 0.1);
+  const inward = new THREE.Vector3();
+  for (let i = 0; i < position.count; i++) {
+    point.fromBufferAttribute(position, i);
+    const away = point.distanceTo(center);
+    if (away >= radius) continue;
+    const falloff = (1 - away / radius) ** 2;
+    inward.subVectors(middle, point).setY((middle.y - point.y) * 0.5).normalize().multiplyScalar(depth * falloff);
+    position.setXYZ(i, point.x + inward.x, point.y + inward.y, point.z + inward.z);
+  }
+  // Shading follows the dent, so it shows up under the lights.
+  const shaded = toCreasedNormals(geometry, data.crease ?? 0.3);
+  geometry.dispose();
+  if (hull.geometry !== data.pristine) hull.geometry.dispose();
+  hull.geometry = shaded;
+}
+
+/** A respawned robot comes back with its shell beaten flat again. */
+export function healHullDents(model: RobotModel): void {
+  const hull = model.hull;
+  const data = hull.userData as { pristine?: THREE.BufferGeometry; dents?: number };
+  if (!data.pristine) return;
+  // The wreck drawn from the dented shell is long gone by the time a robot respawns.
+  if (hull.geometry !== data.pristine) hull.geometry.dispose();
+  hull.geometry = data.pristine;
+  data.pristine = undefined;
+  data.dents = 0;
 }
 
 /** What decides how a weapon looks at this moment, all of which online clients know too. */

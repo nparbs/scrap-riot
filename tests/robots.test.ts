@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { buildRobot, type RobotBuild, type RobotModel } from '../src/render/robots';
+import { buildRobot, dentHull, healHullDents, type RobotBuild, type RobotModel } from '../src/render/robots';
 import { BODIES, CHASSIS, DEFAULT_PAINT, DEFENSES, MELEE, type BodyId, type ChassisId, type DefenseId, type MeleeId } from '../src/sim/data';
 import { Match, type BotSetup } from '../src/sim/match';
 import { newSave } from '../src/game/progress';
@@ -250,6 +250,21 @@ describe('keeping parts out of each other', () => {
     expect(buildRobot({ ...build('brawler', 'wedge', 'shield'), melee: 'hammer', rearMelee: true }).nose).not.toBeNull();
   });
 
+  it.each(CHASSIS_IDS)('keeps the exhaust pipes clear of a main weapon mounted at the back of the %s', (chassis) => {
+    const clashes: string[] = [];
+    for (const melee of WEAPONS) {
+      const model = buildRobot({ ...build(chassis, 'wedge'), melee, rearMelee: true });
+      model.root.updateMatrixWorld(true);
+      const points = weaponPoints(model);
+      model.exhaust.traverse((node) => {
+        if (!(node instanceof THREE.Mesh)) return;
+        const pipe = new THREE.Box3().setFromObject(node);
+        if (points.some((p) => pipe.containsPoint(p))) clashes.push(melee);
+      });
+    }
+    expect([...new Set(clashes)]).toEqual([]);
+  }, 30_000);
+
   it('keeps main and secondary weapons at opposite ends', () => {
     for (const defense of ['mines', 'oil', 'spikes', 'steelram', 'plow', 'kamikaze'] as DefenseId[]) {
       for (const rearMelee of [false, true]) {
@@ -259,7 +274,7 @@ describe('keeping parts out of each other', () => {
         const atEnd = new THREE.Box3();
         model.root.traverse((node) => {
           let skip = false;
-          for (let up: THREE.Object3D | null = node; up; up = up.parent) skip ||= up === model.meleePivot || up === model.shield || up === model.frame || up === model.tower || up === model.weaponMount || up === model.nose || model.wheels.includes(up as THREE.Mesh);
+          for (let up: THREE.Object3D | null = node; up; up = up.parent) skip ||= up === model.meleePivot || up === model.shield || up === model.frame || up === model.tower || up === model.weaponMount || up === model.nose || up === model.exhaust || model.wheels.includes(up as THREE.Mesh);
           if (node instanceof THREE.Mesh && !skip && node.material !== model.hullMaterial && !model.plates.includes(node)) atEnd.expandByObject(node);
         });
         expect(weapon.intersectsBox(atEnd), `${defense} ${rearMelee}`).toBe(false);
@@ -275,6 +290,8 @@ describe('robot models', () => {
         for (const defense of Object.keys(DEFENSES) as DefenseId[]) {
           const model = buildRobot(build(chassis, body, defense));
           model.tower.removeFromParent();
+          // Smokestacks stand up off the back corners on purpose.
+          model.exhaust.removeFromParent();
           // It's all merged into one, which reaches the whole robot, so it says nothing about the deck.
           model.frame.removeFromParent();
           model.weaponMount?.removeFromParent();
@@ -298,5 +315,53 @@ describe('robot models', () => {
 
   it('still have armour to lose as they take damage', () => {
     for (const body of BODY_IDS) expect(buildRobot(build('brawler', body)).plates.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('have exhaust pipes at the back, blowing backward or up', () => {
+    for (const chassis of CHASSIS_IDS) {
+      for (const body of BODY_IDS) {
+        const model = buildRobot(build(chassis, body));
+        expect(model.exhausts.length, chassis).toBeGreaterThan(0);
+        expect(model.exhaust.children.length, chassis).toBeGreaterThan(0);
+        for (const { position, direction } of model.exhausts) {
+          expect(position.z, chassis).toBeLessThan(0);
+          expect(direction.z, chassis).toBeLessThanOrEqual(0);
+          expect(direction.length(), chassis).toBeCloseTo(1, 5);
+        }
+      }
+    }
+  });
+
+  it('keep the pipes clear of the tower', () => {
+    for (const chassis of CHASSIS_IDS) {
+      const model = buildRobot(build(chassis, 'wedge'));
+      model.root.updateMatrixWorld(true);
+      const parts: THREE.Box3[] = [];
+      model.tower.traverse((node) => {
+        if (node instanceof THREE.Mesh) parts.push(new THREE.Box3().setFromObject(node).expandByScalar(-0.01));
+      });
+      model.exhaust.traverse((node) => {
+        if (!(node instanceof THREE.Mesh)) return;
+        const pipe = new THREE.Box3().setFromObject(node);
+        expect(parts.some((part) => part.intersectsBox(pipe)), chassis).toBe(false);
+      });
+    }
+  });
+
+  it('take dents that a respawn beats flat again', () => {
+    const model = buildRobot(build('rhino', 'wedge'));
+    const before = Float32Array.from(model.hull.geometry.getAttribute('position').array);
+    dentHull(model, 0, 1, 0.08);
+    const dented = model.hull.geometry.getAttribute('position').array;
+    let moved = 0;
+    for (let i = 0; i < before.length; i++) moved = Math.max(moved, Math.abs(before[i] - dented[i]));
+    expect(moved).toBeGreaterThan(0.01);
+    healHullDents(model);
+    expect(Array.from(model.hull.geometry.getAttribute('position').array)).toEqual(Array.from(before));
+  });
+
+  it('have antennas to snap off on the towers that carry them', () => {
+    const counts = CHASSIS_IDS.map((chassis) => buildRobot(build(chassis, 'wedge')).antennas.length);
+    expect(counts.some((n) => n > 0)).toBe(true);
   });
 });
