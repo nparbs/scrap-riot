@@ -14,7 +14,9 @@ import {
   buildStats,
   CHASSIS,
   CLASSES,
+  classBonus,
   classFor,
+  NO_BONUS,
   DEFENSES,
   MELEE,
   REWARD,
@@ -424,7 +426,8 @@ function partChips(slot: Slot, id: string, fitted: ChassisId): string {
       weapon.pierce ? chip(`${Math.round(weapon.pierce * 100)}% through armor`, 'good') : '',
       battery > 0 ? chip(`${Math.round(battery * 100)}% battery ${held ? 'per sec' : 'per hit'}`, 'bad') : chip('No battery', 'good'),
       weapon.onTower ? chip('On the tower', 'good') : '',
-      chip(`Best on ${CHASSIS[classFor(id as MeleeId)].name}`, classFor(id as MeleeId) === fitted ? 'good' : ''),
+      // A weapon that gets the class bonus says so in its banner instead.
+      classFor(id as MeleeId) === fitted ? '' : chip(`Best on ${CHASSIS[classFor(id as MeleeId)].name}`),
       costChips(weapon),
     ].join('');
   }
@@ -459,6 +462,15 @@ function fittedPart(loadout: Save['loadout'], slot: Slot): string {
   return (loadout as unknown as Record<Slot, string>)[slot] ?? installedParts(loadout)[slot as 'engine'];
 }
 
+/** A banner across a weapon or chassis card that gets the class bonus with the robot as shown, so they stand out. */
+function classBanner(slot: Slot, id: string, shown: Save['loadout']): string {
+  const chassis = slot === 'chassis' ? (id as ChassisId) : slot === 'melee' ? shown.chassis : null;
+  const melee = slot === 'melee' ? (id as MeleeId) : slot === 'chassis' ? shown.melee : null;
+  if (!chassis || !melee || !CLASSES[chassis].weapons.includes(melee)) return '';
+  const partner = slot === 'melee' ? CHASSIS[chassis].name : MELEE[melee].name;
+  return `<span class="class-banner"><b>★ Class bonus</b> with your ${partner}: ${bonusText(CLASSES[chassis].bonus)}</span>`;
+}
+
 /** Every part of one type. Clicking one only tries it on, and nothing is spent without pressing its button. */
 function partCards(save: Save, slot: Slot, preview: PartPreview | null, suggestion: Suggestion | null): string {
   const fitted = fittedPart(save.loadout, slot);
@@ -477,14 +489,15 @@ function partCards(save: Save, slot: Slot, preview: PartPreview | null, suggesti
       const job = slot === 'chassis' ? CLASSES[id as ChassisId] : null;
       const specialty = job ? `<span class="class-note"><b>${bonusText(job.bonus)}</b> with ${job.weapons.map((weapon) => MELEE[weapon].name).join(', ')}${job.movingTarget ? `. <b>${Math.round(job.movingTarget * 100)}% less damage</b> at speed` : ''}${job.armourRegen ? `. <b>Rebuilds armor</b> after ${ARMOUR_REGEN_DELAY} seconds out of combat` : ''}</span>` : '';
       const suggested = suggestion?.id === id ? chip('Suggested', 'good') : '';
-      const about = `${thumb}<strong>${item.name}</strong>${type}<span>${item.blurb}</span>${specialty}<div class="chips">${suggested}${partChips(slot, id, shown.chassis)}</div>`;
+      const banner = classBanner(slot, id, shown);
+      const about = `${banner}${thumb}<strong>${item.name}</strong>${type}<span>${item.blurb}</span>${specialty}<div class="chips">${suggested}${partChips(slot, id, shown.chassis)}</div>`;
       const price = has ? '<small class="card-owned">Owned</small>' : `<small class="card-price">$${item.price.toLocaleString()}</small>`;
       const action = has
         ? `<button class="plate-btn" data-slot="${slot}" data-id="${id}" ${problem ? 'disabled' : ''}>${problem === 'weight' ? 'Too heavy' : problem === 'points' ? 'Too many points' : 'Fit'}</button>`
         : `<button class="plate-btn plate-buy" data-slot="${slot}" data-id="${id}" ${broke ? 'disabled' : ''}>Buy</button>`;
       return on
-        ? `<div class="card part-card card-on"><div class="part-card-about">${about}</div><div class="card-foot"><small class="card-owned">Fitted</small></div></div>`
-        : `<div class="card part-card${trying ? ' card-trying' : ''}${broke ? ' card-broke' : ''}"><button class="part-card-about" data-preview-slot="${trying ? '' : slot}" data-preview-id="${id}" aria-pressed="${trying}">${about}</button><div class="card-foot">${price}${action}</div></div>`;
+        ? `<div class="card part-card card-on${banner ? ' card-class' : ''}"><div class="part-card-about">${about}</div><div class="card-foot"><small class="card-owned">Fitted</small></div></div>`
+        : `<div class="card part-card${banner ? ' card-class' : ''}${trying ? ' card-trying' : ''}${broke ? ' card-broke' : ''}"><button class="part-card-about" data-preview-slot="${trying ? '' : slot}" data-preview-id="${id}" aria-pressed="${trying}">${about}</button><div class="card-foot">${price}${action}</div></div>`;
     })
     .join('');
 }
@@ -556,7 +569,7 @@ function workshopPanel(save: Save, options: GarageOptions): string {
     : '';
 
   const rail = SHOP_GROUPS.map(([group, items]) => `<h4>${group}</h4>${items.map(([id, label]) => {
-    const current = id === 'upgrades' ? '' : id === 'powerups' ? `<small>${fittedPowerups(loadout).length} of ${POWERUP_SLOTS} selected</small>` : `<small>${partName(id, fittedPart(shown, id))}</small>`;
+    const current = id === 'upgrades' ? '' : id === 'powerups' ? `<small>${fittedPowerups(loadout).length} of ${POWERUP_SLOTS} selected</small>` : `<small>${(id === 'melee' || id === 'chassis') && classBonus(shown.chassis, shown.melee) !== NO_BONUS ? '<b class="rail-class" title="Class bonus active">★</b> ' : ''}${partName(id, fittedPart(shown, id))}</small>`;
     return `<button class="rail-item${category === id ? ' rail-on' : ''}${preview?.slot === id ? ' part-trying' : ''}" data-buy="${id}"><span>${label}</span>${current}</button>`;
   }).join('')}`).join('');
   const title = SHOP_GROUPS.flatMap(([, items]) => items).find(([id]) => id === category)?.[1] ?? '';
@@ -599,7 +612,7 @@ function statsPanel(save: Save, preview: PartPreview | null): string {
   const job = CLASSES[shown.chassis];
   const rows: [string, string, string?][] = [
     ['Class', job.role],
-    ['Class bonus', job.weapons.includes(shown.melee) ? 'Active' : 'Not with this weapon'],
+    ['Class bonus', job.weapons.includes(shown.melee) ? '★ Active' : 'Not with this weapon', job.weapons.includes(shown.melee) ? 'spec-class' : ''],
     ['Health', `${Math.round(stats.hp)}`],
     ['Armor', `${stats.armour}`],
     ['Top speed', stats.speed.toFixed(1)],
