@@ -18,7 +18,7 @@ How robots are built and fair-tested. All the numbers are in `src/sim/data.ts`. 
 | --- | --- | --- | --- |
 | Whippet | Striker | Dagger, Power Axe, Drum, Undercutter | +20% damage, 20% faster reload. With any weapon, 25% less damage while at 70% of top speed or more, and rebuilds 8 armor a second after 5 seconds without hurting or being hurt |
 | Wraith | Lancer | Flamethrower, Tesla Coil, Pneumatic Spear | +10% damage, 40% less battery, 15% more reach |
-| Bruiser | Brawler | Chainsaw, Drill, Rolling Pin, Hammer Saw | +15% damage, 15% less battery |
+| Bruiser | Brawler | Chainsaw, Drill, Rolling Pin, Flail | +15% damage, 15% less battery |
 | Rhino | Bulldozer | Spike Ram, Claw, Lifting Forks, Pneumatic Flipper, Magnet | +10% damage, 10% faster reload, +20% grip time |
 | Anvil | Titan | Sledgehammer, Hydraulic Crusher, Vertical Disc, Vertical Bar, Horizontal Bar | +15% damage, 10% faster reload |
 

@@ -42,17 +42,19 @@ The server is authoritative: it runs the same simulation as the game, and client
 ## What's in the game
 
 - **Three ways to play:** Play Online for 1v1 duels, Offline vs Bots with your choice of map and mode, and Training against a dummy that doesn't fight back.
-- **A soundtrack and sound effects** synthesized live in the browser, with different sounds for each weapon family and no audio files. Music can be turned off in Settings.
+- **A soundtrack and sound effects** synthesized live in the browser, with no audio files: 13 songs across rock, synthwave, breakbeat, industrial, chiptune and lo-fi, a riser and impact that drop the music in on GO, and different sounds for each weapon family. Music can be turned off in Settings.
 - **A paintshop** in the style of the original: paint directly on your unfolded robot with a pencil, spray can, shapes, fill and a 120-colour palette, and see it live on the 3D model. Your opponent sees it too.
 - **A workshop** with 5 chassis, each a class with its own look, tower and weapons it's best with, plus wheels, engines, power sources and an armor dial. Every robot gets 100 points to spend, and every part weighs something, so big weapons need a big chassis and heavy robots are slower but hit harder ([how balance works](docs/balance.md)).
 - **35 weapons, and no guns:** 21 main weapons and 14 secondary weapons, drawn from every version of the original and from real combat robots such as spinners, flippers, crushers and flamethrowers ([research notes](docs/original-research.md))
 - **6 powerups, take 3 into a match:** Rage, Mega Shield, Cloaking, X-Ray, Repair Kit, Battery Pack
 - **3 Career upgrade tracks** of 5 levels each: hull, engine, weapons. They only count in Career fights.
 - **7 maps:** The Skyscraper for duels, plus for Offline vs Bots a pit with a timed trapdoor and saws in the walls, a cross-shaped oil rig with a wrecking ball, a furnace with erupting vents around a molten pool, a canyon with chasms, bridges and jump ramps, a foundry with belts and drop hammers, and a round frozen lake with ice that gives way
-- **4 modes:** Online Duel and Online Brawl (up to 8 robots in a Free-for-All on a random map, with bots in any empty seats), plus for Offline vs Bots Free-for-All, Last Robot Standing and King of the Hill
+- **4 modes:** Online Duel and Online Brawl (up to 8 robots in a Free-for-All on a random map, with bots in any empty seats), plus for Offline vs Bots Free-for-All, Last Robot Standing and King of the Hill (a zone that moves every 30 seconds, and the most points after two and a half minutes wins)
 - **Career:** 12 fights with medals and 3 boss robots, plus achievements
 - **Customization:** paint colors, patterns, body shapes and front or rear weapon mounts, all visible to other players
-- **Battle damage:** paint scorches and armor plates fall off as a robot gets hurt
+- **Battle damage:** robots dent where they're hit, armor plates rattle loose and fall off, wheels bend, antennas snap, wiring sparks and the deck catches fire as they get hurt
+- **Effects:** exhaust pipes on every chassis that smoke and shoot flames under boost, sparks, bolts and scraps of paint flying off with each hit, and skid marks and dust
+- **Kill-cam replays:** the kill that decided a match plays again in slow motion, with a fly-by when someone is pushed off the edge
 - **AI rivals** that get tougher as you win
 
 See [ROADMAP.md](ROADMAP.md) for what's next.
