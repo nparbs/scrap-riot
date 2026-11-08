@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, CATALOG, loadSave, makeRivals, newSave, partFits, previewLoadout, STARTING_MONEY, upgradeCost, writeSave, retireGuns } from '../src/game/progress';
+import { applyCheat, applyResult, buyOrEquip, buyPowerup, buyUpgrade, CATALOG, loadSave, makeRivals, newSave, partFits, previewLoadout, STARTING_MONEY, upgradeCost, writeSave, retireGuns, retireParts } from '../src/game/progress';
 import { ARMOUR, buildProblem, buildStats, CHASSIS, MELEE, pointsUsed, POWERUP_CAP, WHEELS } from '../src/sim/data';
 
 describe('cheat codes', () => {
@@ -219,5 +219,18 @@ describe('a new player', () => {
     expect(money).toBeGreaterThanOrEqual(MELEE.vertdisc.price + WHEELS.six.price - 50);
     expect(money).toBeGreaterThanOrEqual(MELEE.drum.price + MELEE.spear.price);
     expect(money).toBeLessThan(CHASSIS.juggernaut.price);
+  });
+});
+
+describe('the Hammer Saw going', () => {
+  it('pays back what it cost, and fits the chainsaw in its place', () => {
+    const save = newSave();
+    const before = save.money;
+    (save.owned.melee as string[]).push('hammersaw');
+    (save.loadout as { melee: string }).melee = 'hammersaw';
+    retireParts(save);
+    expect(save.money).toBe(before + 750);
+    expect(save.owned.melee).not.toContain('hammersaw');
+    expect(save.loadout.melee).toBe('chainsaw');
   });
 });

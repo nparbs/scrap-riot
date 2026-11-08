@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ARENA_ORDER, ARENAS } from '../src/sim/arena';
+import { ARENA_ORDER, ARENAS, hillAt, hillMovesIn, HILL_MOVE } from '../src/sim/arena';
 import { DEFENSES, MATCH, MELEE, type DefenseId, type MeleeId } from '../src/sim/data';
 import { Match, STEP, type Bot, type BotSetup, type Loadout } from '../src/sim/match';
 import { makeRivals, newSave } from '../src/game/progress';
@@ -641,7 +641,7 @@ describe('arenas', () => {
         expect(def.pits.some((p) => Math.hypot(p.x - spot.x, p.z - spot.z) < p.r + 1), `${id} repair`).toBe(false);
       }
       // A hill can be a ring around a pool, so it's the ring that has to be on solid ground.
-      expect(match.isSafeGround(def.hill.x + def.hill.r - 1, def.hill.z, 0) || def.pits.length === 0, `${id} hill`).toBe(true);
+      for (const hill of def.hills) expect(match.isSafeGround(hill.x + hill.r - 1, hill.z, 0) || def.pits.length === 0, `${id} hill ${JSON.stringify(hill)}`).toBe(true);
     }
   });
 });
@@ -665,10 +665,10 @@ describe('modes', () => {
     expect(order[2]).toBe(a);
   });
 
-  it('king of the hill pays in full to a robot alone in the zone, and splits it when shared', () => {
+  it('king of the hill scores a point a second to a robot alone in the zone, and splits it when shared', () => {
     const match = fight('pit', {}, {}, 'koth');
     const [a, b] = match.bots;
-    const { hill } = match.arena;
+    const hill = match.arena.hills[0];
     a.x = hill.x;
     a.z = hill.z;
     b.x = 26;
@@ -684,9 +684,36 @@ describe('modes', () => {
     run(match, 0.5);
     expect(a.hillScore).toBeCloseTo(held + 0.25, 1);
     expect(b.hillScore).toBeCloseTo(0.25, 1);
-    a.hillScore = match.hillTarget;
+    // Points alone never end it. The clock does, and the most points wins.
+    a.hillScore = 500;
+    match.step();
+    expect(match.over).toBe(false);
+    match.time = match.duration;
     match.step();
     expect(match.over).toBe(true);
     expect(match.standings()[0].bot).toBe(a);
+  });
+
+  it('king of the hill lasts two and a half minutes, with the zone moving every 30 seconds', () => {
+    const match = fight('pit', {}, {}, 'koth');
+    expect(match.duration).toBe(150);
+    const [a, b] = match.bots;
+    const { hills } = match.arena;
+    expect(hillAt(match.arena, 0)).toBe(hills[0]);
+    expect(hillAt(match.arena, HILL_MOVE - 0.01)).toBe(hills[0]);
+    expect(hillAt(match.arena, HILL_MOVE)).toBe(hills[1]);
+    expect(hillMovesIn(HILL_MOVE - 4)).toBeCloseTo(4, 5);
+    // Holding the first zone scores nothing once it has moved on.
+    b.x = b.z = 26;
+    match.time = HILL_MOVE;
+    a.x = hills[0].x;
+    a.z = hills[0].z;
+    a.vx = a.vz = 0;
+    run(match, 0.5);
+    expect(a.hillScore).toBe(0);
+    a.x = hills[1].x;
+    a.z = hills[1].z;
+    run(match, 0.5);
+    expect(a.hillScore).toBeGreaterThan(0.4);
   });
 });

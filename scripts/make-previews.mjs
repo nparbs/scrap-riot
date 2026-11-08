@@ -1,6 +1,7 @@
 // Draws the pictures on the map and career cards, from the game's own maps and robots, into public/previews.
 // It needs a browser to draw with: npm i --no-save playwright-core, then node scripts/make-previews.mjs
 // It uses Microsoft Edge, so nothing else has to be downloaded. Run it again whenever a map or a fight's look changes.
+// Give it names, such as melee-flail, to redraw only those.
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -11,6 +12,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(root, 'public', 'previews');
 mkdirSync(out, { recursive: true });
 
+// Names given on the command line, such as melee-flail, redraw only those pictures.
+const only = process.argv.slice(2);
+const wanted = (name) => only.length === 0 || only.includes(name);
 const PORT = 5240;
 const WIDTH = 560;
 const HEIGHT = 315;
@@ -148,10 +152,12 @@ async function shoot(name) {
 }
 
 for (const id of names.maps) {
+  if (!wanted(`map-${id}`)) continue;
   await page.evaluate((id) => window.__map(id), id);
   await shoot(`map-${id}`);
 }
 for (const id of names.fights) {
+  if (!wanted(`fight-${id}`)) continue;
   await page.evaluate((id) => window.__fight(id), id);
   await shoot(`fight-${id}`);
 }
@@ -172,6 +178,8 @@ await page.evaluate(async ([width, height]) => {
     garage.setBuild({ chassis: 'brawler', melee: slot === 'melee' ? id : 'dagger', defense: slot === 'defense' ? id : 'shield', wheels: 'large4', color: 0xff8a2a });
     garage.turntable.rotation.y = 0;
     const model = garage.model;
+    // A flail is shown mid-swing, with its chain out, rather than hanging.
+    if (slot === 'melee' && id === 'flail') for (let t = 0; t < 1.2; t += 1 / 60) model.animate?.({ grip: 1, active: true, time: t, swing: 0, speed: 0, windingUp: true });
     model.root.updateMatrixWorld(true);
     const { camera } = garage;
     camera.aspect = width / height;
@@ -201,6 +209,7 @@ await page.evaluate(async ([width, height]) => {
 }, [THUMB_W, THUMB_H]);
 for (const slot of ['melee', 'defense']) {
   for (const id of parts[slot]) {
+    if (!wanted(`${slot}-${id}`)) continue;
     const url = await page.evaluate(([slot, id]) => window.__thumb(slot, id), [slot, id]);
     writeFileSync(join(out, `${slot}-${id}.jpg`), Buffer.from(url.split(',')[1], 'base64'));
     console.log(`${slot}-${id}`);

@@ -29,7 +29,7 @@ Names and broad behavior come from the sources below. **Exact behavior, damage a
 | Claw | Claw | All | Named only. Carrying the victim is our design. |
 | Magnet | Magnet | RR3 | Named only. Pulling robots is our design. |
 | Spike Ram | none | Ours | Original to Scrap Riot |
-| Vertical Disc, Vertical Bar, Horizontal Bar, Undercutter, Drum, Hammer Saw, Pneumatic Flipper, Hydraulic Crusher, Lifting Forks | none | Real combat robots | See below |
+| Vertical Disc, Vertical Bar, Horizontal Bar, Undercutter, Drum, Flail, Pneumatic Flipper, Hydraulic Crusher, Lifting Forks | none | Real combat robots | See below |
 | **Gun (Q)** | | | |
 | Chaingun | Chaingun, Mini-Gun | All | Fires along the weapon's forward angle, and doesn't track. 200 charges, damage 2. |
 | Missile Pod | Missiles | RR3 | Named only |
@@ -78,7 +78,7 @@ The newer main weapons come from the families real builders use. Numbers are Scr
 | Drum, eggbeater | A short, heavy cylinder across the front that spins up quickly with less knockback. Eggbeaters are lighter toothed bars with less mass behind each hit. | Quick to spin up, frequent small hits, pops robots off the ground |
 | Full body spinner | The spinning weapon surrounds the whole robot, so any contact hits it, but it is very hard to design and drive. | Hits from every side, slow to wind up, costs top speed |
 | Hammer | An arm swings a heavy head onto the top armour, usually the weakest part. | Slow, strong strike and a stun |
-| Hammer saw | A spinning tool on an arm, brought down onto a grappled opponent. It takes time to do real damage. | A strike, then continuous cutting while held |
+| Flail | A weighted head on a chain, whirled round the robot. It reaches every side at once but is hard to aim. Real ones are rare, because the chain wraps or snaps. | A strike all the way round that throws everything outward |
 | Flipper | A powered plate gets under the opponent and throws it. Real ones have a limited number of flips, because they run out of stored energy. | Low damage and a long throw, using battery per flip. Deadly near an edge. |
 | Crusher | A beak or jaws that bite and hold. Heavy damage from a solid bite, but little otherwise. | Grabs and does very high damage for a short time |
 | Lifter, grappler | Scoops up and pins the opponent, doing little damage. | Carries the target wherever you drive |

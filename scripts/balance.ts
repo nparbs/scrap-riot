@@ -232,7 +232,7 @@ function report(duels: DuelRow[], brawls: BrawlRow[]): void {
   console.log('\nchassis         heaviest weapon it can carry      top speed  biggest hit  damage/s in contact');
   const contactDps = (id: keyof typeof MELEE) => {
     const def = MELEE[id];
-    if (def.kind === 'spinner' || def.kind === 'strike') return (def.damage + (def.saw ?? 0) * def.cooldown) / (def.cooldown + def.windup);
+    if (def.kind === 'spinner' || def.kind === 'strike') return def.damage / (def.cooldown + def.windup);
     if (def.kind === 'claw') return (def.damage * def.windup) / (def.windup + def.cooldown);
     return def.damage * (def.runTime ? def.runTime / (def.runTime + def.cooldown) : 1);
   };

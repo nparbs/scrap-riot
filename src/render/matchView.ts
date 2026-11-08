@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { ARENAS, hammerClock, onDeck, sawPos, shockerActive, solidGround, TRAP_NAMES, ventHeat, type ArenaId } from '../sim/arena';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { ARENAS, hammerClock, hillIndex, hillMovesIn, HILL_WARN, nextHill, onDeck, sawPos, shockerActive, solidGround, TRAP_NAMES, ventHeat, type ArenaId, type Circle } from '../sim/arena';
 import { BOOST_SPEED, legibleColor, MATCH, MELEE, SPIKE_STRIP_DEPTH, TRAP } from '../sim/data';
 import { lerpAngle, wrapAngle, type Bot, type GameEvent, type Match, type Trap } from '../sim/match';
 import type { MeleeId } from '../sim/data';
@@ -31,7 +32,7 @@ const DROP_HEIGHT = 34;
 /** A hit this hard gets the big sparks and a kick of the camera. */
 const BIG_HIT = 12;
 /** Besides spinners, the weapons that bite into a robot rather than hit it. */
-const CUTTERS = new Set<MeleeId>(['chainsaw', 'drill', 'hammersaw', 'axe']);
+const CUTTERS = new Set<MeleeId>(['chainsaw', 'drill', 'axe']);
 const SPARK_GAP = 0.06;
 const SCAR_GAP = 0.3;
 const MAX_SCARS = 14;
@@ -42,7 +43,7 @@ const ROLL_OVER_TIME = 0.4;
 const RIGHTING_TIME = 0.5;
 const MATTE_METALNESS = 0.15;
 /** Weapons that land like a club, a shove, or a point, which each throw something different. */
-const BLUNT = new Set<MeleeId>(['hammer', 'crusher', 'rollingpin']);
+const BLUNT = new Set<MeleeId>(['hammer', 'crusher', 'rollingpin', 'flail']);
 const SHOVE = new Set<MeleeId>(['ram', 'flipper', 'forks', 'claw', 'magnet']);
 const PIERCE = new Set<MeleeId>(['spear', 'dagger']);
 /** The least time between dents, and between showers of bits, on one robot. */
@@ -69,6 +70,11 @@ const WIRES_AT = 0.35;
 const SOOT_AT = 0.3;
 const RIM_SPARKS_AT = 0.25;
 const FIRE_AT = 0.2;
+
+/** How long a new King of the Hill zone takes to slam down, and its beam to settle. */
+const ZONE_DROP = 0.55;
+const ZONE_FLARE = 2.5;
+const ZONE_BEAM_HEIGHT = 40;
 
 /** The replay's lens, a little tighter in the slow motion for drama. */
 const REPLAY_FOV = 58;
@@ -212,6 +218,14 @@ export class MatchView {
   private dust: { color: number; rate: number } | null = null;
   private readonly tip = new THREE.Vector3();
   private readonly tipDir = new THREE.Vector3();
+  /** King of the Hill: a column of light over the live zone, and a ghost of the next one before it moves. */
+  private readonly zoneBeam = zoneBeam(0.06);
+  private readonly zoneGhost = zoneGhost();
+  private lastHill = -1;
+  private zoneDrop = 0;
+  private zoneFlare = 0;
+  /** For a sound when the zone moves. */
+  onZoneMove: (() => void) | null = null;
   private readonly ragdolls = new Map<number, Ragdoll>();
   /** Holds the camera on a robot that's just died, before it moves on to spectating. */
   private deathHold = 0;
@@ -291,7 +305,10 @@ export class MatchView {
     this.recorder.reset();
     this.clearMatch();
     this.arena = this.sceneFor(match.arena.id);
-    this.arena.scene.add(this.particles.mesh, this.bolts.group, this.flash, this.debris.group, this.skids.mesh);
+    this.arena.scene.add(this.particles.mesh, this.bolts.group, this.flash, this.debris.group, this.skids.mesh, this.zoneBeam, this.zoneGhost);
+    this.zoneBeam.visible = this.zoneGhost.visible = false;
+    this.lastHill = -1;
+    this.zoneDrop = this.zoneFlare = 0;
     this.particles.floorHalf = match.arena.walled ? Infinity : match.arena.half;
     this.particles.floorAt = (x, z) => solidGround(match.arena, x, z) && !match.arena.pits.some((p) => Math.hypot(x - p.x, z - p.z) < p.r);
     this.debris.floorHalf = this.particles.floorHalf;
@@ -516,6 +533,88 @@ export class MatchView {
     }
   }
 
+  /**
+   * Keeps the King of the Hill zone where the match clock says it is. Before it moves, a ghost ring and
+   * a beam show where it's going. When it does, the beam flares, the new ring slams down out of the sky
+   * with a shockwave and a ring of sparks, and the old one shrinks away.
+   */
+  private syncZone(match: Match, dt: number): void {
+    const zone = this.arena.hill;
+    if (match.mode !== 'koth') {
+      this.zoneBeam.visible = this.zoneGhost.visible = false;
+      return;
+    }
+    const { arena } = match;
+    const index = hillIndex(arena, match.time);
+    const hill = arena.hills[index];
+    if (index !== this.lastHill) {
+      if (this.lastHill >= 0) this.zoneMoved(arena.hills[this.lastHill]);
+      this.lastHill = index;
+    }
+    const wasDropping = this.zoneDrop > 0;
+    this.zoneDrop = Math.max(0, this.zoneDrop - dt);
+    this.zoneFlare = Math.max(0, this.zoneFlare - dt);
+    if (wasDropping && this.zoneDrop === 0) this.zoneLanded(hill);
+    // Falls from three times the size to its own.
+    const drop = this.zoneDrop / ZONE_DROP;
+    const size = hill.r * (1 + 2 * drop * drop);
+    zone.position.set(hill.x, 0.05 + 3 * drop, hill.z);
+    zone.scale.set(size, size, 1);
+    (zone.material as THREE.MeshBasicMaterial).opacity = 0.95 * (1 - drop * 0.6);
+
+    this.zoneBeam.visible = true;
+    this.zoneBeam.position.set(hill.x, 0, hill.z);
+    this.zoneBeam.scale.set(hill.r, 1, hill.r);
+    const flare = this.zoneFlare / ZONE_FLARE;
+    (this.zoneBeam.material as THREE.MeshBasicMaterial).opacity = 0.05 + 0.4 * flare * flare + Math.sin(this.spin * 3) * 0.01;
+
+    // The last move would come after the final whistle, so there's no next zone to show then.
+    const moving = hillMovesIn(match.time) <= HILL_WARN && match.timeLeft > hillMovesIn(match.time);
+    this.zoneGhost.visible = moving;
+    if (moving) {
+      const next = nextHill(arena, match.time);
+      const urgency = 1 - hillMovesIn(match.time) / HILL_WARN;
+      const blink = 0.5 + 0.5 * Math.sin(this.spin * (6 + urgency * 14));
+      this.zoneGhost.position.set(next.x, 0, next.z);
+      this.zoneGhost.scale.set(next.r, 1, next.r);
+      const [ring, beam] = this.zoneGhost.children as THREE.Mesh[];
+      (ring.material as THREE.MeshBasicMaterial).opacity = 0.35 + 0.5 * blink;
+      ring.rotation.z = this.spin * 0.8;
+      (beam.material as THREE.MeshBasicMaterial).opacity = 0.04 + 0.12 * urgency * blink;
+    }
+  }
+
+  private zoneMoved(from: Circle): void {
+    this.zoneDrop = ZONE_DROP;
+    this.zoneFlare = ZONE_FLARE;
+    this.onZoneMove?.();
+    // The old ring shrinks to nothing where it was.
+    const material = new THREE.MeshBasicMaterial({ color: 0xffe08a, transparent: true, side: THREE.DoubleSide, toneMapped: false });
+    const old = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 48), material);
+    old.rotation.x = -Math.PI / 2;
+    old.position.set(from.x, 0.06, from.z);
+    this.arena.scene.add(old);
+    this.transients.push({
+      object: old, life: 0.6, maxLife: 0.6,
+      update: (t) => {
+        old.scale.set(from.r * t, from.r * t, 1);
+        material.opacity = t;
+      },
+    });
+  }
+
+  /** The new zone hits the floor: a shockwave, a flash, and sparks thrown up all round the rim. */
+  private zoneLanded(to: Circle): void {
+    this.addPulse(to.x, to.z, to.r * 2.4, 0xffd23a, 0.2);
+    this.addPulse(to.x, to.z, to.r * 1.5, 0xffffff, 0.2);
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      this.particles.burst(to.x + Math.cos(a) * to.r, to.z + Math.sin(a) * to.r, { count: 2, color: i % 2 ? 0xffd23a : 0xfff1c8, speed: 9, size: 0.18, life: 0.7, y: 0.2, gravity: 10, dir: { x: Math.cos(a) * 0.4, z: Math.sin(a) * 0.4, jitter: 2 }, rise: 6 });
+    }
+    this.flash.position.set(to.x, 3, to.z);
+    this.flash.intensity = Math.max(this.flash.intensity, 220);
+  }
+
   /** A scorch mark and scattered scrap where a robot died, fading after a while. */
   private addWreck(x: number, z: number): void {
     if (this.wrecks.length >= MAX_WRECKS) this.removeWreck(this.wrecks.shift()!);
@@ -600,6 +699,7 @@ export class MatchView {
   /** Everything in the world moving on by dt, apart from the camera. */
   private animate(match: Match, frameDt: number, alpha: number): void {
     this.spin += frameDt;
+    this.syncZone(match, frameDt);
     match.bots.forEach((bot) => this.syncBot(bot, frameDt, alpha));
     this.syncHazards(match, frameDt);
     this.arena.animate(this.spin);
@@ -1591,4 +1691,28 @@ export class MatchView {
     this.camera.position.set(Math.sin(a) * half * 0.75, half * 0.8, Math.cos(a) * half * 0.75);
     this.camera.lookAt(0, 0, 0);
   }
+}
+
+/** A soft column of light, a unit across, standing on the floor. */
+function zoneBeam(opacity: number): THREE.Mesh {
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.95, 0.95, ZONE_BEAM_HEIGHT, 48, 1, true).translate(0, ZONE_BEAM_HEIGHT / 2, 0),
+    new THREE.MeshBasicMaterial({ color: 0xffd86a, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }),
+  );
+  beam.renderOrder = 2;
+  return beam;
+}
+
+/** Where the zone is about to go: a dashed ring that turns, under a faint beam. */
+function zoneGhost(): THREE.Group {
+  const group = new THREE.Group();
+  const dashes: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 16; i++) dashes.push(new THREE.RingGeometry(0.93, 1, 6, 1, (i / 16) * Math.PI * 2, (Math.PI * 2) / 32));
+  const ring = new THREE.Mesh(mergeGeometries(dashes), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }));
+  for (const dash of dashes) dash.dispose();
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.07;
+  group.add(ring, zoneBeam(0.1));
+  group.visible = false;
+  return group;
 }

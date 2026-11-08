@@ -1,4 +1,4 @@
-import { closestOnBlock, overChasm, rayBlock, sawPos, shockerActive, type Block, ballHeight, ballPos, BALL_HIT_HEIGHT, BALL_RADIUS, HAMMER_WARN, hammerClock, solidGround, trapdoorWarning } from './arena';
+import { closestOnBlock, hillAt, hillMovesIn, HILL_WARN, nextHill, overChasm, rayBlock, sawPos, shockerActive, type Block, ballHeight, ballPos, BALL_HIT_HEIGHT, BALL_RADIUS, HAMMER_WARN, hammerClock, solidGround, trapdoorWarning } from './arena';
 import { MELEE } from './data';
 import { bearing, condition, wrapAngle, type Bot, type Match } from './match';
 import { habitFor, tacticsFor, type BrainOverride, type Habit, type Tactics } from './tactics';
@@ -96,7 +96,9 @@ export class BotBrain {
     } else if (repair) {
       this.setGoal(repair.x, repair.z);
     } else if (match.mode === 'koth' && !hurt) {
-      this.setGoal(match.arena.hill.x, match.arena.hill.z);
+      // Off to the next zone once it shows, to be there first.
+      const hill = hillMovesIn(match.time) <= HILL_WARN ? nextHill(match.arena, match.time) : hillAt(match.arena, match.time);
+      this.setGoal(hill.x, hill.z);
     } else if (scrap && Math.hypot(scrap.x - bot.x, scrap.z - bot.z) < 10) {
       this.setGoal(scrap.x, scrap.z);
     } else if (this.target) {

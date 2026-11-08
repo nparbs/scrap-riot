@@ -1614,6 +1614,65 @@ select:focus-visible {
   color: #ff5a4a;
 }
 
+/* King of the Hill: when the zone moves, and whether you're scoring in it. */
+.hud-zone {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.hud-zone-count {
+  padding: 2px 12px;
+  border-radius: 4px;
+  background: rgba(10, 11, 12, 0.6);
+  color: #ffd23a;
+  font: 400 20px var(--display);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-zone-state {
+  color: var(--muted);
+  font: 600 12px var(--body);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.hud-zone-holding .hud-zone-state {
+  color: #ffd23a;
+}
+
+.hud-zone-warn .hud-zone-count {
+  background: #c8321f;
+  color: #fff;
+  animation: hud-zone-pulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes hud-zone-pulse {
+  to {
+    transform: scale(1.12);
+  }
+}
+
+.hud-zone-moved .hud-zone-count {
+  animation: hud-zone-moved 0.6s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+@keyframes hud-zone-moved {
+  from {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
 .hud-ping {
   position: absolute;
   top: 44px;
@@ -3788,6 +3847,14 @@ html.touch.fighting .settings-button {
   font-size: 26px;
 }
 
+.hud-touch .hud-zone {
+  top: calc(34px + env(safe-area-inset-top));
+}
+
+.hud-touch .hud-zone-count {
+  font-size: 16px;
+}
+
 .hud-touch .hud-ping {
   top: calc(32px + env(safe-area-inset-top));
 }
@@ -4876,4 +4943,17 @@ html:has(.ws) .music-button {
   .replay-hit .replay-call {
     opacity: 1;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-zone-warn .hud-zone-count,
+  .hud-zone-moved .hud-zone-count {
+    animation: none;
+  }
+}
+
+/* In King of the Hill the points decide the order, so they stand out. */
+.results .results-points {
+  color: #ffd23a;
+  font-weight: 700;
 }

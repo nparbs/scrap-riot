@@ -24,7 +24,8 @@ import type { Save } from '../game/progress';
 import { isNameAllowed } from '../game/nameFilter';
 import { decodeSkin } from '../game/skin';
 
-export const PROTOCOL_VERSION = 15;
+// 16: King of the Hill moves every 30 seconds and runs on the clock, and the Flail replaced the Hammer Saw.
+export const PROTOCOL_VERSION = 16;
 /** The most a browser can bank for a match it ran itself. */
 export const OFFLINE_PAYOUT_MAX = 10_000;
 export const NAME_MAX = 16;

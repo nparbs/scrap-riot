@@ -18,7 +18,7 @@ const REGISTER_BELL = [[2093, 1, 0.75], [3140, 0.7, 0.6], [4700, 0.4, 0.4], [628
 // Spinners are then set well below the rest on purpose, because they were tiring to listen to.
 const MELEE_LEVEL: Record<MeleeId, number> = {
   vertbar: 0.42, vertdisc: 0.42, horizbar: 0.42, flipper: 1.07, axe: 1.66, hammer: 1.7, undercutter: 0.7, crusher: 1.7,
-  hammersaw: 1.74, drum: 0.7, ram: 2.16, chainsaw: 2.66, drill: 2.66, rollingpin: 2.66, dagger: 2.69, magnet: 2.72, claw: 3, forks: 3,
+  flail: 1.7, drum: 0.7, ram: 2.16, chainsaw: 2.66, drill: 2.66, rollingpin: 2.66, dagger: 2.69, magnet: 2.72, claw: 3, forks: 3,
   flamethrower: 1, tesla: 1.2, spear: 2,
 };
 /** The Tesla Coil's bolt and the teleport's crackle. */
@@ -208,16 +208,16 @@ export class Sfx {
   }
 
   /** Struck metal: a sharp click, then a few out-of-tune ringing partials that die away. */
-  private clang(volume: number, pitch: number, ring: number): void {
-    this.burst(volume * 0.7, 0.05, 2400, 'bandpass');
+  private clang(volume: number, pitch: number, ring: number, delay = 0): void {
+    this.burst(volume * 0.7, 0.05, 2400, 'bandpass', undefined, delay);
     for (const [ratio, level] of [[1, 1], [2.76, 0.6], [5.4, 0.35]] as const) {
-      this.tone(volume * 0.22 * level, ring / ratio ** 0.5, pitch * ratio, pitch * ratio * 0.985, 'triangle');
+      this.tone(volume * 0.22 * level, ring / ratio ** 0.5, pitch * ratio, pitch * ratio * 0.985, 'triangle', delay);
     }
   }
 
-  private thud(volume: number, duration = 0.2, from = 150): void {
-    this.tone(volume, duration, from, 42, 'sine');
-    this.burst(volume * 0.6, duration * 0.7, 420, 'lowpass');
+  private thud(volume: number, duration = 0.2, from = 150, delay = 0): void {
+    this.tone(volume, duration, from, 42, 'sine', delay);
+    this.burst(volume * 0.6, duration * 0.7, 420, 'lowpass', undefined, delay);
   }
 
   arc(distanceVolume: number): void {
@@ -253,9 +253,14 @@ export class Sfx {
         break;
       case 'hammer':
       case 'axe':
-      case 'hammersaw':
         this.thud(0.7 * volume, 0.24);
         this.clang(0.45 * volume, 240, 0.35);
+        break;
+      case 'flail':
+        // A heavy iron ball landing, and the chain rattling after it.
+        this.thud(0.75 * volume, 0.3);
+        this.clang(0.5 * volume, 150, 0.5);
+        this.burst(0.16 * volume, 0.22, 4200, 'bandpass', 1800);
         break;
       case 'flipper':
         // A blast of air, then a clang as the plate slams up.
@@ -341,9 +346,52 @@ export class Sfx {
     this.burst(0.05, 0.02, 4000, 'highpass');
   }
 
-  /** A beep for each number, and a higher, longer one to go. */
+  /**
+   * Builds under the countdown to a fight: a rush of air and a drone that climb together, to land on GO.
+   * The music waits for GO, so this has the silence to itself.
+   */
+  fightIntro(seconds: number): void {
+    const length = Math.max(0.8, seconds - 0.05);
+    this.burst(0.11, length, 250, 'bandpass', 4200);
+    this.tone(0.05, length, 55, 220, 'sawtooth');
+    this.tone(0.03, length, 82.4, 330, 'square');
+  }
+
+  /** A struck-metal tick for each number, and for GO a hit with a power chord and a crash over it. */
   countdown(go: boolean): void {
-    this.tone(0.14, go ? 0.5 : 0.14, go ? 880 : 440, go ? 880 : 440);
+    if (!go) {
+      this.clang(0.32, 1150, 0.2);
+      this.tone(0.09, 0.12, 660, 660, 'square');
+      this.thud(0.35, 0.12, 120);
+      return;
+    }
+    this.thud(1, 0.5, 210);
+    this.clang(0.55, 220, 1);
+    // The crash, and a zap shooting up out of it.
+    this.burst(0.38, 1.4, 9000, 'highpass', 3000);
+    this.tone(0.1, 0.32, 440, 1320, 'square');
+    for (const freq of [110, 164.8, 220, 329.6]) this.tone(0.085, 0.95, freq, freq * 0.995, 'sawtooth');
+  }
+
+  /** The end of a match: an air horn over a hit. */
+  matchOver(): void {
+    for (const freq of [233, 294]) this.tone(0.07, 0.8, freq, freq * 0.99, 'sawtooth');
+    this.tone(0.05, 0.8, 466, 462, 'square');
+    this.thud(0.7, 0.32);
+  }
+
+  /** A tape spooling back, for the start of a replay. */
+  rewind(): void {
+    for (let i = 0; i < 7; i++) this.tone(0.05, 0.07, 2600 - i * 220, 520, 'sawtooth', i * 0.055);
+    this.burst(0.12, 0.5, 1400, 'bandpass', 6000);
+  }
+
+  /** King of the Hill's zone moving: a two-tone alarm and a rush of air, then the new one landing. */
+  zoneMove(landsIn = 0.55): void {
+    for (const delay of [0, 0.22]) this.tone(0.075, 0.18, 740, 990, 'square', delay);
+    this.burst(0.2, 0.5, 600, 'bandpass', 3200, 0.1);
+    this.thud(0.75, 0.35, 170, landsIn);
+    this.clang(0.32, 300, 0.5, landsIn);
   }
 
   deny(): void {

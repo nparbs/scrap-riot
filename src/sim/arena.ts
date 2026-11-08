@@ -158,8 +158,8 @@ export interface ArenaDef {
   grinders: Rect[];
   spawns: Point[];
   repairSpots: Point[];
-  /** Scoring zone for King of the Hill. */
-  hill: Circle;
+  /** King of the Hill's zones, in the order it moves through them. The first is where it starts. */
+  hills: Circle[];
   /** Where the game's logo is painted on the floor. */
   logo: Circle;
   theme: ArenaTheme;
@@ -269,7 +269,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
       { x: -4, z: 20 }, { x: -20, z: -24 }, { x: 4, z: -24 }, { x: 24, z: -22 },
     ],
     repairSpots: [{ x: -3, z: -13 }, { x: 20, z: 3 }, { x: -22, z: -3 }, { x: -6, z: 12 }],
-    hill: { x: -14, z: -16, r: 7 },
+    hills: [{ x: -14, z: -16, r: 7 }, { x: -15, z: 10, r: 6 }, { x: 16, z: -1, r: 6 }, { x: 0, z: 17, r: 6 }],
     logo: { x: 8, z: -14, r: 7 },
     theme: { floor: 0x9a9da8, wall: 0x3a3d45, sky: 0x241840, fogNear: 90, fogFar: 420, light: 0xb8c4ff, sunIntensity: 1.3, backdrop: 'night' },
   },
@@ -295,7 +295,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     ],
     spawns: ring(26),
     repairSpots: cross(16),
-    hill: { x: 0, z: 0, r: 7.6 },
+    hills: [{ x: 0, z: 0, r: 7.6 }, { x: -20, z: 0, r: 6 }, { x: 0, z: -20, r: 6 }, { x: 0, z: 20, r: 6 }],
     // Painted across the pit's doors, so it splits in two as they open.
     logo: { x: 0, z: 0, r: 5.6 },
     theme: { floor: 0xc4c8ce, wall: 0x2c2f33, sky: 0x101216, fogNear: 70, fogFar: 170, light: 0xf8f2e8, sunIntensity: 2.4, backdrop: 'stands' },
@@ -319,7 +319,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
       { x: 25, z: -10 }, { x: -25, z: 10 }, { x: 10, z: 25 }, { x: -10, z: -25 },
     ],
     repairSpots: [{ x: 0, z: 0 }, { x: 25, z: -6 }, { x: 6, z: 25 }, { x: -25, z: 6 }, { x: -6, z: -25 }],
-    hill: { x: 0, z: 0, r: 7 },
+    hills: [{ x: 0, z: 0, r: 7 }, { x: -18, z: -5, r: 6 }, { x: -5, z: 18, r: 6 }, { x: 5, z: -18, r: 6 }],
     logo: { x: 20, z: 7, r: 4.5 },
     theme: { floor: 0xa8adb8, wall: 0x3c4048, sky: 0x4a3a4a, fogNear: 90, fogFar: 330, light: 0xffc8a0, sunIntensity: 2.2, backdrop: 'sea' },
   },
@@ -344,7 +344,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     ],
     repairSpots: [{ x: -15, z: 15 }, { x: 15, z: -15 }, { x: 22, z: 0 }, { x: -22, z: 0 }],
     // A ring around the pool, so holding it means fighting at the edge of the steel.
-    hill: { x: 0, z: 0, r: 9.5 },
+    hills: [{ x: 0, z: 0, r: 9.5 }, { x: -15, z: -11, r: 6 }, { x: -15, z: 11, r: 6 }, { x: 11, z: -15, r: 6 }],
     logo: { x: 0, z: 22, r: 4 },
     theme: { floor: 0xb49484, wall: 0x2a1f1c, sky: 0x1c0d08, fogNear: 45, fogFar: 110, light: 0xffae78, sunIntensity: 1.8, backdrop: 'foundry' },
   },
@@ -370,7 +370,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
       { x: 0, z: 23 }, { x: 0, z: -23 }, { x: 6, z: 12 }, { x: -6, z: -12 },
     ],
     repairSpots: [{ x: -13, z: -6 }, { x: 13, z: 6 }, { x: -24, z: 18 }, { x: 24, z: -18 }],
-    hill: { x: 0, z: 18, r: 6 },
+    hills: [{ x: 0, z: 18, r: 6 }, { x: -3, z: -8, r: 4.5 }, { x: 21, z: 6, r: 4.5 }, { x: -21, z: -6, r: 4.5 }],
     logo: { x: 0, z: -19, r: 5 },
     theme: { floor: 0xe8b084, wall: 0x7a4a2c, sky: 0xc87058, fogNear: 80, fogFar: 260, light: 0xffd2a0, sunIntensity: 2.6, backdrop: 'canyon' },
   },
@@ -378,7 +378,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
     ...PLAIN,
     id: 'foundry',
     name: 'Piston Foundry',
-    blurb: 'Belts carry you toward the rams, and two drop hammers pound the floor. The hill is under one of them.',
+    blurb: 'Belts carry you toward the rams, and two drop hammers pound the floor. The hill starts under one of them.',
     half: 30, walled: true, grip: 1, wallHeight: 5,
     pillars: [{ x: 24, z: -6, r: 2 }, { x: -24, z: 6, r: 2 }],
     saws: [{ axis: 'x', fixed: 0, amplitude: 24, speed: 0.45, phase: 0 }],
@@ -399,7 +399,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
       { x: 26, z: -20 }, { x: -26, z: 20 }, { x: 16, z: 26 }, { x: -16, z: -26 },
     ],
     repairSpots: [{ x: 0, z: -21 }, { x: 0, z: 21 }, { x: 23, z: -20 }, { x: -23, z: 20 }],
-    hill: { x: 0, z: 21, r: 6 },
+    hills: [{ x: 0, z: 21, r: 6 }, { x: -18, z: -4, r: 6 }, { x: 4, z: -18, r: 6 }, { x: 18, z: 3, r: 6 }],
     logo: { x: -21, z: 21, r: 5 },
     theme: { floor: 0xa2acba, wall: 0x23282f, sky: 0x0d1118, fogNear: 45, fogFar: 110, light: 0xc8dcff, sunIntensity: 2, backdrop: 'foundry' },
   },
@@ -424,7 +424,7 @@ export const ARENAS: Record<ArenaId, ArenaDef> = {
       { x: 17, z: 17 }, { x: -17, z: -17 }, { x: 24, z: -9 }, { x: -24, z: 9 },
     ],
     repairSpots: [{ x: 19, z: 9 }, { x: -19, z: -9 }, { x: 0, z: 23 }, { x: 0, z: -23 }],
-    hill: { x: 0, z: 0, r: 7 },
+    hills: [{ x: 0, z: 0, r: 7 }, { x: 9, z: 17, r: 6 }, { x: -19, z: 3, r: 6 }, { x: 19, z: -3, r: 6 }],
     logo: { x: -14, z: -20, r: 4.5 },
     theme: { floor: 0x86a8c4, wall: 0x3a4f66, sky: 0x123a4c, fogNear: 70, fogFar: 240, light: 0xcfe4ff, sunIntensity: 1.1, backdrop: 'ice' },
   },
@@ -445,6 +445,30 @@ export function overChasm(arena: ArenaDef, x: number, z: number): boolean {
 }
 
 /** Solid ground as far as the outline and the chasms go, which never change. */
+/** How long the King of the Hill zone stays put before it moves on, in seconds of fighting. */
+export const HILL_MOVE = 30;
+/** How long before a move the next zone is shown, so robots can head for it. */
+export const HILL_WARN = 5;
+
+/** Which zone is live at this point in the match. Every client works it out from the match clock alone. */
+export function hillIndex(arena: ArenaDef, time: number): number {
+  return Math.floor(Math.max(0, time) / HILL_MOVE) % arena.hills.length;
+}
+
+export function hillAt(arena: ArenaDef, time: number): Circle {
+  return arena.hills[hillIndex(arena, time)];
+}
+
+/** Where the zone goes next. */
+export function nextHill(arena: ArenaDef, time: number): Circle {
+  return arena.hills[(hillIndex(arena, time) + 1) % arena.hills.length];
+}
+
+/** Seconds until the zone moves. */
+export function hillMovesIn(time: number): number {
+  return HILL_MOVE - (Math.max(0, time) % HILL_MOVE);
+}
+
 export function solidGround(arena: ArenaDef, x: number, z: number): boolean {
   return onDeck(arena, x, z) && !overChasm(arena, x, z);
 }
